@@ -9,6 +9,7 @@ permissions:
   pull-requests: write
   issues: write
   checks: write
+  id-token: write
 
 jobs:
   qa-release-gate:
