@@ -1,0 +1,124 @@
+name: QA Gate - Run on /qa comment
+
+on:
+  issue_comment:
+    types: [created]
+
+permissions:
+  contents: read
+  pull-requests: write
+  issues: write
+  checks: write
+
+jobs:
+  qa-release-gate:
+    if: >
+      github.event.issue.pull_request != null &&
+      contains(github.event.comment.body, '/qa') &&
+      contains(fromJSON('["OWNER","MEMBER","COLLABORATOR"]'), github.event.comment.author_association)
+    runs-on: ubuntu-latest
+    steps:
+      - name: Resolve PR head sha/ref
+        id: pr
+        uses: actions/github-script@v7
+        with:
+          script: |
+            const pr = await github.rest.pulls.get({
+              owner: context.repo.owner,
+              repo: context.repo.repo,
+              pull_number: context.issue.number,
+            });
+            core.setOutput('sha', pr.data.head.sha);
+            core.setOutput('ref', pr.data.head.ref);
+
+      - name: Mark check in_progress
+        uses: actions/github-script@v7
+        with:
+          script: |
+            await github.rest.checks.create({
+              owner: context.repo.owner,
+              repo: context.repo.repo,
+              name: 'qa-release-gate',
+              head_sha: '${{ steps.pr.outputs.sha }}',
+              status: 'in_progress',
+              output: {
+                title: 'AI QA gate running',
+                summary: 'Triggered by /qa comment. Running static gates + Playwright smoke test.'
+              }
+            });
+
+      - uses: actions/checkout@v5
+        with:
+          ref: ${{ steps.pr.outputs.sha }}
+
+      - uses: actions/setup-node@v5
+        with:
+          node-version: 24
+          cache: npm
+
+      - run: npm ci
+      - run: npx playwright install --with-deps chromium
+
+      - name: Run Claude QA release gate
+        id: qa
+        uses: anthropics/claude-code-action@v1
+        with:
+          claude_code_oauth_token: ${{ secrets.CLAUDE_CODE_OAUTH_TOKEN }}
+          prompt: |
+            Read .claude/agents/qa-release-gate.md in full and carry out
+            everything it describes as your operating procedure for this
+            run: static gates (pre-commit hook, npm run build), then start
+            the dev server and drive it with the Playwright MCP tools
+            (server name "playwright" — tools are prefixed
+            mcp__playwright__, e.g. mcp__playwright__browser_navigate,
+            mcp__playwright__browser_snapshot, mcp__playwright__browser_console_messages,
+            mcp__playwright__browser_network_requests, mcp__playwright__browser_resize)
+            across every screen/flow you find under src/App.tsx and
+            src/screens/. Produce the structured report exactly as that
+            file specifies, ending in one of GO / NO-GO / GO WITH CAVEATS.
+          claude_args: |
+            --mcp-config '{"mcpServers":{"playwright":{"command":"npx","args":["-y","@playwright/mcp@latest"]}}}'
+            --allowedTools "Bash,Read,mcp__playwright__browser_navigate,mcp__playwright__browser_navigate_back,mcp__playwright__browser_snapshot,mcp__playwright__browser_click,mcp__playwright__browser_type,mcp__playwright__browser_fill_form,mcp__playwright__browser_select_option,mcp__playwright__browser_hover,mcp__playwright__browser_press_key,mcp__playwright__browser_wait_for,mcp__playwright__browser_find,mcp__playwright__browser_resize,mcp__playwright__browser_take_screenshot,mcp__playwright__browser_console_messages,mcp__playwright__browser_network_requests,mcp__playwright__browser_evaluate,mcp__playwright__browser_close"
+            --json-schema '{"type":"object","properties":{"verdict":{"type":"string","enum":["GO","NO-GO","GO WITH CAVEATS"]},"summary":{"type":"string"}},"required":["verdict","summary"]}'
+            --max-turns 60
+
+      - name: Complete check run from verdict
+        if: always()
+        uses: actions/github-script@v7
+        with:
+          script: |
+            const raw = `${{ steps.qa.outputs.structured_output }}`;
+            let verdict = 'NO-GO', summary = 'QA agent did not return a parseable verdict (see job log).';
+            try {
+              const parsed = JSON.parse(raw);
+              verdict = parsed.verdict;
+              summary = parsed.summary;
+            } catch (e) {}
+            // GO WITH CAVEATS passes (blocks only on a real NO-GO), per
+            // the user's explicit choice — caveats are visible but non-blocking.
+            const conclusion = verdict === 'NO-GO' ? 'failure' : 'success';
+            await github.rest.checks.create({
+              owner: context.repo.owner,
+              repo: context.repo.repo,
+              name: 'qa-release-gate',
+              head_sha: '${{ steps.pr.outputs.sha }}',
+              status: 'completed',
+              conclusion,
+              output: {
+                title: `Verdict: ${verdict}`,
+                summary,
+              }
+            });
+            if (conclusion === 'failure') core.setFailed(`QA gate verdict: ${verdict}`);
+
+      - name: Post verdict as PR comment
+        if: always()
+        uses: actions/github-script@v7
+        with:
+          script: |
+            await github.rest.issues.createComment({
+              owner: context.repo.owner,
+              repo: context.repo.repo,
+              issue_number: context.issue.number,
+              body: `🤖 QA release gate finished for ${{ steps.pr.outputs.sha }} — see the \`qa-release-gate\` check for the verdict and summary.`
+            });
