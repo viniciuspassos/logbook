@@ -1,0 +1,9 @@
+.adventure-badge {
+  background: var(--lb-accent);
+  border: 2px solid var(--lb-bg);
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  color: #fff;
+  flex-shrink: 0;
+}

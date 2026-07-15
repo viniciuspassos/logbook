@@ -1,0 +1,116 @@
+.tab-bar {
+  flex-shrink: 0;
+  display: flex;
+  align-items: flex-end;
+  justify-content: space-around;
+  padding: 8px 8px 26px;
+  border-top: 1px solid var(--lb-border);
+  background: var(--lb-bg);
+}
+
+.tab-bar__button {
+  appearance: none;
+  border: none;
+  background: transparent;
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  gap: 4px;
+  cursor: pointer;
+  width: 52px;
+  padding: 0;
+  font: inherit;
+}
+
+.tab-bar__label {
+  font-size: 10.5px;
+  color: var(--lb-ink);
+}
+
+.tab-bar__icon-square {
+  width: 18px;
+  height: 18px;
+  border-radius: 5px;
+  background: var(--lb-inactive);
+}
+.tab-bar__icon-square.is-active {
+  background: var(--lb-accent);
+}
+
+.tab-bar__icon-ring {
+  width: 16px;
+  height: 16px;
+  border-radius: 50%;
+  border: 2.5px solid var(--lb-inactive);
+}
+.tab-bar__icon-ring.is-active {
+  border-color: var(--lb-accent);
+}
+
+.tab-bar__icon-bars {
+  display: flex;
+  gap: 2px;
+  align-items: flex-end;
+  height: 16px;
+}
+.tab-bar__icon-bars span {
+  width: 4px;
+  background: var(--lb-inactive);
+}
+.tab-bar__icon-bars span:nth-child(1) {
+  height: 8px;
+}
+.tab-bar__icon-bars span:nth-child(2) {
+  height: 14px;
+}
+.tab-bar__icon-bars span:nth-child(3) {
+  height: 11px;
+}
+.tab-bar__icon-bars.is-active span {
+  background: var(--lb-accent);
+}
+
+.tab-bar__icon-dial {
+  width: 16px;
+  height: 16px;
+  border-radius: 50%;
+  border: 2.5px solid var(--lb-inactive);
+  display: flex;
+  align-items: center;
+  justify-content: center;
+}
+.tab-bar__icon-dial.is-active {
+  border-color: var(--lb-accent);
+}
+.tab-bar__icon-dial::after {
+  content: '';
+  width: 5px;
+  height: 5px;
+  border-radius: 50%;
+  background: var(--lb-inactive);
+}
+.tab-bar__icon-dial.is-active::after {
+  background: var(--lb-accent);
+}
+
+.tab-bar__add {
+  appearance: none;
+  border: 4px solid var(--lb-bg);
+  border-radius: 50%;
+  width: 52px;
+  height: 52px;
+  margin-top: -22px;
+  background: var(--lb-accent);
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  cursor: pointer;
+  box-shadow: 0 6px 14px oklch(58% 0.15 40 / 0.45);
+}
+
+.tab-bar__add-dot {
+  width: 16px;
+  height: 16px;
+  border-radius: 50%;
+  background: #fff;
+}

@@ -1,0 +1,19 @@
+.photo-placeholder {
+  width: 100%;
+  height: 100%;
+  background: var(--lb-surface-muted);
+  border: 1px solid var(--lb-border);
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  overflow: hidden;
+  box-sizing: border-box;
+}
+
+.photo-placeholder__hint {
+  padding: 4px 8px;
+  font-size: 10.5px;
+  line-height: 1.3;
+  color: var(--lb-muted);
+  text-align: center;
+}
