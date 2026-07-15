@@ -93,11 +93,12 @@ jobs:
           QA_STRUCTURED_OUTPUT: ${{ steps.qa.outputs.structured_output }}
         with:
           script: |
-            // Read from env, never interpolate ${{ }} content directly into
-            // the script body — the QA agent's summary is free-form text
-            // (can contain backticks/quotes/newlines) and splicing it into
-            // a JS template literal via ${{ }} both breaks on those
-            // characters and is a script-injection risk.
+            // Read from env, never interpolate step-output expressions
+            // directly into the script body — the QA agent's summary is
+            // free-form text (can contain backticks/quotes/newlines) and
+            // splicing it into a JS template literal via inline expression
+            // syntax both breaks on those characters and is a
+            // script-injection risk.
             let verdict = 'NO-GO', summary = 'QA agent did not return a parseable verdict (see job log).';
             try {
               const parsed = JSON.parse(process.env.QA_STRUCTURED_OUTPUT || '');
