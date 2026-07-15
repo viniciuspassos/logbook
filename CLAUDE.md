@@ -17,7 +17,9 @@ There is no test runner configured yet (no Jest, no test script in `package.json
 
 ## Testing
 
-Every function, both backend and frontend, must have a unit test written with Jest. When adding a function, add or update its corresponding Jest test in the same change.
+Follow Test-Driven Development: write the failing Jest test for the behavior first, then write the minimum code to make it pass, then refactor. Every function, both backend and frontend, must have a unit test written with Jest. When adding a function, add or update its corresponding Jest test in the same change.
+
+Tests must never be deleted to make a change land. If a test's behavior is genuinely no longer applicable (e.g. the function it covers was intentionally removed), the removal must be called out explicitly and justified in the change — never delete or silently weaken a test because it's inconvenient or failing.
 
 ## Architecture
 
