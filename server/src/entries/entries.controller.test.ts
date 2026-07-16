@@ -23,6 +23,9 @@ function fakeEntry(overrides: Partial<Entry> = {}): Entry {
     media: ['a', 'b', 'c'],
     mapX: 10,
     mapY: 20,
+    version: 1,
+    supersededEdits: null,
+    deletedAt: null,
     createdAt: new Date(),
     updatedAt: new Date(),
     ...overrides,
@@ -74,15 +77,15 @@ describe('EntriesController', () => {
     expect(result).toBe(created)
   })
 
-  it('update delegates to the service with id and DTO', async () => {
+  it('update delegates to the service with id and DTO, version included', async () => {
     const service = makeServiceMock()
-    const updated = fakeEntry({ title: 'New title' })
+    const updated = fakeEntry({ title: 'New title', version: 2 })
     service.update.mockResolvedValue(updated)
     const controller = new EntriesController(service)
 
-    const result = await controller.update(1, { title: 'New title' })
+    const result = await controller.update(1, { version: 1, title: 'New title' })
 
-    expect(service.update).toHaveBeenCalledWith(1, { title: 'New title' })
+    expect(service.update).toHaveBeenCalledWith(1, { version: 1, title: 'New title' })
     expect(result).toBe(updated)
   })
 

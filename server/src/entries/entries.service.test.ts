@@ -1,8 +1,10 @@
 import { Logger, NotFoundException } from '@nestjs/common'
 import { EntriesService } from './entries.service'
+import { EntryVersionConflictException } from './entry-version-conflict.exception'
 import type { EntriesRepository } from './entries.repository'
 import type { Entry } from './entry.entity'
 import type { CreateEntryDto } from './dto/create-entry.dto'
+import type { UpdateEntryDto } from './dto/update-entry.dto'
 import type { Attachment } from '../attachments/attachment.entity'
 import type { FileStorage } from '../storage/storage.interface'
 
@@ -26,6 +28,9 @@ function fakeEntry(overrides: Partial<Entry> = {}): Entry {
     media: ['a', 'b', 'c'],
     mapX: 10,
     mapY: 20,
+    version: 1,
+    supersededEdits: null,
+    deletedAt: null,
     createdAt: new Date(),
     updatedAt: new Date(),
     ...overrides,
@@ -109,26 +114,48 @@ describe('EntriesService', () => {
     expect(result).toBe(created)
   })
 
-  it('update returns the updated entry when it exists', async () => {
+  it('update returns the updated entry when the version matches', async () => {
     const repo = makeRepoMock()
-    const updated = fakeEntry({ title: 'New title' })
-    repo.update.mockResolvedValue(updated)
+    const updated = fakeEntry({ title: 'New title', version: 2 })
+    repo.update.mockResolvedValue({ outcome: 'updated', entry: updated })
     const service = new EntriesService(repo, makeFileStorageMock())
+    const dto = { version: 1, title: 'New title' } as UpdateEntryDto
 
-    const result = await service.update(1, { title: 'New title' })
+    const result = await service.update(1, dto)
 
-    expect(repo.update).toHaveBeenCalledWith(1, { title: 'New title' })
+    expect(repo.update).toHaveBeenCalledWith(1, dto)
     expect(result).toBe(updated)
   })
 
   it('update throws NotFoundException when the entry does not exist', async () => {
     const repo = makeRepoMock()
-    repo.update.mockResolvedValue(null)
+    repo.update.mockResolvedValue({ outcome: 'not-found' })
     const service = new EntriesService(repo, makeFileStorageMock())
 
-    await expect(service.update(404, { title: 'x' })).rejects.toBeInstanceOf(
-      NotFoundException,
-    )
+    await expect(
+      service.update(404, { version: 1 } as UpdateEntryDto),
+    ).rejects.toBeInstanceOf(NotFoundException)
+  })
+
+  it('update throws EntryVersionConflictException carrying the current entry, and does not swallow the conflict as a generic error, when the version is stale', async () => {
+    const repo = makeRepoMock()
+    const current = fakeEntry({ id: 1, version: 5, title: 'Server-side title' })
+    repo.update.mockResolvedValue({ outcome: 'conflict', current })
+    const service = new EntriesService(repo, makeFileStorageMock())
+
+    const dto = { version: 3, title: 'Stale local edit' } as UpdateEntryDto
+    await expect(service.update(1, dto)).rejects.toBeInstanceOf(EntryVersionConflictException)
+
+    try {
+      await service.update(1, dto)
+      fail('expected update to throw')
+    } catch (error) {
+      expect(error).toBeInstanceOf(EntryVersionConflictException)
+      const response = (error as EntryVersionConflictException).getResponse() as {
+        currentEntry: Entry
+      }
+      expect(response.currentEntry).toBe(current)
+    }
   })
 
   it('remove deletes the entry when it has zero attachments', async () => {
