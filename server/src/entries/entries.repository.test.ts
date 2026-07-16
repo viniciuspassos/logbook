@@ -1,6 +1,6 @@
-import { IsNull, type Repository } from 'typeorm'
+import { DataSource, IsNull, type Repository } from 'typeorm'
 import { EntriesRepository } from './entries.repository'
-import type { Entry } from './entry.entity'
+import { Entry } from './entry.entity'
 import type { Attachment } from '../attachments/attachment.entity'
 import type { UpdateEntryDto } from './dto/update-entry.dto'
 
@@ -51,9 +51,10 @@ function fakeAttachment(overrides: Partial<Attachment> = {}): Attachment {
 function makeFakeManager() {
   return {
     findOneBy: jest.fn(),
+    findOneByOrFail: jest.fn(),
     findBy: jest.fn(),
     delete: jest.fn(),
-    merge: jest.fn(),
+    update: jest.fn(),
     save: jest.fn(),
   }
 }
@@ -135,8 +136,36 @@ describe('EntriesRepository', () => {
   })
 
   describe('update', () => {
+    // Behavior change: `update()` no longer writes via read-merge-save
+    // (`manager.merge` + `manager.save`) — it now issues a **conditional**
+    // `manager.update(Entry, { id, version, deletedAt: IsNull() }, changes)`
+    // guarded on the base version, followed by a re-read. See the
+    // docstring on EntriesRepository.update for why: a plain
+    // read-then-save inside a transaction is not atomic against a
+    // concurrent writer under Postgres's default READ COMMITTED isolation.
+    // Every test below that used to assert on `manager.merge`/`manager.save`
+    // calls is rewritten to assert on the `manager.update` call instead —
+    // the behavior each one guards (client-supplied version never trusted
+    // for the bump, `version`/`supersededEdit` not forwarded as raw column
+    // changes, the loser appended to `supersededEdits` rather than
+    // overwriting it) is unchanged, only the mechanism moved.
+    //
+    // The one test this removes outright rather than rewrites is the old
+    // "records the loser's pre-write version even when merge() mutates the
+    // same object reference as `existing`" regression test: that risk was
+    // specific to `manager.merge()` mutating its `mergeIntoEntity` argument
+    // in place, and `merge()` is no longer called anywhere in `update()` —
+    // there is no longer a mechanism left for that aliasing bug to occur
+    // through. The behavior it protected (the loser's recorded version must
+    // be the *base* version, not a post-bump one) is still asserted below,
+    // just without needing a mutation-aliasing simulation to do it, since
+    // the new code reads `baseVersion` once from a `const` and never
+    // mutates `existing` at all.
     function fakeDto(overrides: Partial<UpdateEntryDto> = {}): UpdateEntryDto {
       return { version: 1, ...overrides } as UpdateEntryDto
+    }
+    function fakeUpdateResult(affected: number) {
+      return { affected, raw: {}, generatedMaps: [] }
     }
 
     it('returns not-found when the entry does not exist (or is tombstoned)', async () => {
@@ -151,10 +180,10 @@ describe('EntriesRepository', () => {
         deletedAt: IsNull(),
       })
       expect(result).toEqual({ outcome: 'not-found' })
-      expect(fakeManager.save).not.toHaveBeenCalled()
+      expect(fakeManager.update).not.toHaveBeenCalled()
     })
 
-    it('returns a conflict with the current entry, and does not write, when the version is stale', async () => {
+    it('returns a conflict with the current entry, and does not write, when the initial read already shows a stale version', async () => {
       const { ormRepo, fakeManager } = makeRepoMock()
       const current = fakeEntry({ id: 1, version: 5, title: 'Server-side title' })
       fakeManager.findOneBy.mockResolvedValue(current)
@@ -163,40 +192,35 @@ describe('EntriesRepository', () => {
       const result = await repo.update(1, fakeDto({ version: 3, title: 'Stale local edit' }))
 
       expect(result).toEqual({ outcome: 'conflict', current })
-      expect(fakeManager.merge).not.toHaveBeenCalled()
-      expect(fakeManager.save).not.toHaveBeenCalled()
+      expect(fakeManager.update).not.toHaveBeenCalled()
     })
 
-    it('applies the change and increments the version when the version matches', async () => {
+    it('issues a conditional UPDATE guarded on id/version/deletedAt, bumps the version, and returns the re-read row', async () => {
       const { ormRepo, fakeManager } = makeRepoMock()
       const existing = fakeEntry({ id: 1, version: 3, title: 'Old title' })
-      const merged = fakeEntry({ id: 1, version: 3, title: 'New title' })
-      const saved = fakeEntry({ id: 1, version: 4, title: 'New title' })
+      const reread = fakeEntry({ id: 1, version: 4, title: 'New title' })
       fakeManager.findOneBy.mockResolvedValue(existing)
-      fakeManager.merge.mockReturnValue(merged)
-      fakeManager.save.mockResolvedValue(saved)
+      fakeManager.update.mockResolvedValue(fakeUpdateResult(1))
+      fakeManager.findOneByOrFail.mockResolvedValue(reread)
       const repo = new EntriesRepository(ormRepo)
 
       const result = await repo.update(1, fakeDto({ version: 3, title: 'New title' }))
 
-      expect(fakeManager.merge).toHaveBeenCalledWith(expect.anything(), existing, {
-        title: 'New title',
-      })
-      // The version bump happens on the merged draft, not by trusting the
-      // client — save is called with version incremented past `existing`'s.
-      expect(fakeManager.save).toHaveBeenCalledWith(
+      expect(fakeManager.update).toHaveBeenCalledWith(
         expect.anything(),
-        expect.objectContaining({ version: 4 }),
+        { id: 1, version: 3, deletedAt: IsNull() },
+        expect.objectContaining({ title: 'New title', version: 4 }),
       )
-      expect(result).toEqual({ outcome: 'updated', entry: saved })
+      expect(fakeManager.findOneByOrFail).toHaveBeenCalledWith(expect.anything(), { id: 1 })
+      expect(result).toEqual({ outcome: 'updated', entry: reread })
     })
 
-    it('does not forward version or supersededEdit into the merged entity changes', async () => {
+    it('does not forward version or supersededEdit as their own keys into the conditional UPDATE\'s column changes', async () => {
       const { ormRepo, fakeManager } = makeRepoMock()
       const existing = fakeEntry({ id: 1, version: 1 })
       fakeManager.findOneBy.mockResolvedValue(existing)
-      fakeManager.merge.mockReturnValue(fakeEntry({ id: 1, version: 1 }))
-      fakeManager.save.mockResolvedValue(fakeEntry({ id: 1, version: 2 }))
+      fakeManager.update.mockResolvedValue(fakeUpdateResult(1))
+      fakeManager.findOneByOrFail.mockResolvedValue(fakeEntry({ id: 1, version: 2 }))
       const repo = new EntriesRepository(ormRepo)
 
       await repo.update(
@@ -204,20 +228,21 @@ describe('EntriesRepository', () => {
         fakeDto({ version: 1, title: 'x', supersededEdit: { title: 'loser' } }),
       )
 
-      expect(fakeManager.merge).toHaveBeenCalledWith(expect.anything(), existing, {
-        title: 'x',
-      })
+      const columnChanges = fakeManager.update.mock.calls[0][2] as Record<string, unknown>
+      expect(columnChanges).not.toHaveProperty('supersededEdit')
+      expect(columnChanges.title).toBe('x')
+      // The bump is computed server-side from the row's own base version,
+      // never taken from (or equal to only because it echoes) the client's
+      // submitted `version` field.
+      expect(columnChanges.version).toBe(2)
     })
 
-    it('appends a supersededEdit to supersededEdits (preserving the loser) rather than inventing its own merge', async () => {
+    it('appends a supersededEdit to supersededEdits (preserving the loser) in the UPDATE payload, rather than inventing its own merge', async () => {
       const { ormRepo, fakeManager } = makeRepoMock()
       const existing = fakeEntry({ id: 1, version: 3, supersededEdits: null })
-      const merged = fakeEntry({ id: 1, version: 3 })
       fakeManager.findOneBy.mockResolvedValue(existing)
-      fakeManager.merge.mockReturnValue(merged)
-      fakeManager.save.mockImplementation(
-        (_target: unknown, entity: Entry) => Promise.resolve(entity),
-      )
+      fakeManager.update.mockResolvedValue(fakeUpdateResult(1))
+      fakeManager.findOneByOrFail.mockResolvedValue(fakeEntry({ id: 1, version: 4 }))
       const repo = new EntriesRepository(ormRepo)
 
       const result = await repo.update(
@@ -226,9 +251,13 @@ describe('EntriesRepository', () => {
       )
 
       expect(result.outcome).toBe('updated')
-      const savedArg = fakeManager.save.mock.calls[0][1] as Entry
-      expect(savedArg.supersededEdits).toEqual([
+      const columnChanges = fakeManager.update.mock.calls[0][2] as {
+        supersededEdits: unknown
+      }
+      expect(columnChanges.supersededEdits).toEqual([
         {
+          // The base version this loser conflicted with — not the bumped
+          // version being written in this same call.
           version: 3,
           capturedAt: expect.any(String),
           data: { title: 'Losing title' },
@@ -238,73 +267,131 @@ describe('EntriesRepository', () => {
 
     it('appends to (rather than overwrites) an existing supersededEdits history', async () => {
       const { ormRepo, fakeManager } = makeRepoMock()
-      const priorLoser = { version: 1, capturedAt: '2026-01-01T00:00:00.000Z', data: { title: 'older loser' } }
+      const priorLoser = {
+        version: 1,
+        capturedAt: '2026-01-01T00:00:00.000Z',
+        data: { title: 'older loser' },
+      }
       const existing = fakeEntry({ id: 1, version: 2, supersededEdits: [priorLoser] })
       fakeManager.findOneBy.mockResolvedValue(existing)
-      fakeManager.merge.mockReturnValue(fakeEntry({ id: 1, version: 2 }))
-      fakeManager.save.mockImplementation(
-        (_target: unknown, entity: Entry) => Promise.resolve(entity),
-      )
+      fakeManager.update.mockResolvedValue(fakeUpdateResult(1))
+      fakeManager.findOneByOrFail.mockResolvedValue(fakeEntry({ id: 1, version: 3 }))
       const repo = new EntriesRepository(ormRepo)
 
-      await repo.update(
-        1,
-        fakeDto({ version: 2, supersededEdit: { title: 'newer loser' } }),
-      )
+      await repo.update(1, fakeDto({ version: 2, supersededEdit: { title: 'newer loser' } }))
 
-      const savedArg = fakeManager.save.mock.calls[0][1] as Entry
-      expect(savedArg.supersededEdits).toHaveLength(2)
-      expect(savedArg.supersededEdits?.[0]).toBe(priorLoser)
-      expect(savedArg.supersededEdits?.[1]).toMatchObject({ data: { title: 'newer loser' } })
+      const columnChanges = fakeManager.update.mock.calls[0][2] as {
+        supersededEdits: unknown[]
+      }
+      expect(columnChanges.supersededEdits).toHaveLength(2)
+      expect(columnChanges.supersededEdits[0]).toBe(priorLoser)
+      expect(columnChanges.supersededEdits[1]).toMatchObject({ data: { title: 'newer loser' } })
     })
 
-    it('records the loser\'s pre-write version even when merge() mutates-and-returns the same object reference as `existing` (real TypeORM behaviour)', async () => {
-      // Regression test: TypeORM's real EntityManager.merge() mutates
-      // `mergeIntoEntity` in place and returns that same reference, rather
-      // than a fresh object — the earlier mocks above (a plain
-      // `mockReturnValue`) don't reproduce that aliasing, so this test
-      // simulates it explicitly. Reading `existing.version` *after*
-      // `merged.version` is bumped would silently pick up the already
-      // -incremented value if the repository didn't capture the base
-      // version before merging.
-      const { ormRepo, fakeManager } = makeRepoMock()
-      const existing = fakeEntry({ id: 1, version: 2, supersededEdits: null })
-      fakeManager.findOneBy.mockResolvedValue(existing)
-      fakeManager.merge.mockImplementation((_target: unknown, mergeInto: Entry) => mergeInto)
-      fakeManager.save.mockImplementation(
-        (_target: unknown, entity: Entry) => Promise.resolve(entity),
-      )
-      const repo = new EntriesRepository(ormRepo)
-
-      const result = await repo.update(
-        1,
-        fakeDto({ version: 2, title: 'Winning title', supersededEdit: { title: 'Losing title' } }),
-      )
-
-      expect(result).toEqual({
-        outcome: 'updated',
-        entry: expect.objectContaining({ version: 3 }),
-      })
-      const savedArg = fakeManager.save.mock.calls[0][1] as Entry
-      expect(savedArg.supersededEdits).toEqual([
-        { version: 2, capturedAt: expect.any(String), data: { title: 'Losing title' } },
-      ])
-    })
-
-    it('leaves supersededEdits untouched when no supersededEdit is provided', async () => {
+    it('leaves supersededEdits out of the UPDATE payload entirely when no supersededEdit is provided', async () => {
       const { ormRepo, fakeManager } = makeRepoMock()
       const existing = fakeEntry({ id: 1, version: 1, supersededEdits: null })
       fakeManager.findOneBy.mockResolvedValue(existing)
-      fakeManager.merge.mockReturnValue(fakeEntry({ id: 1, version: 1 }))
-      fakeManager.save.mockImplementation(
-        (_target: unknown, entity: Entry) => Promise.resolve(entity),
-      )
+      fakeManager.update.mockResolvedValue(fakeUpdateResult(1))
+      fakeManager.findOneByOrFail.mockResolvedValue(fakeEntry({ id: 1, version: 2 }))
       const repo = new EntriesRepository(ormRepo)
 
       await repo.update(1, fakeDto({ version: 1, title: 'x' }))
 
-      const savedArg = fakeManager.save.mock.calls[0][1] as Entry
-      expect(savedArg.supersededEdits).toBeNull()
+      const columnChanges = fakeManager.update.mock.calls[0][2] as Record<string, unknown>
+      expect(columnChanges).not.toHaveProperty('supersededEdits')
+    })
+
+    it('re-reads and returns conflict — not updated — when the conditional UPDATE affects zero rows because a racing writer already changed the version', async () => {
+      // This is the race-guard branch: the initial read matched the
+      // submitted version, but by the time the conditional UPDATE actually
+      // executed, something else had already changed the row (the literal
+      // scenario a transaction alone does not prevent — see the docstring
+      // on EntriesRepository.update). This test proves the repository's own
+      // control flow given that outcome; the sqljs-backed describe block
+      // below proves the driver itself reports affected=0 in exactly this
+      // situation — mocks alone can't prove that half.
+      const { ormRepo, fakeManager } = makeRepoMock()
+      const existing = fakeEntry({ id: 1, version: 3 })
+      const racedCurrent = fakeEntry({ id: 1, version: 4, title: 'Racing writer won' })
+      fakeManager.findOneBy
+        .mockResolvedValueOnce(existing)
+        .mockResolvedValueOnce(racedCurrent)
+      fakeManager.update.mockResolvedValue(fakeUpdateResult(0))
+      const repo = new EntriesRepository(ormRepo)
+
+      const result = await repo.update(1, fakeDto({ version: 3, title: 'Stale write' }))
+
+      expect(result).toEqual({ outcome: 'conflict', current: racedCurrent })
+      expect(fakeManager.findOneByOrFail).not.toHaveBeenCalled()
+    })
+
+    it('re-reads and returns not-found when the conditional UPDATE affects zero rows because a racing writer tombstoned the entry', async () => {
+      const { ormRepo, fakeManager } = makeRepoMock()
+      const existing = fakeEntry({ id: 1, version: 3 })
+      const tombstoned = fakeEntry({ id: 1, version: 3, deletedAt: new Date() })
+      fakeManager.findOneBy
+        .mockResolvedValueOnce(existing)
+        .mockResolvedValueOnce(tombstoned)
+      fakeManager.update.mockResolvedValue(fakeUpdateResult(0))
+      const repo = new EntriesRepository(ormRepo)
+
+      const result = await repo.update(1, fakeDto({ version: 3, title: 'Stale write' }))
+
+      expect(result).toEqual({ outcome: 'not-found' })
+    })
+  })
+
+  describe('update — conditional-UPDATE affected-rows semantics (real sqljs driver)', () => {
+    // Every test above mocks `manager.update`'s return value — appropriate
+    // for proving this repository's own control flow, but it can't prove
+    // the one fact that whole race-guard mechanism actually depends on:
+    // that TypeORM's conditional `UPDATE ... WHERE version = :baseVersion`
+    // really does affect zero rows once that predicate stops matching,
+    // *on the same sqljs driver this app's own test suite runs against*
+    // (see jest.config.js — the e2e suites use `type: 'sqljs'`, not
+    // Postgres). A mocked `manager.update` would just echo back whatever
+    // `affected` value a test hands it either way, so this is exercised
+    // against a real sqljs-backed DataSource instead, per the same
+    // "don't trust an unverified assumption about TypeORM" lesson the
+    // merge()-mutation bug earlier in this file already taught once.
+    let dataSource: DataSource
+
+    beforeAll(async () => {
+      dataSource = new DataSource({
+        type: 'sqljs',
+        autoSave: false,
+        synchronize: true,
+        entities: [Entry],
+      })
+      await dataSource.initialize()
+    })
+
+    afterAll(async () => {
+      await dataSource.destroy()
+    })
+
+    it('affects exactly the one row matching WHERE id/version, and zero rows once that version is stale', async () => {
+      const repo = new EntriesRepository(dataSource.getRepository(Entry))
+      const created = await repo.create(fakeEntry({ id: undefined as unknown as number }))
+      expect(created.version).toBe(1)
+
+      const winning = await dataSource.manager.update(
+        Entry,
+        { id: created.id, version: 1 },
+        { title: 'winner', version: 2 },
+      )
+      expect(winning.affected).toBe(1)
+
+      // Same predicate as above (WHERE version = 1), now stale: this is
+      // exactly the query EntriesRepository.update() would issue for a
+      // second writer racing on the row's original, pre-write version.
+      const losing = await dataSource.manager.update(
+        Entry,
+        { id: created.id, version: 1 },
+        { title: 'loser', version: 2 },
+      )
+      expect(losing.affected).toBe(0)
     })
   })
 

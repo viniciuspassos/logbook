@@ -1,6 +1,6 @@
 import { Injectable } from '@nestjs/common'
 import { InjectRepository } from '@nestjs/typeorm'
-import { IsNull, type Repository } from 'typeorm'
+import { IsNull, type QueryDeepPartialEntity, type Repository } from 'typeorm'
 import { Entry, type SupersededEntryEdit } from './entry.entity'
 import { Attachment } from '../attachments/attachment.entity'
 import type { UpdateEntryDto } from './dto/update-entry.dto'
@@ -46,20 +46,36 @@ export class EntriesRepository {
   }
 
   /**
-   * Optimistic-concurrency update (#24). Reads the current row, compares
-   * `dto.version` against it, and:
-   *  - returns `not-found` (no write) if the entry doesn't exist or is
-   *    already tombstoned;
-   *  - returns `conflict` with the untouched current row (no write) if
-   *    `dto.version` doesn't match — the caller (EntriesService) turns this
-   *    into a 409 carrying that row, see EntryVersionConflictException;
-   *  - otherwise applies the change, bumps `version` by one, optionally
-   *    appends `dto.supersededEdit` to the preserved-losers history, and
-   *    saves — returning `updated` with the saved row.
+   * Optimistic-concurrency update (#24). Reads the current row to answer
+   * `not-found` and to build the 409 body / the `supersededEdits` history,
+   * but the actual write is a **conditional UPDATE** — `WHERE id = :id AND
+   * version = :baseVersion AND deletedAt IS NULL` — not a read-then-save. A
+   * transaction alone does not make a separate read-compare-write atomic
+   * under Postgres's default READ COMMITTED isolation: two requests can
+   * both read the same `version`, both pass an in-application check, and
+   * the second `save()` would silently clobber the first with its own
+   * stale value (a lost update, no 409, no error). Putting `version` in the
+   * UPDATE's own WHERE clause closes that gap without a lock: if a
+   * concurrent writer commits first, Postgres re-evaluates the WHERE
+   * clause against the now-current row before applying this one, so the
+   * predicate on the old `version` no longer matches and this UPDATE
+   * affects zero rows — verified to behave the same way against the sqljs
+   * driver this app's tests run on (see the "guards against a racing
+   * writer" test in entries.repository.test.ts), so this needs no
+   * driver-conditional code path.
    *
-   * Wrapped in a transaction so the read-compare-write sequence is atomic
-   * against a concurrent update racing on the same row, matching
-   * removeCascade's use of a transaction below for the same reason.
+   * Outcomes:
+   *  - `not-found` (no write) if the entry doesn't exist or is already
+   *    tombstoned at the initial read;
+   *  - `conflict` with the current row (no write applied) if the initial
+   *    read already shows a version mismatch, *or* if the conditional
+   *    UPDATE affects zero rows because a racing writer won between our
+   *    read and our write (re-read to get the row a second time in that
+   *    case; downgraded to `not-found` if that racing writer's change was
+   *    itself a delete);
+   *  - `updated` with the freshly re-read row otherwise — a plain
+   *    `UpdateResult` doesn't carry the updated column values back, so a
+   *    follow-up read is needed regardless of how the write happened.
    */
   async update(id: number, dto: UpdateEntryDto): Promise<EntryUpdateResult> {
     return this.orm.manager.transaction(async (manager) => {
@@ -71,29 +87,40 @@ export class EntriesRepository {
         return { outcome: 'conflict', current: existing }
       }
 
-      // Captured before merge: TypeORM's manager.merge() mutates
-      // `mergeIntoEntity` (here, `existing`) in place and returns that same
-      // reference — so `existing.version` would already reflect the bumped
-      // value below if read afterwards, corrupting the loser's recorded
-      // base version.
       const baseVersion = existing.version
-      const priorSupersededEdits = existing.supersededEdits
-
       const { version: _version, supersededEdit, ...changes } = dto
-      const merged = manager.merge<Entry>(Entry, existing, changes)
-      merged.version = baseVersion + 1
 
+      const columnChanges: QueryDeepPartialEntity<Entry> = {
+        ...changes,
+        version: baseVersion + 1,
+      }
       if (supersededEdit) {
         const loser: SupersededEntryEdit = {
           version: baseVersion,
           capturedAt: new Date().toISOString(),
           data: supersededEdit,
         }
-        merged.supersededEdits = [...(priorSupersededEdits ?? []), loser]
+        columnChanges.supersededEdits = [...(existing.supersededEdits ?? []), loser]
       }
 
-      const saved = await manager.save(Entry, merged)
-      return { outcome: 'updated', entry: saved }
+      const result = await manager.update(
+        Entry,
+        { id, version: baseVersion, deletedAt: IsNull() },
+        columnChanges,
+      )
+
+      if ((result.affected ?? 0) === 0) {
+        // Lost the race: something else wrote (or tombstoned) this row
+        // between our read above and the conditional UPDATE just now.
+        const current = await manager.findOneBy(Entry, { id })
+        if (!current || current.deletedAt) {
+          return { outcome: 'not-found' }
+        }
+        return { outcome: 'conflict', current }
+      }
+
+      const entry = await manager.findOneByOrFail(Entry, { id })
+      return { outcome: 'updated', entry }
     })
   }
 
