@@ -48,7 +48,7 @@ function App() {
           />
         )}
         {tab === 'search' && <SearchScreen entries={entries} onOpenEntry={openEntry} />}
-        {tab === 'stats' && <StatsScreen />}
+        {tab === 'stats' && <StatsScreen entries={entries} />}
         {tab === 'settings' && <SettingsScreen />}
       </div>
 

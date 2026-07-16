@@ -39,6 +39,12 @@
   margin-bottom: 12px;
 }
 
+.stats-screen__empty {
+  font-size: 14px;
+  color: var(--lb-muted);
+  margin: 0;
+}
+
 .stats-screen__breakdown {
   display: flex;
   flex-direction: column;

@@ -9,12 +9,12 @@ describe('filterEntries', () => {
 
   it('matches case-insensitively against the title', () => {
     const result = filterEntries(entries, 'annapurna')
-    expect(result.map((e) => e.id)).toEqual([5])
+    expect(result.map((e) => e.id)).toEqual([1])
   })
 
   it('matches against location', () => {
     const result = filterEntries(entries, 'brazil')
-    expect(result.map((e) => e.id)).toEqual([2])
+    expect(result.map((e) => e.id)).toEqual([4])
   })
 
   it('matches against excerpt', () => {

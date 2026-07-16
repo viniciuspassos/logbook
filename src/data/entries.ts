@@ -1,8 +1,11 @@
 import type { Entry } from '../types/entry.ts'
 
+// One-time seed for an empty store (see `useEntries`). Ids run newest-first so
+// that the persisted read order (descending id) preserves this array order and
+// user-added entries — which take the next-highest id — land on top.
 export const entries: Entry[] = [
   {
-    id: 1,
+    id: 5,
     title: 'Solo tandem jump',
     shape: 'circle',
     activityType: 'Skydiving',
@@ -25,7 +28,7 @@ export const entries: Entry[] = [
     mapY: 30,
   },
   {
-    id: 2,
+    id: 4,
     title: 'Pico da Bandeira',
     shape: 'triangle',
     activityType: 'Climbing',
@@ -70,7 +73,7 @@ export const entries: Entry[] = [
     mapY: 80,
   },
   {
-    id: 4,
+    id: 2,
     title: 'El Capitan – Nose Route',
     shape: 'triangle',
     activityType: 'Climbing',
@@ -92,7 +95,7 @@ export const entries: Entry[] = [
     mapY: 34,
   },
   {
-    id: 5,
+    id: 1,
     title: 'Annapurna Base Camp',
     shape: 'diamond',
     activityType: 'Trekking',
