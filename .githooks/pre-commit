@@ -16,4 +16,35 @@ else
   echo "[pre-commit] no \"test\" script in package.json yet, skipping"
 fi
 
+# server/ is a standalone NestJS package with its own package.json/node_modules,
+# deliberately NOT wired into the root package.json or workspaces (see
+# CLAUDE.md / docs/INFRASTRUCTURE.md). Unlike the frontend gate above, this
+# is scoped to staged changes under server/ rather than running unconditionally:
+# a plain `npm install` at the repo root never installs server/node_modules,
+# so running these gates on every commit would hard-fail any commit that
+# doesn't touch server/ (e.g. a docs typo fix) for a contributor who hasn't
+# separately run `npm install` inside server/. Scoping to staged server/
+# changes keeps the same "same checks as CI" guarantee for backend commits
+# without making the frontend dev loop depend on the backend toolchain being
+# set up at all — the same "strictly additive" rule this repo already holds
+# for the backend at runtime, applied to the commit gate too.
+if git diff --cached --name-only --diff-filter=ACMR | grep -q '^server/'; then
+  if [ ! -d server/node_modules ]; then
+    echo "[pre-commit] server/ has staged changes but server/node_modules is missing."
+    echo "[pre-commit] run \"npm install\" inside server/ first, then retry the commit."
+    exit 1
+  fi
+
+  echo "[pre-commit] server/: type-checking (tsc --noEmit)"
+  (cd server && npm run typecheck --silent)
+
+  echo "[pre-commit] server/: linting (eslint)"
+  (cd server && npm run lint --silent)
+
+  echo "[pre-commit] server/: running tests"
+  (cd server && npm test --silent)
+else
+  echo "[pre-commit] no staged changes under server/, skipping backend gates"
+fi
+
 echo "[pre-commit] all checks passed"

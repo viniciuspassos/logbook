@@ -9,7 +9,12 @@ export default defineConfig([
   // `.claude` holds agent scratch space, including git worktrees that contain
   // full copies of this repo — linting those would double-report every file
   // and confuse typescript-eslint's tsconfig root detection.
-  globalIgnores(['dist', '.claude']),
+  // `server` is a standalone NestJS package with its own eslint.config.js,
+  // tsconfig, and `npm run lint` script (see server/package.json) —
+  // deliberately not part of this project's tsconfig project references, so
+  // this root config's `**/*.{ts,tsx}` glob must not pick its files up (they
+  // fail to parse against tsconfig.app.json/tsconfig.node.json otherwise).
+  globalIgnores(['dist', '.claude', 'server']),
   {
     files: ['**/*.{ts,tsx}'],
     extends: [
