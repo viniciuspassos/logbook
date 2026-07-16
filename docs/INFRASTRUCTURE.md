@@ -65,6 +65,44 @@ This is local-only tooling — there is no hosted deployment target for `server/
 of this document (see [Build output](#build-output-and-hosting) below for the frontend's own
 no-hosting-target status).
 
+## Backend authentication (`server/src/auth/`)
+
+Now that the server is canonical (see `docs/ARCHITECTURE.md` → "Source of truth"), every
+entries/attachments route requires a session. Single-user, httpOnly session cookie — full design
+rationale lives in the auth PR description; this section is the operational summary.
+
+- **`AUTH_PASSWORD_HASH`** (required, no default outside Docker Compose) — a scrypt hash of the
+  single-user login password, generated with `npm run hash-password -- "<password>"` inside
+  `server/` and pasted into `server/.env`. The plaintext password is never stored anywhere,
+  including env vars — only its hash. `docker-compose.yml` bakes in a default hash (of
+  `logbook-dev-password`) purely for `docker compose up` to work out of the box, the same way it
+  bakes in the default Postgres `logbook`/`logbook` credentials — replace it for anything beyond
+  throwaway local use. Note the hash format is `$`-delimited (`scrypt$<cost>$<saltHex>$<hashHex>`),
+  which needs every `$` doubled to `$$` when set as a literal in `docker-compose.yml`'s
+  `environment:` block — Compose otherwise treats a single `$` as the start of a variable
+  reference and silently mangles the value.
+- **`SESSION_TTL_DAYS`** (optional, default `30`) — how long a session cookie lives before
+  expiring. It slides forward on use (renewed once less than half the TTL remains) rather than on
+  a fixed schedule, so a session doesn't get a full database write on every single request. The
+  default is deliberately long: the product requirement is that a multi-day trip with no
+  connectivity, followed by the client's offline write queue flushing on reconnect, must not fail
+  because the session expired while the device was offline and unable to renew it.
+- **Session storage is Postgres-backed** (a `sessions` table), not in-memory. The tradeoff was
+  considered explicitly: in-memory is simpler and needs no schema, but loses every session on a
+  container restart/redeploy — for a session designed to survive a multi-day offline trip, losing
+  it on every deploy would undermine the reason it's long-lived in the first place. Postgres is
+  already a hard dependency of this app (entries/attachments), so persisting sessions there adds
+  no new infrastructure.
+- **CSRF**: SameSite=Lax cookies alone were not treated as sufficient, because this API's eventual
+  frontend deployment topology (same-origin vs. a separate origin) isn't settled — frontend
+  integration is a separate, still-blocked piece of work. A double-submit CSRF token (a
+  non-httpOnly `logbook_csrf` cookie, echoed back in an `X-CSRF-Token` header on every mutating
+  request and checked against the session's stored copy) is layered on top and doesn't depend on
+  that decision. See `server/src/auth/csrf.guard.ts` for the implementation.
+- **`/health` and `POST /auth/login`** are the only public routes (`@Public()`), via a global guard
+  registered in `AuthModule` — every other route is protected by default rather than opted in
+  per-controller, so a new controller added later doesn't ship unauthenticated by omission.
+
 ## Git hooks (`.githooks/`)
 
 Hooks are plain shell scripts, versioned in the repo (not `.git/hooks`, which isn't checked in),

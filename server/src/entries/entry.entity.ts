@@ -78,6 +78,15 @@ export class Entry {
   @Column({ type: 'float' })
   mapY!: number
 
+  /**
+   * Reserved for a future multi-user migration (see server/src/auth for the
+   * current single-user auth model). Always null today — nothing writes it —
+   * but having the column now means that migration needs no backfill against
+   * live data.
+   */
+  @Column({ type: 'int', nullable: true })
+  userId?: number | null
+
   @CreateDateColumn()
   createdAt!: Date
 
