@@ -62,6 +62,7 @@ function App() {
           entry={selectedEntry}
           rawOpen={rawOpen}
           exportBusy={exportActions.busy}
+          exportStatus={exportActions.status}
           onToggleRaw={toggleRaw}
           onClose={closeOverlay}
           onExportMarkdown={exportActions.exportEntryMarkdown}

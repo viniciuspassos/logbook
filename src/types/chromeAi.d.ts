@@ -31,10 +31,17 @@ interface LanguageModelSession {
   destroy(): void
 }
 
+interface LanguageModelExpectedOutput {
+  type: 'text'
+  languages?: string[]
+}
+
 interface LanguageModelCreateOptions extends AiCreateOptionsBase {
   initialPrompts?: Array<{ role: 'system' | 'user' | 'assistant'; content: string }>
   temperature?: number
   topK?: number
+  /** Silences Chrome's "no output language specified" console warning. */
+  expectedOutputs?: LanguageModelExpectedOutput[]
 }
 
 interface LanguageModelStatic {

@@ -1,3 +1,4 @@
+import { getLanguageModelAvailability, isCapabilityUsable } from './availability.ts'
 import type { Entry } from '../../types/entry.ts'
 
 export interface SearchCriteria {
@@ -39,13 +40,14 @@ export async function parseSearchQuery(
   query: string,
   opts?: { signal?: AbortSignal },
 ): Promise<SearchCriteria> {
-  if (typeof LanguageModel === 'undefined') return keywordFallback(query)
+  if (!isCapabilityUsable(await getLanguageModelAvailability())) return keywordFallback(query)
 
   let session: LanguageModelSession | undefined
   try {
     session = await LanguageModel.create({
       signal: opts?.signal,
       initialPrompts: [{ role: 'system', content: SYSTEM_PROMPT }],
+      expectedOutputs: [{ type: 'text', languages: ['en'] }],
     })
     const response = await session.prompt(query, {
       signal: opts?.signal,
