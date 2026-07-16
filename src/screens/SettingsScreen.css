@@ -39,6 +39,49 @@
 .settings-screen__row-value {
   font-size: 13px;
   color: var(--lb-muted);
+  display: flex;
+  align-items: center;
+  gap: 8px;
+}
+
+/* Action rows are <button>s, so reset the UA chrome back to the row look. */
+.settings-screen__row--action {
+  width: 100%;
+  background: none;
+  border-left: none;
+  border-right: none;
+  border-top: none;
+  font: inherit;
+  text-align: left;
+  align-items: center;
+  cursor: pointer;
+}
+.settings-screen__row--action:hover:not(:disabled) {
+  background: var(--lb-surface-hover);
+}
+.settings-screen__row--action:disabled {
+  cursor: default;
+  opacity: 0.5;
+}
+
+.settings-screen__row-hint {
+  font-size: 12px;
+  color: var(--lb-muted);
+}
+
+/* Reserve the line's height so a status message doesn't shift the rows below. */
+.settings-screen__status {
+  min-height: 18px;
+  margin: -12px 0 16px;
+  padding: 0 2px;
+}
+
+.settings-screen__status-text {
+  font-size: 12px;
+  color: var(--lb-success);
+}
+.settings-screen__status-text--error {
+  color: var(--lb-danger);
 }
 
 .settings-screen__enabled {

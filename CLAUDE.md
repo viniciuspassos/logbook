@@ -4,16 +4,21 @@ This file provides guidance to Claude Code (claude.ai/code) when working with co
 
 ## Project
 
-Logbook is an offline-first Progressive Web App (PWA) for mountaineers and skydivers to record their adventures, even in places with little or no internet connectivity (see `package.json` description). The codebase is currently a freshly scaffolded Vite + React + TypeScript app (`src/App.tsx` still contains the default Vite template content) — offline/PWA functionality and the actual logbook features have not been implemented yet.
+Logbook is an offline-first Progressive Web App (PWA) for mountaineers and skydivers to record their adventures, even in places with little or no internet connectivity (see `package.json` description). It is a working app: an installable, offline-capable PWA that captures entries by voice, structures and polishes them with Chrome's built-in on-device AI, persists them in IndexedDB, and exports them to Markdown/PDF/JSON.
+
+Two features from the product vision are not implemented yet: **photo attachments** and **optional cloud backup sync**. Everything else in `README.md`'s "Product vision" is live.
+
+The AI and speech features require desktop Chrome with the built-in AI flags enabled (README → "Browser & AI requirements"). They are always optional at runtime — see Browser AI rules below.
 
 ## Commands
 
-- `npm run dev` — start the Vite dev server with HMR
-- `npm run build` — type-check via `tsc -b` (project references: `tsconfig.app.json` + `tsconfig.node.json`), then production build via `vite build`
+- `npm run dev` — start the Vite dev server with HMR (the service worker is enabled in dev too)
+- `npm run build` — type-check via `tsc -b` (project references: `tsconfig.app.json` + `tsconfig.node.json`), then production build via `vite build` (also emits the manifest + service worker)
 - `npm run lint` — run ESLint over the whole repo
-- `npm run preview` — serve the production build locally
+- `npm test` — run the Jest suite (jsdom + Testing Library)
+- `npm run preview` — serve the production build locally (needed to exercise the real PWA/offline behaviour)
 
-There is no test runner configured yet (no Jest, no test script in `package.json`). Per project convention (see Testing below), one must be set up before/alongside adding functions.
+`.githooks/pre-commit` gates every commit on typecheck → lint → tests, and `.githooks/commit-msg` enforces Conventional Commits. `npm install` wires the hooks up via the `prepare` script.
 
 ## Testing
 
@@ -23,10 +28,187 @@ Tests must never be deleted to make a change land. If a test's behavior is genui
 
 ## Architecture
 
-- Build tooling: Vite (`vite.config.ts`) with `@vitejs/plugin-react`.
+- Build tooling: Vite (`vite.config.ts`) with `@vitejs/plugin-react` and `vite-plugin-pwa` (manifest + Workbox `generateSW`, `registerType: 'autoUpdate'`, service worker enabled in dev).
 - TypeScript is split via project references from the root `tsconfig.json` into:
   - `tsconfig.app.json` — app code under `src/`, bundler module resolution, `noEmit`, strict unused-locals/params checks.
   - `tsconfig.node.json` — Node-side config (`vite.config.ts` itself).
-- Linting: flat ESLint config (`eslint.config.js`) combining `@eslint/js` recommended, `typescript-eslint` recommended, `eslint-plugin-react-hooks`, and `eslint-plugin-react-refresh` (Vite variant). `dist` is ignored.
+- Linting: flat ESLint config (`eslint.config.js`) combining `@eslint/js` recommended, `typescript-eslint` recommended, `eslint-plugin-react-hooks`, and `eslint-plugin-react-refresh` (Vite variant). `dist` is ignored. Keep `any` out of new code — prefer `unknown` + narrowing, or the ambient interfaces in `src/types/`.
 - Entry point: `index.html` → `src/main.tsx` mounts `<App />` from `src/App.tsx` into `#root` under `React.StrictMode`.
-- Static assets referenced by `<use href="/icons.svg#...">` and `favicon.svg` live in `public/`; component-local assets (images, logos) live in `src/assets/`.
+- App icons and the PWA icon set live in `public/` (`icon.svg` is the source of truth; the PNGs are rendered from it). Component-local assets live in `src/assets/`.
+- Theme tokens (`--lb-*`) are defined once in `src/index.css`, with a `prefers-color-scheme: dark` block. Add new colours there rather than hardcoding hex in a component's CSS; the manifest/`theme-color` values in `vite.config.ts` and `index.html` mirror them.
+
+### State composition
+
+`useLogbookApp` is the composition root and owns nothing itself. It wires together:
+
+- `useNavigation` — tab, overlay, timeline view, selected entry.
+- `useEntries` — the persisted list; loads from IndexedDB on mount, seeds from `src/data/entries.ts` only when the store is empty, and write-throughs on save. `data/entries.ts` is seed data, **not** the live source of truth.
+- `useNewEntryFlow` — the capture → listening → processing → review state machine, speech, and AI orchestration.
+- `useExportActions` — Markdown/PDF/backup/restore, with a `busy` guard and a status message.
+
+Keep these concerns separate: put new state in the hook that owns that concern (or a new one) rather than growing `useLogbookApp` back into a god hook.
+
+### Layering
+
+Screens and hooks must not touch flag-gated browser globals directly. All browser-API access goes through thin, individually-tested wrappers:
+
+- `src/lib/ai/` — `availability`, `extractEntry`, `rewriteStory`, `searchEntries` (Prompt + Rewriter APIs)
+- `src/lib/db/entriesStore.ts` — IndexedDB
+- `src/lib/backup/` — File System Access (JSON snapshot export/import)
+- `src/lib/export/` — pure Markdown/printable-HTML formatters; shared field rules live in `entryFields.ts` so formats can't drift apart
+- `src/types/*.d.ts` — ambient declarations for APIs missing from the DOM lib (speech, Chrome AI, File System Access)
+
+This is what keeps a shifting origin-trial API surface a one-file change.
+
+## Browser AI rules
+
+**AI unavailability must never block entry creation.** See README → "Browser AI best practices" for the full pattern; the short version, which applies to any new on-device-AI work:
+
+- Check `getAiCapabilities()` before creating a session; guard every global with `typeof X === 'undefined'` so jsdom and non-Chrome browsers are safe by default.
+- Treat `'downloadable'`/`'downloading'` as usable — `create()` triggers the download.
+- Degrade to the manual path on any failure (including `QuotaExceededError`); never surface an unhandled rejection.
+- Pair every `create()` with `destroy()` in a `finally`, and thread an `AbortSignal` so closing the overlay cancels in-flight work.
+- Run on-device models sequentially — Gemini Nano is a single local model.
+- Never trust structured output; recover/validate before use.
+- Announce async state through `aria-live` regions.
+
+Tests must not install global AI/speech doubles in `jest.setup.ts` — the default state is real jsdom `undefined` ("unavailable"), and each test opts in locally.
+
+<!-- rtk-instructions v2 -->
+# RTK (Rust Token Killer) - Token-Optimized Commands
+
+## Golden Rule
+
+**Always prefix commands with `rtk`**. If RTK has a dedicated filter, it uses it. If not, it passes through unchanged. This means RTK is always safe to use.
+
+**Important**: Even in command chains with `&&`, use `rtk`:
+```bash
+# ❌ Wrong
+git add . && git commit -m "msg" && git push
+
+# ✅ Correct
+rtk git add . && rtk git commit -m "msg" && rtk git push
+```
+
+## RTK Commands by Workflow
+
+### Build & Compile (80-90% savings)
+```bash
+rtk cargo build         # Cargo build output
+rtk cargo check         # Cargo check output
+rtk cargo clippy        # Clippy warnings grouped by file (80%)
+rtk tsc                 # TypeScript errors grouped by file/code (83%)
+rtk lint                # ESLint/Biome violations grouped (84%)
+rtk prettier --check    # Files needing format only (70%)
+rtk next build          # Next.js build with route metrics (87%)
+```
+
+### Test (60-99% savings)
+```bash
+rtk cargo test          # Cargo test failures only (90%)
+rtk go test             # Go test failures only (90%)
+rtk jest                # Jest failures only (99.5%)
+rtk vitest              # Vitest failures only (99.5%)
+rtk playwright test     # Playwright failures only (94%)
+rtk pytest              # Python test failures only (90%)
+rtk rake test           # Ruby test failures only (90%)
+rtk rspec               # RSpec test failures only (60%)
+rtk test <cmd>          # Generic test wrapper - failures only
+```
+
+### Git (59-80% savings)
+```bash
+rtk git status          # Compact status
+rtk git log             # Compact log (works with all git flags)
+rtk git diff            # Compact diff (80%)
+rtk git show            # Compact show (80%)
+rtk git add             # Ultra-compact confirmations (59%)
+rtk git commit          # Ultra-compact confirmations (59%)
+rtk git push            # Ultra-compact confirmations
+rtk git pull            # Ultra-compact confirmations
+rtk git branch          # Compact branch list
+rtk git fetch           # Compact fetch
+rtk git stash           # Compact stash
+rtk git worktree        # Compact worktree
+```
+
+Note: Git passthrough works for ALL subcommands, even those not explicitly listed.
+
+### GitHub (26-87% savings)
+```bash
+rtk gh pr view <num>    # Compact PR view (87%)
+rtk gh pr checks        # Compact PR checks (79%)
+rtk gh run list         # Compact workflow runs (82%)
+rtk gh issue list       # Compact issue list (80%)
+rtk gh api              # Compact API responses (26%)
+```
+
+### JavaScript/TypeScript Tooling (70-90% savings)
+```bash
+rtk pnpm list           # Compact dependency tree (70%)
+rtk pnpm outdated       # Compact outdated packages (80%)
+rtk pnpm install        # Compact install output (90%)
+rtk npm run <script>    # Compact npm script output
+rtk npx <cmd>           # Compact npx command output
+rtk prisma              # Prisma without ASCII art (88%)
+```
+
+### Files & Search (60-75% savings)
+```bash
+rtk ls <path>           # Tree format, compact (65%)
+rtk read <file>         # Code reading with filtering (60%)
+rtk grep <pattern>      # Search grouped by file (75%). Format flags (-c, -l, -L, -o, -Z) run raw.
+rtk find <pattern>      # Find grouped by directory (70%)
+```
+
+### Analysis & Debug (70-90% savings)
+```bash
+rtk err <cmd>           # Filter errors only from any command
+rtk log <file>          # Deduplicated logs with counts
+rtk json <file>         # JSON structure without values
+rtk deps                # Dependency overview
+rtk env                 # Environment variables compact
+rtk summary <cmd>       # Smart summary of command output
+rtk diff                # Ultra-compact diffs
+```
+
+### Infrastructure (85% savings)
+```bash
+rtk docker ps           # Compact container list
+rtk docker images       # Compact image list
+rtk docker logs <c>     # Deduplicated logs
+rtk kubectl get         # Compact resource list
+rtk kubectl logs        # Deduplicated pod logs
+```
+
+### Network (65-70% savings)
+```bash
+rtk curl <url>          # Compact HTTP responses (70%)
+rtk wget <url>          # Compact download output (65%)
+```
+
+### Meta Commands
+```bash
+rtk gain                # View token savings statistics
+rtk gain --history      # View command history with savings
+rtk discover            # Analyze Claude Code sessions for missed RTK usage
+rtk proxy <cmd>         # Run command without filtering (for debugging)
+rtk init                # Add RTK instructions to CLAUDE.md
+rtk init --global       # Add RTK to ~/.claude/CLAUDE.md
+```
+
+## Token Savings Overview
+
+| Category | Commands | Typical Savings |
+|----------|----------|-----------------|
+| Tests | vitest, playwright, cargo test | 90-99% |
+| Build | next, tsc, lint, prettier | 70-87% |
+| Git | status, log, diff, add, commit | 59-80% |
+| GitHub | gh pr, gh run, gh issue | 26-87% |
+| Package Managers | pnpm, npm, npx | 70-90% |
+| Files | ls, read, grep, find | 60-75% |
+| Infrastructure | docker, kubectl | 85% |
+| Network | curl, wget | 65-70% |
+
+Overall average: **60-90% token reduction** on common development operations.
+<!-- /rtk-instructions -->

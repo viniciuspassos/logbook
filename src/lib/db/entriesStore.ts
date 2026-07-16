@@ -86,6 +86,23 @@ export async function putEntries(entries: Entry[]): Promise<void> {
   }
 }
 
+/**
+ * Replace the entire store with `entries`, in a single transaction — used when
+ * restoring a backup. Atomic by design: a failure part-way through aborts the
+ * transaction and leaves the existing entries intact rather than half-wiped.
+ */
+export async function replaceAllEntries(entries: Entry[]): Promise<void> {
+  const db = await openDb()
+  try {
+    await runWrite(db, (store) => {
+      store.clear()
+      for (const entry of entries) store.put(entry)
+    })
+  } finally {
+    db.close()
+  }
+}
+
 /** Remove an entry by id (no-op if it doesn't exist). */
 export async function deleteEntry(id: number): Promise<void> {
   const db = await openDb()

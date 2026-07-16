@@ -7,15 +7,22 @@ import './EntryDetailOverlay.css'
 interface EntryDetailOverlayProps {
   entry: Entry
   rawOpen: boolean
+  /** Disables the export buttons while another export is already in flight. */
+  exportBusy?: boolean
   onToggleRaw: () => void
   onClose: () => void
+  onExportMarkdown: (entry: Entry) => void
+  onExportPdf: (entry: Entry) => void
 }
 
 export function EntryDetailOverlay({
   entry,
   rawOpen,
+  exportBusy = false,
   onToggleRaw,
   onClose,
+  onExportMarkdown,
+  onExportPdf,
 }: EntryDetailOverlayProps) {
   return (
     <div className="entry-detail">
@@ -74,10 +81,20 @@ export function EntryDetailOverlay({
         {rawOpen && <div className="entry-detail__raw">&ldquo;{entry.raw}&rdquo;</div>}
 
         <div className="entry-detail__actions">
-          <button type="button" className="entry-detail__action">
+          <button
+            type="button"
+            className="entry-detail__action"
+            disabled={exportBusy}
+            onClick={() => onExportMarkdown(entry)}
+          >
             Export Markdown
           </button>
-          <button type="button" className="entry-detail__action">
+          <button
+            type="button"
+            className="entry-detail__action"
+            disabled={exportBusy}
+            onClick={() => onExportPdf(entry)}
+          >
             Export PDF
           </button>
         </div>
