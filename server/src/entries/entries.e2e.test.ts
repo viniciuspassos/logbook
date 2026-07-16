@@ -13,8 +13,10 @@ import {
   type AuthenticatedRequestContext,
 } from '../auth/test-support/auth-e2e.helper'
 import { loadConfig } from '../config/configuration'
+import { StorageModule } from '../storage/storage.module'
 import { EntriesModule } from './entries.module'
 import { Entry } from './entry.entity'
+import { Attachment } from '../attachments/attachment.entity'
 
 /**
  * Integration test: boots a real Nest app (global ValidationPipe + the real
@@ -24,6 +26,14 @@ import { Entry } from './entry.entity'
  * in front of it — is exercised without needing a running Postgres instance
  * for `npm test`. Production still targets Postgres (see
  * database/typeorm.config.ts).
+ *
+ * StorageModule and the Attachment entity are wired in even though this
+ * suite never uploads anything: EntriesService's cascade-delete (#20) needs
+ * the FILE_STORAGE token, and EntriesRepository.removeCascade touches the
+ * attachments table directly (see entries.repository.ts), so both must be
+ * registered for the DELETE lifecycle test below to run at all. The
+ * attachments-specific cascade behaviour itself is covered end-to-end in
+ * attachments.e2e.test.ts, which already wires up the full upload path.
  */
 describe('Entries (e2e)', () => {
   let app: INestApplication
@@ -68,8 +78,9 @@ describe('Entries (e2e)', () => {
           type: 'sqljs',
           autoSave: false,
           synchronize: true,
-          entities: [Entry, Session],
+          entities: [Entry, Attachment, Session],
         }),
+        StorageModule,
         AuthModule,
         EntriesModule,
       ],

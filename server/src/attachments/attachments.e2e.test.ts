@@ -193,6 +193,63 @@ describe('Attachments (e2e)', () => {
     ).expect(404)
   })
 
+  it('cascade-deletes an entry\'s attachments (rows + files) when the entry is deleted (#20)', async () => {
+    const cascadeEntryRes = await withAuth(
+      request(app.getHttpServer()).post('/entries'),
+      auth,
+      { mutating: true },
+    ).send({
+      title: 'Cascade delete target',
+      shape: 'circle',
+      location: 'Chamonix, France',
+      date: 'Aug 1',
+      metric: '4,808m',
+      excerpt: 'excerpt',
+      weather: 'Clear',
+      duration: '2d',
+      difficulty: 'Advanced',
+      equipment: 'crampons',
+      participants: 'solo',
+      raw: 'raw',
+      story: 'story',
+      photoHint: 'hint',
+      media: ['a', 'b', 'c'],
+      mapX: 10,
+      mapY: 90,
+    })
+    const cascadeEntryId = cascadeEntryRes.body.id as number
+
+    const uploadRes = await withAuth(
+      request(app.getHttpServer()).post(`/entries/${cascadeEntryId}/attachments`),
+      auth,
+      { mutating: true },
+    )
+      .attach('file', JPEG_BYTES, { filename: 'summit.jpg', contentType: 'image/jpeg' })
+      .expect(201)
+    const cascadeAttachmentId = uploadRes.body.id as number
+    const storageKey = uploadRes.body.storageKey as string
+
+    await withAuth(
+      request(app.getHttpServer()).delete(`/entries/${cascadeEntryId}`),
+      auth,
+      { mutating: true },
+    ).expect(204)
+
+    await withAuth(
+      request(app.getHttpServer()).get(`/attachments/${cascadeAttachmentId}`),
+      auth,
+    ).expect(404)
+    await withAuth(
+      request(app.getHttpServer()).get(`/attachments/${cascadeAttachmentId}/file`),
+      auth,
+    ).expect(404)
+
+    // Proves the *file* was actually removed from disk, not just the row —
+    // the rows-first/files-best-effort ordering means row deletion always
+    // succeeds, but this confirms the best-effort file cleanup ran too.
+    await expect(fs.access(path.join(uploadDir, storageKey))).rejects.toThrow()
+  })
+
   it('rejects an HTML payload uploaded with a spoofed image/png Content-Type, and never stores it (#19)', async () => {
     const htmlPayload = Buffer.from(
       '<html><body><script>alert(document.cookie)</script></body></html>',
