@@ -51,10 +51,14 @@ Services:
   volume `logbook-uploads`, so uploaded files survive `docker compose down`/`up` and container
   recreation — `server/.env.example` flags the bare local-disk default as non-durable without
   this. Has an HTTP healthcheck against `GET /health`.
-- No schema migration mechanism exists yet (see `server/src/database/typeorm.config.ts`):
-  `synchronize` auto-syncs the schema from TypeORM entities outside `NODE_ENV=production`. This
-  compose setup runs `NODE_ENV=development`, so a fresh `db` volume gets its schema created
-  automatically on first `backend` boot — there's nothing to run by hand.
+- Schema is created and evolved entirely by TypeORM migrations (see "Database migrations
+  (`server/src/database/`)" below) — `synchronize` is `false` in every environment, including this
+  Compose setup's `NODE_ENV=development`. `migrationsRun: true` (`server/src/database/typeorm.config.ts`)
+  means pending migrations apply automatically the moment `backend` connects, so a fresh `db`
+  volume still gets its schema created with no manual step. Verified locally: `docker compose up
+  --build` against a brand-new `db` volume creates `entries`/`attachments`/`sessions` via the
+  baseline migration (tracked in TypeORM's own `migrations` table) before `backend` reports
+  healthy.
 
 Verified locally: `db` reaches `healthy` before `backend` starts, `backend` reaches `healthy` via
 its own `GET /health` check, `GET http://localhost:3000/health` responds `200` from the host, the
@@ -64,6 +68,86 @@ backend process inside the container runs as a non-root user, and files written 
 This is local-only tooling — there is no hosted deployment target for `server/`, matching the rest
 of this document (see [Build output](#build-output-and-hosting) below for the frontend's own
 no-hosting-target status).
+
+## Database migrations (`server/src/database/`)
+
+Schema is managed entirely by TypeORM migrations (#21) — `synchronize` is `false` in every
+environment. There is no auto-sync path left, in dev or production: a developer who changes an
+entity has to generate and commit a migration, the same way they'd write a test for new behavior.
+
+- **Why no dev/prod split, and why tests are the one exception.** Auto-sync used to be on outside
+  `NODE_ENV=production` for fast local iteration, with production the only environment expected to
+  run migrations — except production had *no* migration mechanism at all, so a real deploy would
+  have started completely unmigrated. Migrations now exist, so there's no reason left to keep two
+  schema-deploy paths for dev and prod; both go through the same reviewable, reversible migration
+  history. The three e2e suites (`entries.e2e.test.ts`, `auth.e2e.test.ts`,
+  `attachments.e2e.test.ts`) are the deliberate exception: they build their own in-memory `sql.js`
+  (pure-JS SQLite) schema via a literal `TypeOrmModule.forRoot({ synchronize: true, ... })`,
+  entirely separate from `typeorm.config.ts`. Forcing them onto migrations instead would mean
+  either writing every migration portable across SQLite and Postgres, or moving the suites onto a
+  real Postgres container and making `npm test` substantially slower — for coverage of *behavior*,
+  not the schema deploy path, which is what the drift check below covers instead.
+- **Changed an entity? Generate a migration.** With a Postgres reachable at `DATABASE_URL` (e.g.
+  `docker compose up db` from the repo root, or any local Postgres) and the target schema already
+  migrated to the previous state:
+  ```
+  cd server
+  npm run migration:generate -- src/database/migrations/DescriptiveName
+  ```
+  Review the generated SQL (TypeORM diffs the live database against entity metadata — it's usually
+  right, but not infallible, especially for renames, which it sees as a drop + add), then commit
+  the migration file alongside the entity change in the same PR. `npm run migration:create --
+  src/database/migrations/Name` writes an empty migration for changes TypeORM can't infer (e.g.
+  data backfills) — fill in `up`/`down` by hand.
+- **Running migrations.** `npm run migration:run` applies every pending migration;
+  `npm run migration:revert` rolls back the most recently applied one. Neither is a required manual
+  step for local dev or `docker compose up` — see `migrationsRun: true` below — but both are
+  available for e.g. reverting a bad migration, or running migrations against a database the app
+  itself isn't currently connected to.
+- **The running app applies migrations automatically on boot** (`migrationsRun: true` in
+  `server/src/database/typeorm.config.ts`), in every environment, including this Compose setup and
+  a from-scratch `docker compose up` against a brand-new `db` volume. This was chosen over a
+  separate, explicit "run migrations" deploy step because there is currently no CD pipeline or
+  hosted deployment target for `server/` (see below) — Compose's `backend` container *is* the only
+  "deployment" that exists today, and it's still single-instance, so there's no risk of two
+  instances racing to apply the same migration concurrently. Revisit this (move to an explicit
+  pre-boot migration step, e.g. a Compose `command` override or a CD pipeline stage) if/when a real
+  multi-instance deployment target is added — auto-run-on-boot stops being safe once more than one
+  instance can start at once.
+- **The TypeORM CLI (`server/src/database/data-source.ts`)** is a separate `DataSource`, used only
+  by `npm run migration:*` (via `typeorm-ts-node-commonjs`, see `server/package.json`), not by the
+  running app. It runs outside Nest's DI entirely, so it loads `server/.env` itself (via `dotenv`)
+  and only needs `DATABASE_URL` — not the full `AppConfig` the app needs (which also requires
+  `AUTH_PASSWORD_HASH`, unrelated to migrations). It explicitly lists every entity
+  (`server/src/database/entities.ts`) because it has no Nest module graph to discover them from;
+  the running app instead uses `autoLoadEntities: true` via each module's own
+  `TypeOrmModule.forFeature()` registration.
+- **CI drift check (`server-migrations-drift` in `.github/workflows/ci-static.yml`)** is what
+  replaces the coverage lost by keeping the sqlite-backed e2e suites off migrations. It spins up a
+  real Postgres service container, runs every committed migration against it, then re-runs
+  `migration:generate` and fails if that produces a *new* migration file — i.e. if entities and
+  committed migrations have diverged. Note the inverted signal: TypeORM's `migration:generate` CLI
+  exits `1` when there's *nothing* to generate ("no changes... cannot generate a migration") and
+  exits `0` (while writing a file) when there *is* a diff — so the job checks whether a migration
+  file was written, not the exit code, which would otherwise mean the opposite of what it looks
+  like. Verified locally by temporarily adding a column to an entity with no matching migration,
+  confirming `migration:generate` wrote a new file for it (drift correctly detected), then
+  reverting.
+- **First migration is a single baseline** (`Baseline<timestamp>.ts`), generated from the current
+  entities (`Entry`, `Attachment`, `Session`). Nothing has been deployed, so there's no live data to
+  preserve and no real intermediate schema history to reconstruct — splitting it to mirror how the
+  schema evolved during development would be fiction.
+- **No DB-level `ON DELETE CASCADE` on `attachments.entryId`.** Deleting an `Entry` cascade-deletes
+  its `Attachment` rows today entirely at the application layer
+  (`EntriesRepository.removeCascade`, #20), not via a foreign-key constraint — `entryId` is a plain
+  column, not a TypeORM relation, by deliberate design (see the comment on `Attachment` in
+  `server/src/attachments/attachment.entity.ts` for the full reasoning). Migrations existing now
+  doesn't change that: modeling a real FK would require converting `entryId` into a proper
+  `@ManyToOne`/`@JoinColumn` relation, which is a behavior change for every repository/service
+  method that reads or filters on `entryId` today, and `removeCascade` is verifiably the only code
+  path that deletes an `Entry` row. A DB-level constraint would be defense-in-depth against a future
+  bug bypassing the repository layer, not a replacement for the app-layer cascade — worth adding if
+  `Attachment` ever needs a real relation for other reasons, not on its own today.
 
 ## Backend authentication (`server/src/auth/`)
 
@@ -144,7 +228,7 @@ deployment target — see [Build output](#build-output-and-hosting) below).
 
 ### 1. `ci-static.yml` — static gates
 
-Triggers on every PR open/sync/reopen and now runs two independent jobs:
+Triggers on every PR open/sync/reopen and now runs three independent jobs:
 
 - **`static-gates`** — frontend. Runs `npm ci`, then re-runs the **exact same
   `.githooks/pre-commit` script** (typecheck → lint → test) plus a production `npm run build`.
@@ -155,11 +239,15 @@ Triggers on every PR open/sync/reopen and now runs two independent jobs:
   → `npm run typecheck` → `npm run lint` → `npm test` → `npm run build`. `server/`'s Jest suite
   runs against an in-memory `sql.js` SQLite build rather than a live Postgres, so this job needs
   no database service container to pass.
+- **`server-migrations-drift`** — backend, and the one job here that *does* need a real database:
+  a `postgres:16.4-bookworm` service container. Runs the committed migrations against it, then
+  fails if `migration:generate` would produce a new one — see "Database migrations" above for the
+  full mechanics and why the exit code alone isn't the signal to check.
 
-Both jobs run unconditionally on every PR — neither needs a comment or manual trigger. Whether
-`server-static-gates` is additionally configured as a *required* status check in this repository's
-branch-protection settings (alongside `static-gates`) is a GitHub repo setting, not something
-tracked in this file or in workflow YAML.
+All three jobs run unconditionally on every PR — none needs a comment or manual trigger. Whether
+`server-static-gates` and `server-migrations-drift` are additionally configured as *required*
+status checks in this repository's branch-protection settings (alongside `static-gates`) is a
+GitHub repo setting, not something tracked in this file or in workflow YAML.
 
 ### 2. `qa-gate-pending.yml` + `qa-gate-run.yml` — AI-driven QA release gate
 
@@ -211,11 +299,12 @@ triggers.
 ### Branch protection expectation
 
 Per `README.md` → "Contributing / git workflow": both `ci-static` and `qa-release-gate` are
-expected to be green before merge. `ci-static` runs unconditionally (as both its `static-gates` and
-`server-static-gates` jobs); `qa-release-gate` starts `queued` and only resolves once someone
-comments `/qa` — so a PR can sit with one green, one pending check until a maintainer explicitly
-requests the QA run. Whether `server-static-gates` is marked as a required check alongside
-`static-gates` in this repository's branch-protection rules is a manual GitHub setting outside this
+expected to be green before merge. `ci-static` runs unconditionally (as its `static-gates`,
+`server-static-gates`, and `server-migrations-drift` jobs); `qa-release-gate` starts `queued` and
+only resolves once someone comments `/qa` — so a PR can sit with one green, one pending check until
+a maintainer explicitly requests the QA run. Whether `server-static-gates` and
+`server-migrations-drift` are marked as required checks alongside `static-gates` in this
+repository's branch-protection rules is a manual GitHub setting outside this
 repo's version-controlled config.
 
 ## Build output and hosting
