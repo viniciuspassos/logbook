@@ -1,7 +1,6 @@
-import { useState } from 'react'
 import { entries as seedEntries } from '../data/entries.ts'
 import { buildEntryFromDraft } from '../lib/buildEntry.ts'
-import type { Entry } from '../types/entry.ts'
+import { useEntries } from './useEntries.ts'
 import { useNavigation } from './useNavigation.ts'
 import { useNewEntryFlow } from './useNewEntryFlow.ts'
 
@@ -9,13 +8,12 @@ export type { Tab, Overlay, TimelineView } from './useNavigation.ts'
 export type { NewEntryStep } from './useNewEntryFlow.ts'
 
 /**
- * Top-level app state: composes navigation and the new-entry AI flow, and owns
- * the (currently in-memory) entries list. `entries` is `useState`-backed so a
- * saved entry is visible immediately; IndexedDB persistence is a later phase
- * that swaps only the storage without touching this coordination logic.
+ * Top-level app state: composes navigation, the persisted entries list, and the
+ * new-entry AI flow. Entries load from (and write through to) IndexedDB via
+ * `useEntries`; this hook only coordinates when a new one is built and saved.
  */
 export function useLogbookApp() {
-  const [entries, setEntries] = useState<Entry[]>(seedEntries)
+  const { entries, addEntry } = useEntries(seedEntries)
   const nav = useNavigation(entries)
   const flow = useNewEntryFlow()
 
@@ -32,7 +30,7 @@ export function useLogbookApp() {
   function saveEntry() {
     const nextId = entries.reduce((max, entry) => Math.max(max, entry.id), 0) + 1
     const entry = buildEntryFromDraft(flow.draft, { id: nextId, date: new Date() })
-    setEntries((prev) => [entry, ...prev])
+    addEntry(entry)
     flow.reset()
     nav.goTimeline()
   }
