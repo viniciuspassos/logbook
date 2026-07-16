@@ -4,6 +4,12 @@ export interface Entry {
   id: number
   title: string
   shape: AdventureShape
+  /**
+   * Optional richer activity classification from the AI (e.g. "Skydiving",
+   * "Climbing", "Hiking"). Additive to `shape`, which stays the 3-value icon
+   * bucket; older seed entries may omit this.
+   */
+  activityType?: string
   location: string
   date: string
   metric: string

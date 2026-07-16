@@ -1,94 +1,69 @@
-import { useEffect, useRef, useState } from 'react'
-import { entries } from '../data/entries.ts'
+import { useState } from 'react'
+import { entries as seedEntries } from '../data/entries.ts'
+import { buildEntryFromDraft } from '../lib/buildEntry.ts'
 import type { Entry } from '../types/entry.ts'
+import { useNavigation } from './useNavigation.ts'
+import { useNewEntryFlow } from './useNewEntryFlow.ts'
 
-export type Tab = 'timeline' | 'search' | 'stats' | 'settings'
-export type Overlay = 'entry' | 'newEntry' | null
-export type TimelineView = 'list' | 'map'
-export type NewEntryStep = 'capture' | 'listening' | 'processing' | 'review'
+export type { Tab, Overlay, TimelineView } from './useNavigation.ts'
+export type { NewEntryStep } from './useNewEntryFlow.ts'
 
-const LISTENING_MS = 1400
-const PROCESSING_MS = 1400
-
+/**
+ * Top-level app state: composes navigation and the new-entry AI flow, and owns
+ * the (currently in-memory) entries list. `entries` is `useState`-backed so a
+ * saved entry is visible immediately; IndexedDB persistence is a later phase
+ * that swaps only the storage without touching this coordination logic.
+ */
 export function useLogbookApp() {
-  const [tab, setTab] = useState<Tab>('timeline')
-  const [overlay, setOverlay] = useState<Overlay>(null)
-  const [entryId, setEntryId] = useState<number | null>(null)
-  const [rawOpen, setRawOpen] = useState(false)
-  const [timelineView, setTimelineView] = useState<TimelineView>('list')
-  const [newStep, setNewStep] = useState<NewEntryStep>('capture')
+  const [entries, setEntries] = useState<Entry[]>(seedEntries)
+  const nav = useNavigation(entries)
+  const flow = useNewEntryFlow()
 
-  const listeningTimer = useRef<ReturnType<typeof setTimeout>>(undefined)
-  const processingTimer = useRef<ReturnType<typeof setTimeout>>(undefined)
-
-  useEffect(
-    () => () => {
-      clearTimeout(listeningTimer.current)
-      clearTimeout(processingTimer.current)
-    },
-    [],
-  )
-
-  function goTab(next: Tab) {
-    setTab(next)
-    setOverlay(null)
-  }
-
-  function openEntry(id: number) {
-    setOverlay('entry')
-    setEntryId(id)
-    setRawOpen(false)
+  function openNewEntry() {
+    flow.reset()
+    nav.openNewEntryOverlay()
   }
 
   function closeOverlay() {
-    setOverlay(null)
-  }
-
-  function toggleRaw() {
-    setRawOpen((open) => !open)
-  }
-
-  function openNewEntry() {
-    setOverlay('newEntry')
-    setNewStep('capture')
-  }
-
-  function startRecording() {
-    setNewStep('listening')
-    clearTimeout(listeningTimer.current)
-    clearTimeout(processingTimer.current)
-    listeningTimer.current = setTimeout(() => {
-      setNewStep('processing')
-    }, LISTENING_MS)
-    processingTimer.current = setTimeout(() => {
-      setNewStep('review')
-    }, LISTENING_MS + PROCESSING_MS)
+    flow.abort()
+    nav.closeOverlay()
   }
 
   function saveEntry() {
-    setOverlay(null)
-    setTab('timeline')
-    setNewStep('capture')
+    const nextId = entries.reduce((max, entry) => Math.max(max, entry.id), 0) + 1
+    const entry = buildEntryFromDraft(flow.draft, { id: nextId, date: new Date() })
+    setEntries((prev) => [entry, ...prev])
+    flow.reset()
+    nav.goTimeline()
   }
 
-  const selectedEntry: Entry =
-    entries.find((entry) => entry.id === entryId) ?? entries[0]
-
   return {
-    tab,
-    overlay,
-    timelineView,
-    rawOpen,
-    newStep,
+    // navigation + data
+    tab: nav.tab,
+    overlay: nav.overlay,
+    timelineView: nav.timelineView,
+    rawOpen: nav.rawOpen,
     entries,
-    selectedEntry,
-    goTab,
-    setTimelineView,
-    openEntry,
+    selectedEntry: nav.selectedEntry,
+    goTab: nav.goTab,
+    setTimelineView: nav.setTimelineView,
+    openEntry: nav.openEntry,
+    toggleRaw: nav.toggleRaw,
     closeOverlay,
-    toggleRaw,
     openNewEntry,
-    startRecording,
     saveEntry,
+    // new-entry flow
+    newStep: flow.step,
+    draft: flow.draft,
+    captureError: flow.captureError,
+    isRegenerating: flow.isRegenerating,
+    listening: flow.listening,
+    transcript: flow.transcript,
+    interimTranscript: flow.interimTranscript,
+    startRecording: flow.startRecording,
+    stopRecording: flow.stopRecording,
+    submitTyped: flow.submitTyped,
+    regenerateStory: flow.regenerateStory,
+    editStory: flow.editStory,
   }
 }

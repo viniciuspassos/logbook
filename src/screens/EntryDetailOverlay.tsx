@@ -1,3 +1,4 @@
+import { OverlayHeader } from '../components/OverlayHeader.tsx'
 import { PhotoPlaceholder } from '../components/PhotoPlaceholder.tsx'
 import { ShapeGlyph } from '../components/ShapeGlyph.tsx'
 import type { Entry } from '../types/entry.ts'
@@ -18,12 +19,7 @@ export function EntryDetailOverlay({
 }: EntryDetailOverlayProps) {
   return (
     <div className="entry-detail">
-      <div className="entry-detail__header">
-        <button type="button" className="entry-detail__back" onClick={onClose}>
-          ‹
-        </button>
-        <span className="entry-detail__back-label">Back</span>
-      </div>
+      <OverlayHeader label="Back" onBack={onClose} />
 
       <div className="entry-detail__body">
         <div className="entry-detail__intro">

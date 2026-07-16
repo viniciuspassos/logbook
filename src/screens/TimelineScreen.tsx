@@ -1,8 +1,9 @@
 import { EntryCard } from '../components/EntryCard.tsx'
 import { PhotoPlaceholder } from '../components/PhotoPlaceholder.tsx'
 import { ShapeGlyph } from '../components/ShapeGlyph.tsx'
+import { cx } from '../lib/cx.ts'
 import type { Entry } from '../types/entry.ts'
-import type { TimelineView } from '../hooks/useLogbookApp.ts'
+import type { TimelineView } from '../hooks/useNavigation.ts'
 import './TimelineScreen.css'
 
 interface TimelineScreenProps {
@@ -31,7 +32,7 @@ export function TimelineScreen({
           type="button"
           role="tab"
           aria-selected={timelineView === 'list'}
-          className={`timeline-screen__tab${timelineView === 'list' ? ' is-active' : ''}`}
+          className={cx('timeline-screen__tab', timelineView === 'list' && 'is-active')}
           onClick={() => onChangeView('list')}
         >
           List
@@ -40,7 +41,7 @@ export function TimelineScreen({
           type="button"
           role="tab"
           aria-selected={timelineView === 'map'}
-          className={`timeline-screen__tab${timelineView === 'map' ? ' is-active' : ''}`}
+          className={cx('timeline-screen__tab', timelineView === 'map' && 'is-active')}
           onClick={() => onChangeView('map')}
         >
           Map

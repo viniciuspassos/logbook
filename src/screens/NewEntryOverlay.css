@@ -33,29 +33,6 @@
   z-index: 30;
 }
 
-.new-entry__header {
-  padding: 20px 20px 8px;
-  display: flex;
-  align-items: center;
-  gap: 10px;
-}
-
-.new-entry__back {
-  appearance: none;
-  border: none;
-  background: none;
-  cursor: pointer;
-  font-size: 22px;
-  color: var(--lb-ink);
-  line-height: 1;
-  padding: 0;
-}
-
-.new-entry__back-label {
-  font-size: 13px;
-  color: var(--lb-muted);
-}
-
 .new-entry__center {
   flex: 1;
   display: flex;
@@ -94,7 +71,7 @@
 }
 .new-entry__record--pulsing {
   animation: lb-pulse 1.1s ease-in-out infinite;
-  cursor: default;
+  cursor: pointer;
 }
 
 .new-entry__record-square {
@@ -108,8 +85,62 @@
 }
 
 .new-entry__alt {
+  appearance: none;
+  border: none;
+  background: none;
+  cursor: pointer;
+  font-family: inherit;
   font-size: 13px;
   color: var(--lb-accent);
+  padding: 0;
+}
+
+.new-entry__error {
+  font-size: 13px;
+  color: var(--lb-danger, oklch(55% 0.18 25));
+  max-width: 260px;
+  line-height: 1.5;
+}
+
+.new-entry__type {
+  width: 100%;
+  display: flex;
+  flex-direction: column;
+  gap: 14px;
+  align-items: stretch;
+}
+
+.new-entry__type-actions {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 12px;
+}
+
+.new-entry__textarea {
+  width: 100%;
+  box-sizing: border-box;
+  border: 1px solid var(--lb-border);
+  border-radius: 14px;
+  padding: 14px;
+  font-size: 14px;
+  line-height: 1.6;
+  font-family: inherit;
+  color: var(--lb-ink);
+  background: var(--lb-bg);
+  resize: vertical;
+}
+
+.new-entry__transcript {
+  font-size: 14px;
+  line-height: 1.5;
+  color: var(--lb-ink);
+  max-width: 280px;
+  min-height: 1.5em;
+}
+
+.new-entry__transcript-interim {
+  color: var(--lb-muted);
 }
 
 .new-entry__bars {
@@ -214,9 +245,19 @@
   margin-bottom: 20px;
 }
 
+.new-entry__review .new-entry__textarea {
+  margin-bottom: 20px;
+}
+
 .new-entry__actions {
   display: flex;
   gap: 10px;
+}
+
+.new-entry__primary:disabled,
+.new-entry__secondary:disabled {
+  opacity: 0.5;
+  cursor: default;
 }
 
 .new-entry__secondary {
