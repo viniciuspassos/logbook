@@ -2,6 +2,7 @@ import { Injectable } from '@nestjs/common'
 import { InjectRepository } from '@nestjs/typeorm'
 import type { Repository } from 'typeorm'
 import { Entry } from './entry.entity'
+import { Attachment } from '../attachments/attachment.entity'
 
 /**
  * Thin wrapper around TypeORM's Repository<Entry> — the only place in the
@@ -35,8 +36,34 @@ export class EntriesRepository {
     return this.orm.save(merged)
   }
 
-  async remove(id: number): Promise<boolean> {
-    const result = await this.orm.delete(id)
-    return (result.affected ?? 0) > 0
+  /**
+   * Cascade-deletes an Entry and all of its Attachment rows in a single DB
+   * transaction (the "rows-first" half of #20's cascade-delete decision —
+   * the underlying attachment files are deleted best-effort by the caller
+   * afterwards, deliberately outside this transaction; see
+   * EntriesService.remove). Returns the deleted Attachment rows so the
+   * caller knows which storage keys to clean up, or `null` if the entry
+   * didn't exist, in which case nothing was deleted.
+   *
+   * This reaches directly into the Attachment entity via the shared
+   * EntityManager instead of composing AttachmentsRepository: two
+   * independently-injected repositories can't be made to share one
+   * transaction without a lot more plumbing, and doing so here keeps
+   * EntriesModule and AttachmentsModule from needing to import each other
+   * (AttachmentsModule already imports EntriesModule for its own
+   * entry-existence check on upload; adding the reverse edge would make
+   * that a circular module dependency).
+   */
+  async removeCascade(id: number): Promise<Attachment[] | null> {
+    return this.orm.manager.transaction(async (manager) => {
+      const entry = await manager.findOneBy(Entry, { id })
+      if (!entry) {
+        return null
+      }
+      const attachments = await manager.findBy(Attachment, { entryId: id })
+      await manager.delete(Attachment, { entryId: id })
+      await manager.delete(Entry, id)
+      return attachments
+    })
   }
 }

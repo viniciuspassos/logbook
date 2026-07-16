@@ -6,10 +6,17 @@ import { Column, CreateDateColumn, Entity, PrimaryGeneratedColumn } from 'typeor
  * never live here, only a `storageKey` the FileStorage abstraction can
  * resolve back to them. See docs on FileStorage in storage/storage.interface.ts.
  *
- * NOTE (deferred, flagged for a human decision): deleting an Entry does not
- * currently cascade-delete its Attachments or their underlying files — see
- * the PR description / final summary for why, and the product question this
- * raises (cascade vs. orphan vs. block-delete-if-attachments-exist).
+ * Deleting an Entry cascade-deletes its Attachments (#20): the attachment
+ * rows and the entry row are removed together in one DB transaction
+ * (EntriesRepository.removeCascade), then each attachment's underlying file
+ * is deleted best-effort (a file-delete failure is logged, never thrown —
+ * see EntriesService.remove). This is purely an application-layer cascade;
+ * there is deliberately no DB-level `ON DELETE CASCADE` FK constraint,
+ * because `synchronize` is off in production (see typeorm.config.ts) and no
+ * migration path exists yet (#21) to actually apply one there — declaring a
+ * constraint that's silently inert in production would be misleading. #21
+ * should consider adding a real FK (and relation) with `onDelete: 'CASCADE'`
+ * as defense in depth once migrations exist.
  */
 @Entity({ name: 'attachments' })
 export class Attachment {

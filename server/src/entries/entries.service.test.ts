@@ -1,8 +1,10 @@
-import { NotFoundException } from '@nestjs/common'
+import { Logger, NotFoundException } from '@nestjs/common'
 import { EntriesService } from './entries.service'
 import type { EntriesRepository } from './entries.repository'
 import type { Entry } from './entry.entity'
 import type { CreateEntryDto } from './dto/create-entry.dto'
+import type { Attachment } from '../attachments/attachment.entity'
+import type { FileStorage } from '../storage/storage.interface'
 
 function fakeEntry(overrides: Partial<Entry> = {}): Entry {
   return {
@@ -30,6 +32,20 @@ function fakeEntry(overrides: Partial<Entry> = {}): Entry {
   }
 }
 
+function fakeAttachment(overrides: Partial<Attachment> = {}): Attachment {
+  return {
+    id: 1,
+    entryId: 1,
+    originalFilename: 'summit.jpg',
+    storageKey: 'key-1',
+    mimeType: 'image/jpeg',
+    sizeBytes: 1024,
+    userId: null,
+    createdAt: new Date(),
+    ...overrides,
+  }
+}
+
 function fakeCreateDto(): CreateEntryDto {
   const { id: _id, createdAt: _c, updatedAt: _u, ...rest } = fakeEntry()
   return rest
@@ -41,8 +57,16 @@ function makeRepoMock() {
     findById: jest.fn(),
     create: jest.fn(),
     update: jest.fn(),
-    remove: jest.fn(),
+    removeCascade: jest.fn(),
   } as unknown as jest.Mocked<EntriesRepository>
+}
+
+function makeFileStorageMock() {
+  return {
+    save: jest.fn(),
+    read: jest.fn(),
+    delete: jest.fn(),
+  } as unknown as jest.Mocked<FileStorage>
 }
 
 describe('EntriesService', () => {
@@ -50,7 +74,7 @@ describe('EntriesService', () => {
     const repo = makeRepoMock()
     const entries = [fakeEntry()]
     repo.findAll.mockResolvedValue(entries)
-    const service = new EntriesService(repo)
+    const service = new EntriesService(repo, makeFileStorageMock())
 
     await expect(service.findAll()).resolves.toBe(entries)
   })
@@ -59,7 +83,7 @@ describe('EntriesService', () => {
     const repo = makeRepoMock()
     const entry = fakeEntry()
     repo.findById.mockResolvedValue(entry)
-    const service = new EntriesService(repo)
+    const service = new EntriesService(repo, makeFileStorageMock())
 
     await expect(service.findOne(1)).resolves.toBe(entry)
   })
@@ -67,7 +91,7 @@ describe('EntriesService', () => {
   it('findOne throws NotFoundException when the entry does not exist', async () => {
     const repo = makeRepoMock()
     repo.findById.mockResolvedValue(null)
-    const service = new EntriesService(repo)
+    const service = new EntriesService(repo, makeFileStorageMock())
 
     await expect(service.findOne(404)).rejects.toBeInstanceOf(NotFoundException)
   })
@@ -77,7 +101,7 @@ describe('EntriesService', () => {
     const dto = fakeCreateDto()
     const created = fakeEntry()
     repo.create.mockResolvedValue(created)
-    const service = new EntriesService(repo)
+    const service = new EntriesService(repo, makeFileStorageMock())
 
     const result = await service.create(dto)
 
@@ -89,7 +113,7 @@ describe('EntriesService', () => {
     const repo = makeRepoMock()
     const updated = fakeEntry({ title: 'New title' })
     repo.update.mockResolvedValue(updated)
-    const service = new EntriesService(repo)
+    const service = new EntriesService(repo, makeFileStorageMock())
 
     const result = await service.update(1, { title: 'New title' })
 
@@ -100,26 +124,72 @@ describe('EntriesService', () => {
   it('update throws NotFoundException when the entry does not exist', async () => {
     const repo = makeRepoMock()
     repo.update.mockResolvedValue(null)
-    const service = new EntriesService(repo)
+    const service = new EntriesService(repo, makeFileStorageMock())
 
     await expect(service.update(404, { title: 'x' })).rejects.toBeInstanceOf(
       NotFoundException,
     )
   })
 
-  it('remove resolves when the entry was deleted', async () => {
+  it('remove deletes the entry when it has zero attachments', async () => {
     const repo = makeRepoMock()
-    repo.remove.mockResolvedValue(true)
-    const service = new EntriesService(repo)
+    const fileStorage = makeFileStorageMock()
+    repo.removeCascade.mockResolvedValue([])
+    const service = new EntriesService(repo, fileStorage)
 
     await expect(service.remove(1)).resolves.toBeUndefined()
+
+    expect(repo.removeCascade).toHaveBeenCalledWith(1)
+    expect(fileStorage.delete).not.toHaveBeenCalled()
   })
 
   it('remove throws NotFoundException when the entry does not exist', async () => {
     const repo = makeRepoMock()
-    repo.remove.mockResolvedValue(false)
-    const service = new EntriesService(repo)
+    const fileStorage = makeFileStorageMock()
+    repo.removeCascade.mockResolvedValue(null)
+    const service = new EntriesService(repo, fileStorage)
 
     await expect(service.remove(404)).rejects.toBeInstanceOf(NotFoundException)
+    expect(fileStorage.delete).not.toHaveBeenCalled()
+  })
+
+  it('remove cascades: deletes the underlying file for every removed attachment', async () => {
+    const repo = makeRepoMock()
+    const fileStorage = makeFileStorageMock()
+    const attachments = [
+      fakeAttachment({ id: 10, storageKey: 'key-10' }),
+      fakeAttachment({ id: 11, storageKey: 'key-11' }),
+    ]
+    repo.removeCascade.mockResolvedValue(attachments)
+    fileStorage.delete.mockResolvedValue(undefined)
+    const service = new EntriesService(repo, fileStorage)
+
+    await service.remove(1)
+
+    expect(fileStorage.delete).toHaveBeenCalledWith('key-10')
+    expect(fileStorage.delete).toHaveBeenCalledWith('key-11')
+    expect(fileStorage.delete).toHaveBeenCalledTimes(2)
+  })
+
+  it('remove still resolves and removes rows when a file delete fails (rows-first, files best-effort)', async () => {
+    const repo = makeRepoMock()
+    const fileStorage = makeFileStorageMock()
+    const attachments = [
+      fakeAttachment({ id: 10, storageKey: 'key-10' }),
+      fakeAttachment({ id: 11, storageKey: 'key-11' }),
+    ]
+    repo.removeCascade.mockResolvedValue(attachments)
+    fileStorage.delete.mockImplementation((key: string) =>
+      key === 'key-10' ? Promise.reject(new Error('disk unavailable')) : Promise.resolve(),
+    )
+    const warnSpy = jest.spyOn(Logger.prototype, 'warn').mockImplementation(() => undefined)
+    const service = new EntriesService(repo, fileStorage)
+
+    await expect(service.remove(1)).resolves.toBeUndefined()
+
+    expect(fileStorage.delete).toHaveBeenCalledWith('key-10')
+    expect(fileStorage.delete).toHaveBeenCalledWith('key-11')
+    expect(warnSpy).toHaveBeenCalledWith(expect.stringContaining('key-10'))
+    warnSpy.mockRestore()
   })
 })
