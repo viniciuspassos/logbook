@@ -34,3 +34,31 @@ jobs:
 
       - name: Production build
         run: npm run build
+
+  server-static-gates:
+    name: server-static-gates
+    runs-on: ubuntu-latest
+    # Independent of the frontend's own package.json/tsconfig (server/ is a
+    # standalone NestJS service, deliberately not wired into the root
+    # project references — see CLAUDE.md). Its Jest suite runs against an
+    # in-memory sql.js SQLite build, not a live Postgres, so no service
+    # container is needed here for tests to pass.
+    defaults:
+      run:
+        working-directory: server
+    steps:
+      - uses: actions/checkout@v5
+        with:
+          ref: ${{ github.event.pull_request.head.sha }}
+
+      - uses: actions/setup-node@v5
+        with:
+          node-version: 24
+          cache: npm
+          cache-dependency-path: server/package-lock.json
+
+      - run: npm ci
+      - run: npm run typecheck
+      - run: npm run lint
+      - run: npm test
+      - run: npm run build

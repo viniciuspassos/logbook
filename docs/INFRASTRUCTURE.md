@@ -16,6 +16,54 @@ architecture, see [`docs/ARCHITECTURE.md`](ARCHITECTURE.md).
   `README.md` → "Browser & AI requirements". This is a *runtime* browser requirement, not a build
   or CI dependency: CI never touches the AI APIs (they're unavailable in a headless/CI Chromium
   anyway), which is exactly the scenario the "AI unavailability must never block" rule exists for.
+- `server/` (entry persistence + file uploads, NestJS + Postgres) is a separate, standalone
+  package — its own `package.json`, `tsconfig.json`, ESLint config, and Jest config, deliberately
+  **not** wired into the root `package.json` or this project's TypeScript project references.
+  Running the frontend (`npm run dev` / `build` / `test` / `preview`, all at the repo root) never
+  requires `server/`'s dependencies to be installed, Docker to be installed, or any backend
+  container to be running. This is the same "must never block" philosophy `CLAUDE.md` already
+  applies to on-device AI availability, extended to the backend: **the backend is strictly
+  additive infrastructure, not a dependency of the frontend.**
+
+## Optional local backend infra (Docker Compose)
+
+`docker-compose.yml` at the repo root brings up `server/`'s runtime dependencies for local
+development — Postgres and the backend service itself — behind `docker compose`. This is
+opt-in tooling for anyone working on `server/`; it changes nothing about how the frontend is run
+or tested, and a contributor who never touches `server/` never needs Docker installed at all.
+
+```
+docker compose up --build     # start db + backend (db must report healthy before backend starts)
+docker compose down           # stop; named volumes (db data, uploads) persist
+docker compose down -v        # stop and also wipe db/upload volumes
+```
+
+Services:
+
+- **`db`** — official `postgres:16.4-bookworm` image, credentials `logbook`/`logbook`/`logbook`
+  (local-dev only, not secrets — never reused for anything real), data in the named volume
+  `logbook-db-data`. Has a `pg_isready` healthcheck; `backend` uses
+  `depends_on: db: condition: service_healthy` so it never races a not-yet-ready Postgres.
+- **`backend`** — built from `server/Dockerfile` (multi-stage: a `build` stage compiles
+  TypeScript with full devDependencies, a slim `runtime` stage ships only `dist/` + production
+  `node_modules`, running as a non-root user). `DATABASE_URL` points at the `db` service by
+  Compose network name. `UPLOAD_DIR` (`/app/uploads` inside the container) is backed by the named
+  volume `logbook-uploads`, so uploaded files survive `docker compose down`/`up` and container
+  recreation — `server/.env.example` flags the bare local-disk default as non-durable without
+  this. Has an HTTP healthcheck against `GET /health`.
+- No schema migration mechanism exists yet (see `server/src/database/typeorm.config.ts`):
+  `synchronize` auto-syncs the schema from TypeORM entities outside `NODE_ENV=production`. This
+  compose setup runs `NODE_ENV=development`, so a fresh `db` volume gets its schema created
+  automatically on first `backend` boot — there's nothing to run by hand.
+
+Verified locally: `db` reaches `healthy` before `backend` starts, `backend` reaches `healthy` via
+its own `GET /health` check, `GET http://localhost:3000/health` responds `200` from the host, the
+backend process inside the container runs as a non-root user, and files written under
+`/app/uploads` survive a `docker compose restart backend`.
+
+This is local-only tooling — there is no hosted deployment target for `server/`, matching the rest
+of this document (see [Build output](#build-output-and-hosting) below for the frontend's own
+no-hosting-target status).
 
 ## Git hooks (`.githooks/`)
 
@@ -23,10 +71,30 @@ Hooks are plain shell scripts, versioned in the repo (not `.git/hooks`, which is
 wired up via `core.hooksPath`:
 
 - **`pre-commit`** — runs, in order: `tsc -b` (typecheck) → `eslint` (lint) → `npm test` (full
-  Jest suite). Any failure aborts the commit. This is intentionally the *same* sequence CI runs,
-  so a passing local commit is a strong signal the CI static gate will also pass.
+  Jest suite), all for the frontend. Any failure aborts the commit. This is intentionally the
+  *same* sequence CI runs, so a passing local commit is a strong signal the CI static gate will
+  also pass. It then checks whether any staged file is under `server/`; if so, it additionally
+  runs `server/`'s own typecheck → lint → test sequence (see below for why this is scoped rather
+  than unconditional).
 - **`commit-msg`** — rejects a commit whose subject line doesn't match Conventional Commits
   (`feat|fix|docs|style|refactor|perf|test|build|ci|chore|revert(scope)?: description`).
+
+### Why the backend gate is scoped to staged `server/` changes, not always-on
+
+The frontend gates above run unconditionally on every commit, regardless of which files changed —
+that's a deliberate, simple all-or-nothing design. The backend gate does **not** follow that
+pattern, for a concrete reason rather than an inconsistency: `server/` is a standalone package
+with its own `node_modules`, installed by running `npm install` *inside* `server/`, separately
+from the root `npm install`. If the hook ran `server/`'s typecheck/lint/test unconditionally, a
+contributor who has only ever run the root `npm install` — e.g. someone fixing a typo in
+`README.md` — would have every commit fail with "cannot find module" errors from a toolchain they
+never set up and whose commit doesn't even touch. That's a hard block, not a slow inconvenience,
+and it would violate the same "backend must never get in the frontend's way" rule this document
+states above. Scoping the backend gate to `git diff --cached --name-only` containing a `server/`
+path keeps the "same checks as CI" guarantee for anyone actually changing `server/`, without
+imposing the backend toolchain on everyone else's commit path. If `server/node_modules` is missing
+when a `server/` change *is* staged, the hook fails fast with an explicit "run `npm install` in
+`server/` first" message rather than a confusing module-resolution error.
 
 Neither hook can be bypassed by CI — see below, the same checks run again server-side — so
 `--no-verify` locally only defers the failure to the PR, it doesn't avoid it.
@@ -38,9 +106,22 @@ deployment target — see [Build output](#build-output-and-hosting) below).
 
 ### 1. `ci-static.yml` — static gates
 
-Triggers on every PR open/sync/reopen. Runs `npm ci`, then re-runs the **exact same
-`.githooks/pre-commit` script** (typecheck → lint → test) plus a production `npm run build`. This
-is the required, always-on check — it needs no comment or manual trigger.
+Triggers on every PR open/sync/reopen and now runs two independent jobs:
+
+- **`static-gates`** — frontend. Runs `npm ci`, then re-runs the **exact same
+  `.githooks/pre-commit` script** (typecheck → lint → test) plus a production `npm run build`.
+- **`server-static-gates`** — backend. Runs unconditionally on every PR (not path-filtered),
+  unlike the pre-commit hook's staged-file scoping — a CI job doesn't have the "contributor
+  hasn't installed this toolchain yet" problem the hook is scoped to avoid, and an always-on
+  required check is simpler to reason about than a path-conditional one. From `server/`: `npm ci`
+  → `npm run typecheck` → `npm run lint` → `npm test` → `npm run build`. `server/`'s Jest suite
+  runs against an in-memory `sql.js` SQLite build rather than a live Postgres, so this job needs
+  no database service container to pass.
+
+Both jobs run unconditionally on every PR — neither needs a comment or manual trigger. Whether
+`server-static-gates` is additionally configured as a *required* status check in this repository's
+branch-protection settings (alongside `static-gates`) is a GitHub repo setting, not something
+tracked in this file or in workflow YAML.
 
 ### 2. `qa-gate-pending.yml` + `qa-gate-run.yml` — AI-driven QA release gate
 
@@ -92,9 +173,12 @@ triggers.
 ### Branch protection expectation
 
 Per `README.md` → "Contributing / git workflow": both `ci-static` and `qa-release-gate` are
-expected to be green before merge. `ci-static` runs unconditionally; `qa-release-gate` starts
-`queued` and only resolves once someone comments `/qa` — so a PR can sit with one green, one
-pending check until a maintainer explicitly requests the QA run.
+expected to be green before merge. `ci-static` runs unconditionally (as both its `static-gates` and
+`server-static-gates` jobs); `qa-release-gate` starts `queued` and only resolves once someone
+comments `/qa` — so a PR can sit with one green, one pending check until a maintainer explicitly
+requests the QA run. Whether `server-static-gates` is marked as a required check alongside
+`static-gates` in this repository's branch-protection rules is a manual GitHub setting outside this
+repo's version-controlled config.
 
 ## Build output and hosting
 
