@@ -158,6 +158,10 @@ All browser-API access is funnelled through the thin wrappers in `lib/ai`, `lib/
 `lib/backup`, and `lib/export`, so the screens never touch a flag-gated global directly — and a
 shifting origin-trial surface only ever breaks one file.
 
+For the reasoning behind these choices (why IndexedDB, why on-device AI, why this hook
+composition instead of a global store) see [`docs/ARCHITECTURE.md`](docs/ARCHITECTURE.md). For
+CI, git hooks, and the build/PWA pipeline, see [`docs/INFRASTRUCTURE.md`](docs/INFRASTRUCTURE.md).
+
 ---
 
 ## Testing
