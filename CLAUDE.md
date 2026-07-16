@@ -10,6 +10,10 @@ Two features from the product vision are not implemented yet: **photo attachment
 
 The AI and speech features require desktop Chrome with the built-in AI flags enabled (README → "Browser & AI requirements"). They are always optional at runtime — see Browser AI rules below.
 
+For the *why* behind the architecture (state composition, layering, key decisions like
+IndexedDB-over-localStorage or on-device-AI-over-cloud) see `docs/ARCHITECTURE.md`. For CI, git
+hooks, and the build/PWA pipeline, see `docs/INFRASTRUCTURE.md`.
+
 ## Commands
 
 - `npm run dev` — start the Vite dev server with HMR (the service worker is enabled in dev too)
