@@ -1,0 +1,22 @@
+.overlay-header {
+  padding: 20px 20px 8px;
+  display: flex;
+  align-items: center;
+  gap: 10px;
+}
+
+.overlay-header__back {
+  appearance: none;
+  border: none;
+  background: none;
+  cursor: pointer;
+  font-size: 22px;
+  color: var(--lb-ink);
+  line-height: 1;
+  padding: 0;
+}
+
+.overlay-header__back-label {
+  font-size: 13px;
+  color: var(--lb-muted);
+}

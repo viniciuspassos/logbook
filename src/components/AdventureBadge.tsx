@@ -4,17 +4,18 @@ import './AdventureBadge.css'
 
 interface AdventureBadgeProps {
   shape: AdventureShape
-  size?: number
 }
 
+const SIZE = 22
+
 /** Small accent-colored marker distinguishing an entry's adventure type. */
-export function AdventureBadge({ shape, size = 22 }: AdventureBadgeProps) {
+export function AdventureBadge({ shape }: AdventureBadgeProps) {
   return (
     <div
       className="adventure-badge"
-      style={{ width: size, height: size, borderRadius: size * (7 / 22) }}
+      style={{ width: SIZE, height: SIZE, borderRadius: SIZE * (7 / 22) }}
     >
-      <ShapeGlyph shape={shape} size={size * 0.4} />
+      <ShapeGlyph shape={shape} size={SIZE * 0.4} />
     </div>
   )
 }

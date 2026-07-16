@@ -15,6 +15,11 @@ function App() {
     timelineView,
     rawOpen,
     newStep,
+    draft,
+    captureError,
+    isRegenerating,
+    transcript,
+    interimTranscript,
     entries,
     selectedEntry,
     goTab,
@@ -24,6 +29,10 @@ function App() {
     toggleRaw,
     openNewEntry,
     startRecording,
+    stopRecording,
+    submitTyped,
+    regenerateStory,
+    editStory,
     saveEntry,
   } = useLogbookApp()
 
@@ -45,7 +54,7 @@ function App() {
 
       {!overlay && <TabBar active={tab} onSelect={goTab} onNewEntry={openNewEntry} />}
 
-      {overlay === 'entry' && (
+      {overlay === 'entry' && selectedEntry && (
         <EntryDetailOverlay
           entry={selectedEntry}
           rawOpen={rawOpen}
@@ -56,8 +65,17 @@ function App() {
       {overlay === 'newEntry' && (
         <NewEntryOverlay
           step={newStep}
+          draft={draft}
+          captureError={captureError}
+          isRegenerating={isRegenerating}
+          transcript={transcript}
+          interimTranscript={interimTranscript}
           onClose={closeOverlay}
           onStartRecording={startRecording}
+          onStopRecording={stopRecording}
+          onSubmitTyped={submitTyped}
+          onRegenerate={regenerateStory}
+          onEditStory={editStory}
           onSave={saveEntry}
         />
       )}

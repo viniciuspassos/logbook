@@ -1,5 +1,6 @@
 import type { ReactNode } from 'react'
-import type { Tab } from '../hooks/useLogbookApp.ts'
+import { cx } from '../lib/cx.ts'
+import type { Tab } from '../hooks/useNavigation.ts'
 import './TabBar.css'
 
 interface TabBarProps {
@@ -7,6 +8,47 @@ interface TabBarProps {
   onSelect: (tab: Tab) => void
   onNewEntry: () => void
 }
+
+interface TabConfig {
+  id: Tab
+  label: string
+  icon: (isActive: boolean) => ReactNode
+}
+
+const TAB_CONFIG: TabConfig[] = [
+  {
+    id: 'timeline',
+    label: 'Timeline',
+    icon: (isActive) => (
+      <span className={cx('tab-bar__icon-square', isActive && 'is-active')} />
+    ),
+  },
+  {
+    id: 'search',
+    label: 'Search',
+    icon: (isActive) => (
+      <span className={cx('tab-bar__icon-ring', isActive && 'is-active')} />
+    ),
+  },
+  {
+    id: 'stats',
+    label: 'Stats',
+    icon: (isActive) => (
+      <span className={cx('tab-bar__icon-bars', isActive && 'is-active')}>
+        <span />
+        <span />
+        <span />
+      </span>
+    ),
+  },
+  {
+    id: 'settings',
+    label: 'Settings',
+    icon: (isActive) => (
+      <span className={cx('tab-bar__icon-dial', isActive && 'is-active')} />
+    ),
+  },
+]
 
 interface TabButtonProps {
   label: string
@@ -30,25 +72,26 @@ function TabButton({ label, isActive, onClick, children }: TabButtonProps) {
 }
 
 export function TabBar({ active, onSelect, onNewEntry }: TabBarProps) {
+  const [timeline, search, stats, settings] = TAB_CONFIG
+
+  function renderTab(tab: TabConfig) {
+    const isActive = active === tab.id
+    return (
+      <TabButton
+        key={tab.id}
+        label={tab.label}
+        isActive={isActive}
+        onClick={() => onSelect(tab.id)}
+      >
+        {tab.icon(isActive)}
+      </TabButton>
+    )
+  }
+
   return (
     <nav className="tab-bar" aria-label="Primary">
-      <TabButton
-        label="Timeline"
-        isActive={active === 'timeline'}
-        onClick={() => onSelect('timeline')}
-      >
-        <span
-          className={`tab-bar__icon-square${active === 'timeline' ? ' is-active' : ''}`}
-        />
-      </TabButton>
-
-      <TabButton
-        label="Search"
-        isActive={active === 'search'}
-        onClick={() => onSelect('search')}
-      >
-        <span className={`tab-bar__icon-ring${active === 'search' ? ' is-active' : ''}`} />
-      </TabButton>
+      {renderTab(timeline)}
+      {renderTab(search)}
 
       <button
         type="button"
@@ -59,27 +102,8 @@ export function TabBar({ active, onSelect, onNewEntry }: TabBarProps) {
         <span className="tab-bar__add-dot" />
       </button>
 
-      <TabButton
-        label="Stats"
-        isActive={active === 'stats'}
-        onClick={() => onSelect('stats')}
-      >
-        <span className={`tab-bar__icon-bars${active === 'stats' ? ' is-active' : ''}`}>
-          <span />
-          <span />
-          <span />
-        </span>
-      </TabButton>
-
-      <TabButton
-        label="Settings"
-        isActive={active === 'settings'}
-        onClick={() => onSelect('settings')}
-      >
-        <span
-          className={`tab-bar__icon-dial${active === 'settings' ? ' is-active' : ''}`}
-        />
-      </TabButton>
+      {renderTab(stats)}
+      {renderTab(settings)}
     </nav>
   )
 }

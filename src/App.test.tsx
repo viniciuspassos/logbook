@@ -1,4 +1,4 @@
-import { act, render, screen } from '@testing-library/react'
+import { render, screen } from '@testing-library/react'
 import userEvent from '@testing-library/user-event'
 import App from './App.tsx'
 import { entries } from './data/entries.ts'
@@ -42,30 +42,27 @@ describe('App', () => {
     expect(screen.getByRole('button', { name: /new entry/i })).toBeInTheDocument()
   })
 
-  it('walks the new-entry voice capture flow through to save', async () => {
-    jest.useFakeTimers()
-    const user = userEvent.setup({ delay: null, advanceTimers: jest.advanceTimersByTime })
+  it('creates an entry through the type-to-extract flow', async () => {
+    // Speech and on-device AI are unavailable under jsdom, so this drives the
+    // typed-notes path, which lands on the manual review + editable story.
+    const user = userEvent.setup()
     render(<App />)
 
     await user.click(screen.getByRole('button', { name: /new entry/i }))
     expect(screen.getByText('New entry')).toBeInTheDocument()
 
-    await user.click(screen.getByRole('button', { name: 'Start recording' }))
-    expect(screen.getByText('Listening…')).toBeInTheDocument()
+    await user.click(screen.getByRole('button', { name: 'Type instead' }))
+    await user.type(
+      screen.getByRole('textbox', { name: 'Adventure notes' }),
+      'Sunset trail run today',
+    )
+    await user.click(screen.getByRole('button', { name: 'Extract details' }))
 
-    await act(async () => {
-      jest.advanceTimersByTime(1400)
-    })
-    expect(screen.getByText(/extracting details/i)).toBeInTheDocument()
-
-    await act(async () => {
-      jest.advanceTimersByTime(1400)
-    })
-    expect(screen.getByText('Extracted details')).toBeInTheDocument()
+    expect(await screen.findByText('Manual entry')).toBeInTheDocument()
 
     await user.click(screen.getByRole('button', { name: 'Save entry' }))
-    expect(screen.getByText('Saved locally · not synced')).toBeInTheDocument()
-
-    jest.useRealTimers()
+    expect(await screen.findByText('Saved locally · not synced')).toBeInTheDocument()
+    // Appears as both the new card's title and its derived excerpt.
+    expect(screen.getAllByText('Sunset trail run today').length).toBeGreaterThan(0)
   })
 })
