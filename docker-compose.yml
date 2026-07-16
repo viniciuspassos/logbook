@@ -13,8 +13,10 @@
 #   docker compose down            # stop (named volumes persist)
 #   docker compose down -v         # stop and wipe db/upload data too
 #
-# There is no migration mechanism yet (see server/src/database/typeorm.config.ts);
-# `synchronize` auto-syncs the schema from entities outside NODE_ENV=production.
+# Schema is created by TypeORM migrations (see server/src/database/), which run
+# automatically the moment the backend connects (`migrationsRun: true` in
+# server/src/database/typeorm.config.ts) — nothing to run by hand for
+# `docker compose up` to work against a fresh `db` volume.
 
 services:
   db:

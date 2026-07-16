@@ -10,13 +10,28 @@ import { Column, CreateDateColumn, Entity, PrimaryGeneratedColumn } from 'typeor
  * rows and the entry row are removed together in one DB transaction
  * (EntriesRepository.removeCascade), then each attachment's underlying file
  * is deleted best-effort (a file-delete failure is logged, never thrown —
- * see EntriesService.remove). This is purely an application-layer cascade;
- * there is deliberately no DB-level `ON DELETE CASCADE` FK constraint,
- * because `synchronize` is off in production (see typeorm.config.ts) and no
- * migration path exists yet (#21) to actually apply one there — declaring a
- * constraint that's silently inert in production would be misleading. #21
- * should consider adding a real FK (and relation) with `onDelete: 'CASCADE'`
- * as defense in depth once migrations exist.
+ * see EntriesService.remove). This is purely an application-layer cascade.
+ *
+ * #21 revisited whether to add a DB-level `ON DELETE CASCADE` FK constraint
+ * now that migrations exist, and deliberately decided against it:
+ * `entryId` staying a plain column (not a TypeORM relation) is itself a
+ * decision, not an oversight — EntriesRepository.removeCascade reaches
+ * directly into this entity via a shared EntityManager specifically so
+ * EntriesModule and AttachmentsModule don't need a circular import (see the
+ * docstring there). Modeling a real `@ManyToOne`/`@JoinColumn` relation here
+ * to get a FK constraint would mean either duplicating `entryId` behind a
+ * `@RelationId` (a real behavior change for every repository/service method
+ * that reads or filters on `entryId` today) or accepting an unmodeled
+ * constraint that TypeORM's own entity metadata doesn't know about — which
+ * would itself register as drift the very first time `migration:generate`
+ * runs, defeating the CI drift check #21 added. `removeCascade` is also
+ * verifiably the *only* code path that deletes an Entry row (grep for
+ * `manager.delete(Entry` / `.delete(Entry`), so a DB constraint would only
+ * guard against a future bug that bypasses the repository layer entirely —
+ * real defense in depth, but not worth the relation refactor today. Revisit
+ * if Attachment ever needs a real `@ManyToOne` relation for other reasons
+ * (e.g. eager-loading), at which point the FK constraint becomes close to
+ * free.
  */
 @Entity({ name: 'attachments' })
 export class Attachment {

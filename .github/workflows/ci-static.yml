@@ -62,3 +62,70 @@ jobs:
       - run: npm run lint
       - run: npm test
       - run: npm run build
+
+  server-migrations-drift:
+    name: server-migrations-drift
+    runs-on: ubuntu-latest
+    # Runs the baseline (and every future) migration against a real Postgres,
+    # then re-runs `migration:generate` and fails if it produces a new
+    # migration file. That's the actual risk this job guards against:
+    # entities and committed migrations silently diverging (a column added
+    # to an entity without a matching migration, a migration hand-edited
+    # after being generated, etc.) — the one thing server-static-gates'
+    # sqlite-backed Jest suite structurally cannot catch, since those suites
+    # build their schema straight from entities via synchronize, never going
+    # through migrations at all (see #21).
+    defaults:
+      run:
+        working-directory: server
+    services:
+      postgres:
+        image: postgres:16.4-bookworm
+        env:
+          POSTGRES_USER: logbook
+          POSTGRES_PASSWORD: logbook
+          POSTGRES_DB: logbook
+        ports:
+          - 5432:5432
+        options: >-
+          --health-cmd "pg_isready -U logbook -d logbook"
+          --health-interval 5s
+          --health-timeout 5s
+          --health-retries 10
+    env:
+      DATABASE_URL: postgres://logbook:logbook@localhost:5432/logbook
+    steps:
+      - uses: actions/checkout@v5
+        with:
+          ref: ${{ github.event.pull_request.head.sha }}
+
+      - uses: actions/setup-node@v5
+        with:
+          node-version: 24
+          cache: npm
+          cache-dependency-path: server/package-lock.json
+
+      - run: npm ci
+
+      - name: Run committed migrations against a clean Postgres
+        run: npm run migration:run
+
+      - name: Fail if entities and migrations have drifted
+        run: |
+          set -e
+          before="$(ls src/database/migrations | wc -l)"
+          # migration:generate exits 1 (deliberately, per TypeORM) when there
+          # is NO drift to report — "No changes in database schema were
+          # found" is the success case here, so the exit code is ignored and
+          # the actual signal is whether a new migration file was written.
+          npm run migration:generate -- src/database/migrations/DriftCheck || true
+          after="$(ls src/database/migrations | wc -l)"
+          if [ "$after" -ne "$before" ]; then
+            echo "::error::Entities and migrations have drifted. Run 'npm run migration:generate' locally against a real Postgres, review the generated migration, and commit it — see docs/INFRASTRUCTURE.md."
+            # The newly generated migration is untracked, so `git diff` shows
+            # nothing for it — `git status --porcelain` is what actually
+            # surfaces it (and any other uncommitted change) in the job log.
+            git status --porcelain -- src/database/migrations
+            exit 1
+          fi
+          echo "No drift detected between entities and committed migrations."
