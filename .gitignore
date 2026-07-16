@@ -12,6 +12,9 @@ dist
 dist-ssr
 *.local
 
+# RTK (Rust Token Killer) local config
+.rtk/
+
 # Editor directories and files
 .vscode/*
 !.vscode/extensions.json
