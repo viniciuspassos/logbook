@@ -31,10 +31,12 @@ export class EntryAttachmentsController {
     if (!file) {
       throw new BadRequestException('A "file" multipart field is required')
     }
+    // file.mimetype is the client-declared Content-Type and is deliberately
+    // never forwarded — AttachmentsService derives the real type from the
+    // file's own bytes (#19).
     return this.attachmentsService.uploadForEntry(entryId, {
       buffer: file.buffer,
       originalFilename: file.originalname,
-      mimeType: file.mimetype,
     })
   }
 

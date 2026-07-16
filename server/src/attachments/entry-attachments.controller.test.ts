@@ -49,12 +49,29 @@ describe('EntryAttachmentsController', () => {
 
     const result = await controller.upload(10, file)
 
+    // Deep-equal, so this also proves the client-declared file.mimetype is
+    // never forwarded to the service (#19) — an extra `mimeType` property
+    // on the call argument would fail this assertion.
     expect(service.uploadForEntry).toHaveBeenCalledWith(10, {
       buffer: file.buffer,
       originalFilename: file.originalname,
-      mimeType: file.mimetype,
     })
     expect(result).toBe(created)
+  })
+
+  it('upload delegates the same way even when the client sends a spoofed mimetype (#19)', async () => {
+    const service = makeServiceMock()
+    const created = fakeAttachment()
+    service.uploadForEntry.mockResolvedValue(created)
+    const controller = new EntryAttachmentsController(service)
+    const file = fakeMulterFile({ mimetype: 'text/html' })
+
+    await controller.upload(10, file)
+
+    expect(service.uploadForEntry).toHaveBeenCalledWith(10, {
+      buffer: file.buffer,
+      originalFilename: file.originalname,
+    })
   })
 
   it('upload rejects with BadRequestException when no file is present', async () => {

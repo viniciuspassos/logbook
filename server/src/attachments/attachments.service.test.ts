@@ -1,4 +1,4 @@
-import { NotFoundException } from '@nestjs/common'
+import { NotFoundException, UnsupportedMediaTypeException } from '@nestjs/common'
 import { AttachmentsService } from './attachments.service'
 import type { AttachmentsRepository } from './attachments.repository'
 import type { EntriesRepository } from '../entries/entries.repository'
@@ -6,6 +6,18 @@ import type { FileStorage } from '../storage/storage.interface'
 import { StorageFileNotFoundError } from '../storage/storage.interface'
 import type { Attachment } from './attachment.entity'
 import type { Entry } from '../entries/entry.entity'
+
+// Real magic bytes for a JPEG (SOI + JFIF marker) — detectImageType() must
+// see genuine signature bytes to classify a file as image/jpeg, so tests
+// that exercise the "accepted" path use this instead of arbitrary bytes.
+const JPEG_BYTES = Buffer.from([0xff, 0xd8, 0xff, 0xe0, 0x00, 0x10, 0x4a, 0x46, 0x49, 0x46])
+
+// An HTML payload declaring itself (via a spoofed client Content-Type, which
+// this service must never trust) as an image — the stored-XSS case from #19.
+const HTML_PAYLOAD_BYTES = Buffer.from(
+  '<html><body><script>alert(document.cookie)</script></body></html>',
+  'utf-8',
+)
 
 function fakeEntry(overrides: Partial<Entry> = {}): Entry {
   return {
@@ -68,22 +80,21 @@ function makeMocks() {
 }
 
 describe('AttachmentsService', () => {
-  it('uploadForEntry saves the file then creates an attachment row when the entry exists', async () => {
+  it('uploadForEntry detects the type from the file bytes (not a client-declared mimeType) and saves it', async () => {
     const { attachmentsRepository, entriesRepository, fileStorage } = makeMocks()
     entriesRepository.findById.mockResolvedValue(fakeEntry())
-    fileStorage.save.mockResolvedValue({ key: 'uuid-summit.jpg', sizeBytes: 1234 })
-    const created = fakeAttachment()
+    fileStorage.save.mockResolvedValue({ key: 'uuid-summit.jpg', sizeBytes: JPEG_BYTES.byteLength })
+    const created = fakeAttachment({ sizeBytes: JPEG_BYTES.byteLength })
     attachmentsRepository.create.mockResolvedValue(created)
     const service = new AttachmentsService(attachmentsRepository, entriesRepository, fileStorage)
 
     const result = await service.uploadForEntry(10, {
-      buffer: Buffer.from('bytes'),
+      buffer: JPEG_BYTES,
       originalFilename: 'summit.jpg',
-      mimeType: 'image/jpeg',
     })
 
     expect(fileStorage.save).toHaveBeenCalledWith({
-      buffer: Buffer.from('bytes'),
+      buffer: JPEG_BYTES,
       originalFilename: 'summit.jpg',
       mimeType: 'image/jpeg',
     })
@@ -92,7 +103,7 @@ describe('AttachmentsService', () => {
       originalFilename: 'summit.jpg',
       storageKey: 'uuid-summit.jpg',
       mimeType: 'image/jpeg',
-      sizeBytes: 1234,
+      sizeBytes: JPEG_BYTES.byteLength,
     })
     expect(result).toBe(created)
   })
@@ -104,11 +115,39 @@ describe('AttachmentsService', () => {
 
     await expect(
       service.uploadForEntry(999, {
-        buffer: Buffer.from('x'),
+        buffer: JPEG_BYTES,
         originalFilename: 'x.jpg',
-        mimeType: 'image/jpeg',
       }),
     ).rejects.toBeInstanceOf(NotFoundException)
+    expect(fileStorage.save).not.toHaveBeenCalled()
+  })
+
+  it('uploadForEntry rejects an HTML payload spoofed as an image with UnsupportedMediaTypeException and never touches storage (#19)', async () => {
+    const { attachmentsRepository, entriesRepository, fileStorage } = makeMocks()
+    entriesRepository.findById.mockResolvedValue(fakeEntry())
+    const service = new AttachmentsService(attachmentsRepository, entriesRepository, fileStorage)
+
+    await expect(
+      service.uploadForEntry(10, {
+        buffer: HTML_PAYLOAD_BYTES,
+        originalFilename: 'summit.png',
+      }),
+    ).rejects.toBeInstanceOf(UnsupportedMediaTypeException)
+    expect(fileStorage.save).not.toHaveBeenCalled()
+    expect(attachmentsRepository.create).not.toHaveBeenCalled()
+  })
+
+  it('uploadForEntry rejects a file with unrecognized bytes regardless of its extension', async () => {
+    const { attachmentsRepository, entriesRepository, fileStorage } = makeMocks()
+    entriesRepository.findById.mockResolvedValue(fakeEntry())
+    const service = new AttachmentsService(attachmentsRepository, entriesRepository, fileStorage)
+
+    await expect(
+      service.uploadForEntry(10, {
+        buffer: Buffer.from('not an image at all'),
+        originalFilename: 'totally-legit.jpeg',
+      }),
+    ).rejects.toBeInstanceOf(UnsupportedMediaTypeException)
     expect(fileStorage.save).not.toHaveBeenCalled()
   })
 
@@ -147,17 +186,38 @@ describe('AttachmentsService', () => {
     await expect(service.getMetadata(999)).rejects.toBeInstanceOf(NotFoundException)
   })
 
-  it('getFile returns metadata plus the file bytes', async () => {
+  it('getFile returns metadata plus the file bytes, with contentType/disposition derived from the actual bytes (not the stored mimeType)', async () => {
     const { attachmentsRepository, entriesRepository, fileStorage } = makeMocks()
     const row = fakeAttachment()
     attachmentsRepository.findById.mockResolvedValue(row)
-    fileStorage.read.mockResolvedValue(Buffer.from('bytes'))
+    fileStorage.read.mockResolvedValue(JPEG_BYTES)
     const service = new AttachmentsService(attachmentsRepository, entriesRepository, fileStorage)
 
     const result = await service.getFile(1)
 
     expect(fileStorage.read).toHaveBeenCalledWith(row.storageKey)
-    expect(result).toEqual({ attachment: row, buffer: Buffer.from('bytes') })
+    expect(result).toEqual({
+      attachment: row,
+      buffer: JPEG_BYTES,
+      contentType: 'image/jpeg',
+      disposition: 'inline',
+    })
+  })
+
+  it('getFile forces an octet-stream/attachment download for stored bytes that no longer match an allowlisted image signature (legacy/pre-#19 rows)', async () => {
+    const { attachmentsRepository, entriesRepository, fileStorage } = makeMocks()
+    // Simulates a row created before the #19 fix, whose DB mimeType column
+    // may hold an arbitrary client-declared value (e.g. "text/html") that
+    // must never be trusted for the served Content-Type.
+    const row = fakeAttachment({ mimeType: 'text/html' })
+    attachmentsRepository.findById.mockResolvedValue(row)
+    fileStorage.read.mockResolvedValue(HTML_PAYLOAD_BYTES)
+    const service = new AttachmentsService(attachmentsRepository, entriesRepository, fileStorage)
+
+    const result = await service.getFile(1)
+
+    expect(result.contentType).toBe('application/octet-stream')
+    expect(result.disposition).toBe('attachment')
   })
 
   it('getFile throws NotFoundException when the metadata row is missing', async () => {
