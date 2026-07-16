@@ -52,6 +52,8 @@ Tests must never be deleted to make a change land. If a test's behavior is genui
 
 Keep these concerns separate: put new state in the hook that owns that concern (or a new one) rather than growing `useLogbookApp` back into a god hook.
 
+**Source of truth is moving to the server** ([#23](https://github.com/viniciuspassos/logbook/issues/23)): the target is that the backend owns the truth and IndexedDB becomes a local read cache and write queue. **This is decided but not built** — nothing under `src/` calls the backend today, so `entriesStore` is still authoritative in shipped code. Don't write new frontend code that assumes a server exists until [#26](https://github.com/viniciuspassos/logbook/issues/26) lands. The offline-capture rule is unaffected either way: creating and reading entries must keep working with no network, so a failed write queues rather than blocking the user — the same degradation philosophy as the Browser AI rules below.
+
 ### Layering
 
 Screens and hooks must not touch flag-gated browser globals directly. All browser-API access goes through thin, individually-tested wrappers:

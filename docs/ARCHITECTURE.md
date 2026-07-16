@@ -14,6 +14,22 @@ Voice capture, AI extraction/rewrite, and search are all *enhancements*; storage
 are not allowed to be. See `README.md` → "Browser AI best practices" for the detailed rules this
 implies for AI code specifically; this document covers the rest of the app.
 
+This constraint **survives** the server-canonical decision below. A capture with no network still
+completes locally and queues. What changed is *which copy is authoritative*, not *whether you can
+write offline*.
+
+### Source of truth: server-canonical (decided, not yet implemented)
+
+Per [issue #23](https://github.com/viniciuspassos/logbook/issues/23), the target architecture is
+**the server owns the truth; IndexedDB is a local read cache and write queue**. This reverses the
+original design, in which IndexedDB *was* the truth and the network did not exist at all.
+
+**Current state: not built.** Nothing under `src/` calls the backend added in #17 — IndexedDB
+remains the de facto source of truth in shipped code. The cache/queue client is tracked in
+[#26](https://github.com/viniciuspassos/logbook/issues/26) and its conflict semantics in
+[#24](https://github.com/viniciuspassos/logbook/issues/24). Read this section as the direction to
+build toward, not a description of what runs today.
+
 ## Data flow, end to end
 
 ```
@@ -117,6 +133,7 @@ export can't drift apart by one of them forgetting a field the other added.
 
 | Decision | Alternative considered | Why this one |
 | --- | --- | --- |
+| **Server-canonical, IndexedDB as cache + write queue** ([#23](https://github.com/viniciuspassos/logbook/issues/23)) | Keeping IndexedDB authoritative with the server as an optional backup target; or dropping offline support entirely | Optional-backup left the server permanently second-class and made multi-device sync impossible. Dropping offline was genuinely simpler — it closes the conflict problem outright — but the audience is out of coverage at the exact moment they log an entry, so it removes the product's reason to exist. Server-canonical keeps field capture working while making the server meaningful. Cost accepted knowingly: this is the *most* engineering of the three, and still owes a write queue and conflict semantics ([#24](https://github.com/viniciuspassos/logbook/issues/24)). |
 | **IndexedDB** for persistence (`lib/db/entriesStore.ts`) | `localStorage` | Entries carry structured fields plus media placeholders; `localStorage`'s string-only, ~5MB, synchronous API doesn't scale to that and blocks the main thread. IndexedDB is async and has no practical size ceiling for this use case. |
 | **On-device AI** (Chrome Prompt/Rewriter APIs) over a cloud LLM | Calling an LLM API over the network | The core product requirement is working with no connectivity. A cloud call is a hard dependency the app can't have on its capture path. The cost is real: the feature is flag-gated, download-gated, and desktop-Chrome-only — accepted deliberately, with unavailability always degrading to a manual path (see `README.md` → "Browser AI best practices"). |
 | **Composed single-concern hooks**, no global store | Redux/Zustand/Context-as-store | Four concerns (nav, entries, new-entry flow, export) that don't need cross-cutting selectors or middleware. A composition-root hook keeps the wiring visible in one function instead of behind a store's action/reducer indirection. |
