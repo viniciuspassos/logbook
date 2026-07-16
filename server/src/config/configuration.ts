@@ -18,7 +18,10 @@ export interface AppConfig {
 export type Env = Readonly<Record<string, string | undefined>>
 
 const DEFAULT_PORT = 3000
-const DEFAULT_MAX_UPLOAD_SIZE_BYTES = 10 * 1024 * 1024
+// 25MB: iPhone ProRAW/HEIC photos run close to this size and were failing
+// against the previous 10MB default. Still overridable via
+// MAX_UPLOAD_SIZE_BYTES (see .env.example).
+const DEFAULT_MAX_UPLOAD_SIZE_BYTES = 25 * 1024 * 1024
 const DEFAULT_SESSION_TTL_DAYS = 30
 
 /**

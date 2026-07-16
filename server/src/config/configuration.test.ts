@@ -26,7 +26,7 @@ describe('loadConfig', () => {
       nodeEnv: 'development',
       databaseUrl: baseEnv.DATABASE_URL,
       uploadDir: expect.stringContaining('uploads'),
-      maxUploadSizeBytes: 10 * 1024 * 1024,
+      maxUploadSizeBytes: 25 * 1024 * 1024,
       authPasswordHash: baseEnv.AUTH_PASSWORD_HASH,
       sessionTtlDays: 30,
       cookieSecure: false,

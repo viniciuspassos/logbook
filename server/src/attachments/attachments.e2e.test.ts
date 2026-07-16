@@ -22,6 +22,12 @@ import { Attachment } from './attachment.entity'
 import { StorageModule } from '../storage/storage.module'
 import { loadConfig } from '../config/configuration'
 
+// Real magic bytes for a JPEG (SOI + JFIF marker) — with magic-byte
+// validation in place (#19), a fake "jpeg" body of arbitrary text bytes is
+// correctly rejected, so lifecycle tests that expect a successful upload
+// need genuine signature bytes.
+const JPEG_BYTES = Buffer.from([0xff, 0xd8, 0xff, 0xe0, 0x00, 0x10, 0x4a, 0x46, 0x49, 0x46])
+
 describe('Attachments (e2e)', () => {
   let app: INestApplication
   let uploadDir: string
@@ -135,7 +141,7 @@ describe('Attachments (e2e)', () => {
       auth,
       { mutating: true },
     )
-      .attach('file', Buffer.from('fake jpeg bytes'), {
+      .attach('file', JPEG_BYTES, {
         filename: 'summit.jpg',
         contentType: 'image/jpeg',
       })
@@ -145,7 +151,7 @@ describe('Attachments (e2e)', () => {
       entryId,
       originalFilename: 'summit.jpg',
       mimeType: 'image/jpeg',
-      sizeBytes: Buffer.from('fake jpeg bytes').byteLength,
+      sizeBytes: JPEG_BYTES.byteLength,
     })
     const attachmentId = uploadRes.body.id as number
 
@@ -167,7 +173,9 @@ describe('Attachments (e2e)', () => {
       auth,
     ).expect(200)
     expect(fileRes.headers['content-type']).toContain('image/jpeg')
-    expect(fileRes.body.equals(Buffer.from('fake jpeg bytes'))).toBe(true)
+    expect(fileRes.headers['x-content-type-options']).toBe('nosniff')
+    expect(fileRes.headers['content-disposition']).toContain('inline;')
+    expect(fileRes.body.equals(JPEG_BYTES)).toBe(true)
 
     await withAuth(
       request(app.getHttpServer()).delete(`/attachments/${attachmentId}`),
@@ -183,5 +191,31 @@ describe('Attachments (e2e)', () => {
       request(app.getHttpServer()).get(`/attachments/${attachmentId}/file`),
       auth,
     ).expect(404)
+  })
+
+  it('rejects an HTML payload uploaded with a spoofed image/png Content-Type, and never stores it (#19)', async () => {
+    const htmlPayload = Buffer.from(
+      '<html><body><script>alert(document.cookie)</script></body></html>',
+      'utf-8',
+    )
+
+    const uploadRes = await withAuth(
+      request(app.getHttpServer()).post(`/entries/${entryId}/attachments`),
+      auth,
+      { mutating: true },
+    )
+      .attach('file', htmlPayload, {
+        filename: 'totally-a-photo.png',
+        contentType: 'image/png',
+      })
+      .expect(415)
+
+    expect(JSON.stringify(uploadRes.body)).not.toContain('<script>')
+
+    const listRes = await withAuth(
+      request(app.getHttpServer()).get(`/entries/${entryId}/attachments`),
+      auth,
+    ).expect(200)
+    expect(listRes.body).toHaveLength(0)
   })
 })

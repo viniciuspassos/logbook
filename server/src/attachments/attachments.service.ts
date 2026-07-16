@@ -1,4 +1,4 @@
-import { Inject, Injectable, NotFoundException } from '@nestjs/common'
+import { Inject, Injectable, NotFoundException, UnsupportedMediaTypeException } from '@nestjs/common'
 import { AttachmentsRepository } from './attachments.repository'
 import { EntriesRepository } from '../entries/entries.repository'
 import {
@@ -7,12 +7,22 @@ import {
   type FileStorage,
   type SaveFileInput,
 } from '../storage/storage.interface'
+import { ALLOWED_IMAGE_MIME_TYPES, detectImageType } from './image-type'
 import type { Attachment } from './attachment.entity'
+import type { ContentDispositionType } from '../common/http/content-disposition'
 
 export interface UploadedFile {
   buffer: Buffer
   originalFilename: string
-  mimeType: string
+}
+
+export interface AttachmentFile {
+  attachment: Attachment
+  buffer: Buffer
+  /** Derived from the stored bytes' magic number, never from a client- or
+   *  DB-stored declared type — see getFile(). */
+  contentType: string
+  disposition: ContentDispositionType
 }
 
 /**
@@ -32,10 +42,20 @@ export class AttachmentsService {
   async uploadForEntry(entryId: number, file: UploadedFile): Promise<Attachment> {
     await this.assertEntryExists(entryId)
 
+    // The client-declared Content-Type (Multer's file.mimetype) is never
+    // read here — it's attacker-controlled and trivially spoofed. The only
+    // type that's ever trusted is what the file's own magic bytes say (#19).
+    const detectedMimeType = detectImageType(file.buffer)
+    if (!detectedMimeType) {
+      throw new UnsupportedMediaTypeException(
+        `Unsupported file type. Allowed types: ${ALLOWED_IMAGE_MIME_TYPES.join(', ')}.`,
+      )
+    }
+
     const saveInput: SaveFileInput = {
       buffer: file.buffer,
       originalFilename: file.originalFilename,
-      mimeType: file.mimeType,
+      mimeType: detectedMimeType,
     }
     const stored = await this.fileStorage.save(saveInput)
 
@@ -43,7 +63,7 @@ export class AttachmentsService {
       entryId,
       originalFilename: file.originalFilename,
       storageKey: stored.key,
-      mimeType: file.mimeType,
+      mimeType: detectedMimeType,
       sizeBytes: stored.sizeBytes,
     })
   }
@@ -57,11 +77,23 @@ export class AttachmentsService {
     return this.requireAttachment(id)
   }
 
-  async getFile(id: number): Promise<{ attachment: Attachment; buffer: Buffer }> {
+  async getFile(id: number): Promise<AttachmentFile> {
     const attachment = await this.requireAttachment(id)
     try {
       const buffer = await this.fileStorage.read(attachment.storageKey)
-      return { attachment, buffer }
+      // Re-sniff the actual stored bytes rather than trusting the DB's
+      // mimeType column: it may hold a pre-#19 client-declared value (a row
+      // uploaded before this validation existed) that must never drive what
+      // gets served as this response's Content-Type. Anything that doesn't
+      // match an allowlisted image signature is downgraded to an opaque,
+      // forced download so it can never be rendered in-origin.
+      const detectedMimeType = detectImageType(buffer)
+      return {
+        attachment,
+        buffer,
+        contentType: detectedMimeType ?? 'application/octet-stream',
+        disposition: detectedMimeType ? 'inline' : 'attachment',
+      }
     } catch (error) {
       if (error instanceof StorageFileNotFoundError) {
         throw new NotFoundException(`Attachment ${id} has no stored file`)
