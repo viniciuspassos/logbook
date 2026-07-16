@@ -1,4 +1,4 @@
-import { NotFoundException, UnsupportedMediaTypeException } from '@nestjs/common'
+import { Logger, NotFoundException, UnsupportedMediaTypeException } from '@nestjs/common'
 import { AttachmentsService } from './attachments.service'
 import type { AttachmentsRepository } from './attachments.repository'
 import type { EntriesRepository } from '../entries/entries.repository'
@@ -237,17 +237,50 @@ describe('AttachmentsService', () => {
     await expect(service.getFile(1)).rejects.toBeInstanceOf(NotFoundException)
   })
 
-  it('remove deletes the stored file then the metadata row', async () => {
+  // Behavior change (#35): this used to delete the stored file *before* the
+  // metadata row. The ordering is now inverted to match the entry-cascade
+  // path (EntriesService.remove) and #20's rows-first, files-best-effort
+  // decision. The assertions below are updated rather than removed — the
+  // "removes both the row and the file" contract is unchanged, only the
+  // order and the file-failure handling.
+  it('remove deletes the metadata row before the stored file (rows-first)', async () => {
     const { attachmentsRepository, entriesRepository, fileStorage } = makeMocks()
     const row = fakeAttachment()
     attachmentsRepository.findById.mockResolvedValue(row)
     attachmentsRepository.remove.mockResolvedValue(true)
+    const calls: string[] = []
+    attachmentsRepository.remove.mockImplementation(async () => {
+      calls.push('row')
+      return true
+    })
+    fileStorage.delete.mockImplementation(async () => {
+      calls.push('file')
+    })
     const service = new AttachmentsService(attachmentsRepository, entriesRepository, fileStorage)
 
     await service.remove(1)
 
-    expect(fileStorage.delete).toHaveBeenCalledWith(row.storageKey)
     expect(attachmentsRepository.remove).toHaveBeenCalledWith(1)
+    expect(fileStorage.delete).toHaveBeenCalledWith(row.storageKey)
+    expect(calls).toEqual(['row', 'file'])
+  })
+
+  it('remove still resolves and removes the row when the file delete fails (files best-effort)', async () => {
+    const { attachmentsRepository, entriesRepository, fileStorage } = makeMocks()
+    const row = fakeAttachment({ id: 7, storageKey: 'key-7' })
+    attachmentsRepository.findById.mockResolvedValue(row)
+    attachmentsRepository.remove.mockResolvedValue(true)
+    fileStorage.delete.mockRejectedValue(new Error('EACCES: permission denied'))
+    const warnSpy = jest.spyOn(Logger.prototype, 'warn').mockImplementation(() => undefined)
+    const service = new AttachmentsService(attachmentsRepository, entriesRepository, fileStorage)
+
+    // A disk error must never make an attachment undeletable: the row is
+    // gone and the caller sees success, with the stranded file logged.
+    await expect(service.remove(7)).resolves.toBeUndefined()
+
+    expect(attachmentsRepository.remove).toHaveBeenCalledWith(7)
+    expect(warnSpy).toHaveBeenCalledWith(expect.stringContaining('key-7'))
+    warnSpy.mockRestore()
   })
 
   it('remove throws NotFoundException when the attachment does not exist', async () => {

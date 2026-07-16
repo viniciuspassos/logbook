@@ -1,4 +1,10 @@
-import { Inject, Injectable, NotFoundException, UnsupportedMediaTypeException } from '@nestjs/common'
+import {
+  Inject,
+  Injectable,
+  Logger,
+  NotFoundException,
+  UnsupportedMediaTypeException,
+} from '@nestjs/common'
 import { AttachmentsRepository } from './attachments.repository'
 import { EntriesRepository } from '../entries/entries.repository'
 import {
@@ -33,6 +39,8 @@ export interface AttachmentFile {
  */
 @Injectable()
 export class AttachmentsService {
+  private readonly logger = new Logger(AttachmentsService.name)
+
   constructor(
     private readonly attachmentsRepository: AttachmentsRepository,
     private readonly entriesRepository: EntriesRepository,
@@ -102,10 +110,31 @@ export class AttachmentsService {
     }
   }
 
+  /**
+   * Removes the metadata row first, then deletes the underlying file
+   * best-effort — the same rows-first ordering as the entry-cascade path in
+   * EntriesService.remove, so both delete paths for this resource give the
+   * same consistency guarantee (#35, per #20's decision).
+   *
+   * A file-delete failure is logged and swallowed, never thrown: otherwise a
+   * transient disk error (EACCES/EIO — LocalDiskStorageService only swallows
+   * ENOENT) would make the attachment permanently undeletable, since every
+   * retry fails identically. A stranded file is a harmless disk artifact
+   * that #22's storage work can sweep; an undeletable row is not.
+   */
   async remove(id: number): Promise<void> {
     const attachment = await this.requireAttachment(id)
-    await this.fileStorage.delete(attachment.storageKey)
     await this.attachmentsRepository.remove(id)
+
+    try {
+      await this.fileStorage.delete(attachment.storageKey)
+    } catch (error) {
+      const reason = error instanceof Error ? error.message : String(error)
+      this.logger.warn(
+        `Failed to delete file for attachment ${id} ` +
+          `(storageKey="${attachment.storageKey}") after removing its row: ${reason}`,
+      )
+    }
   }
 
   private async requireAttachment(id: number): Promise<Attachment> {
