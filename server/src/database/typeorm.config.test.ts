@@ -8,6 +8,9 @@ function fakeConfig(overrides: Partial<AppConfig> = {}): AppConfig {
     databaseUrl: 'postgres://user:pass@localhost:5432/logbook',
     uploadDir: '/tmp/uploads',
     maxUploadSizeBytes: 1024,
+    authPasswordHash: 'scrypt$16384$abcd$ef01',
+    sessionTtlDays: 30,
+    cookieSecure: false,
     ...overrides,
   }
 }

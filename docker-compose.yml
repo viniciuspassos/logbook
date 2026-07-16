@@ -49,6 +49,17 @@ services:
       DATABASE_URL: postgres://logbook:logbook@db:5432/logbook
       UPLOAD_DIR: /app/uploads
       MAX_UPLOAD_SIZE_BYTES: "10485760"
+      # Dev-only default credential, committed here the same way the
+      # Postgres user/password above are — this is local/opt-in infra only,
+      # not a hosted deployment (see the file header). Hashes the password
+      # "logbook-dev-password"; log in locally with that. Generate your own
+      # with `npm run hash-password -- "<password>"` for anything beyond
+      # throwaway local use, and override this var rather than editing it
+      # in place if you do.
+      # `$$` escapes a literal `$` — Compose interpolates single `$` as a
+      # shell-style variable reference, which would otherwise mangle this
+      # `$`-delimited hash format (see src/auth/password-hasher.service.ts).
+      AUTH_PASSWORD_HASH: "scrypt$$16384$$02e6cd9dd6b706bead3e739e83d73e71$$6b74546315b091b7565f7d9029a90846810970100d632e700e6cdb40261b4de7997457fefdb3d1765b8c269bf05bece95f5d19c78af4597683f4db2c9362ae23"
     volumes:
       # Named volume so uploaded files survive container restarts/recreation
       # (server/.env.example flags the bare default `./uploads` as non-durable).
