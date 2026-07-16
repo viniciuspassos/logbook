@@ -1,5 +1,6 @@
 import { Inject, Injectable, Logger, NotFoundException } from '@nestjs/common'
 import { EntriesRepository } from './entries.repository'
+import { EntryVersionConflictException } from './entry-version-conflict.exception'
 import { FILE_STORAGE, type FileStorage } from '../storage/storage.interface'
 import type { Entry } from './entry.entity'
 import type { CreateEntryDto } from './dto/create-entry.dto'
@@ -30,12 +31,21 @@ export class EntriesService {
     return this.entriesRepository.create(dto)
   }
 
+  /**
+   * Optimistic-concurrency update (#24). `dto.version` must match the
+   * entry's current version or the write is rejected outright — see
+   * EntriesRepository.update for the read-compare-write mechanics.
+   */
   async update(id: number, dto: UpdateEntryDto): Promise<Entry> {
-    const updated = await this.entriesRepository.update(id, dto)
-    if (!updated) {
-      throw new NotFoundException(`Entry ${id} not found`)
+    const result = await this.entriesRepository.update(id, dto)
+    switch (result.outcome) {
+      case 'not-found':
+        throw new NotFoundException(`Entry ${id} not found`)
+      case 'conflict':
+        throw new EntryVersionConflictException(result.current)
+      case 'updated':
+        return result.entry
     }
-    return updated
   }
 
   /**

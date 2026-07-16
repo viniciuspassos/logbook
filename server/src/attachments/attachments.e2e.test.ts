@@ -193,7 +193,64 @@ describe('Attachments (e2e)', () => {
     ).expect(404)
   })
 
-  it('cascade-deletes an entry\'s attachments (rows + files) when the entry is deleted (#20)', async () => {
+  it('returns 404 uploading to, or listing attachments for, a tombstoned (soft-deleted) entry (#24)', async () => {
+    const tombstoneEntryRes = await withAuth(
+      request(app.getHttpServer()).post('/entries'),
+      auth,
+      { mutating: true },
+    ).send({
+      title: 'Soon to be deleted',
+      shape: 'diamond',
+      location: 'Zermatt, Switzerland',
+      date: 'Sep 1',
+      metric: '4,478m',
+      excerpt: 'excerpt',
+      weather: 'Clear',
+      duration: '1d',
+      difficulty: 'Advanced',
+      equipment: 'crampons',
+      participants: 'solo',
+      raw: 'raw',
+      story: 'story',
+      photoHint: 'hint',
+      media: ['a', 'b', 'c'],
+      mapX: 20,
+      mapY: 70,
+    })
+    const tombstoneEntryId = tombstoneEntryRes.body.id as number
+
+    await withAuth(
+      request(app.getHttpServer()).delete(`/entries/${tombstoneEntryId}`),
+      auth,
+      { mutating: true },
+    ).expect(204)
+
+    // The row still exists (tombstoned via deletedAt), but every
+    // attachment-facing read path treats it as gone, same as a hard delete
+    // would — findById's tombstone filter (see EntriesRepository) is the
+    // one place that has to be right for both this and the entry's own 404s.
+    await withAuth(
+      request(app.getHttpServer()).post(`/entries/${tombstoneEntryId}/attachments`),
+      auth,
+      { mutating: true },
+    )
+      .attach('file', JPEG_BYTES, { filename: 'summit.jpg', contentType: 'image/jpeg' })
+      .expect(404)
+
+    await withAuth(
+      request(app.getHttpServer()).get(`/entries/${tombstoneEntryId}/attachments`),
+      auth,
+    ).expect(404)
+  })
+
+  // #24 reworks the mechanics here: the Entry row now survives the delete
+  // (tombstoned via `deletedAt`) rather than being hard-deleted, but
+  // Attachment rows are still hard-deleted (attachments have no version/
+  // update path, so the resurrection failure mode tombstones exist to
+  // prevent can't occur for them — see the PR description). Every assertion
+  // below is unchanged: from the outside, a tombstoned entry's attachments
+  // are gone exactly like before.
+  it('cascade-deletes an entry\'s attachments (rows + files) when the entry is deleted (#20, reworked by #24)', async () => {
     const cascadeEntryRes = await withAuth(
       request(app.getHttpServer()).post('/entries'),
       auth,

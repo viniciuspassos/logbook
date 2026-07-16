@@ -122,7 +122,7 @@ describe('Entries (e2e)', () => {
       .expect(400)
   })
 
-  it('supports the full create -> read -> update -> delete lifecycle', async () => {
+  it('supports the full create -> read -> update -> delete lifecycle, versioning each write', async () => {
     const createRes = await withAuth(
       request(app.getHttpServer()).post('/entries'),
       auth,
@@ -131,7 +131,7 @@ describe('Entries (e2e)', () => {
       .send(validPayload)
       .expect(201)
 
-    expect(createRes.body).toMatchObject({ title: validPayload.title, shape: 'circle' })
+    expect(createRes.body).toMatchObject({ title: validPayload.title, shape: 'circle', version: 1 })
     const id = createRes.body.id as number
     expect(typeof id).toBe('number')
 
@@ -152,10 +152,11 @@ describe('Entries (e2e)', () => {
       auth,
       { mutating: true },
     )
-      .send({ title: 'Solo tandem jump (edited)' })
+      .send({ version: 1, title: 'Solo tandem jump (edited)' })
       .expect(200)
       .expect((res) => {
         expect(res.body.title).toBe('Solo tandem jump (edited)')
+        expect(res.body.version).toBe(2)
       })
 
     await withAuth(
@@ -173,11 +174,161 @@ describe('Entries (e2e)', () => {
       auth,
       { mutating: true },
     )
-      .send({ title: 'nope' })
+      .send({ version: 1, title: 'nope' })
       .expect(404)
 
     await withAuth(
       request(app.getHttpServer()).delete('/entries/999999'),
+      auth,
+      { mutating: true },
+    ).expect(404)
+  })
+
+  it('rejects a PATCH with a missing version with 400', async () => {
+    const createRes = await withAuth(
+      request(app.getHttpServer()).post('/entries'),
+      auth,
+      { mutating: true },
+    )
+      .send(validPayload)
+      .expect(201)
+    const id = createRes.body.id as number
+
+    await withAuth(
+      request(app.getHttpServer()).patch(`/entries/${id}`),
+      auth,
+      { mutating: true },
+    )
+      .send({ title: 'no version field' })
+      .expect(400)
+  })
+
+  it('409s on a stale version, hands back the current server state, and does not apply the write (#24)', async () => {
+    const createRes = await withAuth(
+      request(app.getHttpServer()).post('/entries'),
+      auth,
+      { mutating: true },
+    )
+      .send(validPayload)
+      .expect(201)
+    const id = createRes.body.id as number
+
+    // Advance the server's version to 2 without the "other device" knowing.
+    await withAuth(
+      request(app.getHttpServer()).patch(`/entries/${id}`),
+      auth,
+      { mutating: true },
+    )
+      .send({ version: 1, title: 'Edited from device A' })
+      .expect(200)
+
+    // A second device still thinks the version is 1 and tries to write.
+    const conflictRes = await withAuth(
+      request(app.getHttpServer()).patch(`/entries/${id}`),
+      auth,
+      { mutating: true },
+    )
+      .send({ version: 1, title: 'Edited from device B (stale)' })
+      .expect(409)
+
+    expect(conflictRes.body.currentEntry).toMatchObject({
+      id,
+      version: 2,
+      title: 'Edited from device A',
+    })
+
+    // The stale write from device B never landed.
+    await withAuth(request(app.getHttpServer()).get(`/entries/${id}`), auth)
+      .expect(200)
+      .expect((res) => {
+        expect(res.body.title).toBe('Edited from device A')
+        expect(res.body.version).toBe(2)
+      })
+  })
+
+  it('preserves a losing edit via supersededEdit on the follow-up PATCH that resolves a conflict, rather than discarding it (#24)', async () => {
+    const createRes = await withAuth(
+      request(app.getHttpServer()).post('/entries'),
+      auth,
+      { mutating: true },
+    )
+      .send(validPayload)
+      .expect(201)
+    const id = createRes.body.id as number
+
+    await withAuth(
+      request(app.getHttpServer()).patch(`/entries/${id}`),
+      auth,
+      { mutating: true },
+    )
+      .send({ version: 1, title: 'Edited from device A' })
+      .expect(200)
+
+    const conflictRes = await withAuth(
+      request(app.getHttpServer()).patch(`/entries/${id}`),
+      auth,
+      { mutating: true },
+    )
+      .send({ version: 1, title: 'Edited from device B (stale)' })
+      .expect(409)
+    const currentVersion = conflictRes.body.currentEntry.version as number
+
+    // Device B resolves by accepting the server's winning text, but stashes
+    // its own losing draft rather than throwing it away.
+    const resolvedRes = await withAuth(
+      request(app.getHttpServer()).patch(`/entries/${id}`),
+      auth,
+      { mutating: true },
+    )
+      .send({
+        version: currentVersion,
+        title: 'Edited from device A',
+        supersededEdit: { title: 'Edited from device B (stale)' },
+      })
+      .expect(200)
+
+    expect(resolvedRes.body.supersededEdits).toEqual([
+      {
+        version: currentVersion,
+        capturedAt: expect.any(String),
+        data: { title: 'Edited from device B (stale)' },
+      },
+    ])
+  })
+
+  it('excludes a tombstoned entry from the list and every read/write path, and 404s a delete of an already-deleted entry (#24)', async () => {
+    const createRes = await withAuth(
+      request(app.getHttpServer()).post('/entries'),
+      auth,
+      { mutating: true },
+    )
+      .send(validPayload)
+      .expect(201)
+    const id = createRes.body.id as number
+
+    await withAuth(
+      request(app.getHttpServer()).delete(`/entries/${id}`),
+      auth,
+      { mutating: true },
+    ).expect(204)
+
+    await withAuth(request(app.getHttpServer()).get(`/entries/${id}`), auth).expect(404)
+
+    const listRes = await withAuth(request(app.getHttpServer()).get('/entries'), auth).expect(200)
+    expect(listRes.body.some((e: { id: number }) => e.id === id)).toBe(false)
+
+    await withAuth(
+      request(app.getHttpServer()).patch(`/entries/${id}`),
+      auth,
+      { mutating: true },
+    )
+      .send({ version: 1, title: 'resurrection attempt' })
+      .expect(404)
+
+    // Deleting an already-tombstoned entry again is a 404, not a silent
+    // success or a second tombstone.
+    await withAuth(
+      request(app.getHttpServer()).delete(`/entries/${id}`),
       auth,
       { mutating: true },
     ).expect(404)
