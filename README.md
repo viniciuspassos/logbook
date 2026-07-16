@@ -211,16 +211,23 @@ items explicitly marked _not yet implemented_.
 
 ### Offline-first principles
 
+Offline **capture** stays non-negotiable — this is a field app, and its users are out of coverage
+at precisely the moment they want to log an entry. What changed is which copy of the data is
+authoritative: see [issue #23](https://github.com/viniciuspassos/logbook/issues/23).
+
 The application must:
 
 - Work completely offline — the app shell is precached by the service worker, so a cold start
-  with no network serves the full UI and every stored entry.
-- Store all data locally using **IndexedDB** (`src/lib/db/entriesStore.ts`).
+  with no network serves the full UI and every cached entry.
+- Let entries be created and read with no network, always. A capture that can't reach the server
+  completes locally and queues.
 - Cache application assets with a **service worker** (Workbox, via `vite-plugin-pwa`).
 - Never require cloud AI services for core functionality.
-- Synchronize optional backups only when connectivity is available.
-  _Not yet implemented_ — backups today are manual, local files (see below). Cloud sync is the
-  one offline-first bullet still outstanding.
+- Treat the **server as the source of truth**, with **IndexedDB** (`src/lib/db/entriesStore.ts`)
+  as the local read cache and write queue.
+  _Not yet implemented_ — IndexedDB is still authoritative in shipped code and nothing calls the
+  backend. Tracked in [#26](https://github.com/viniciuspassos/logbook/issues/26), with conflict
+  semantics in [#24](https://github.com/viniciuspassos/logbook/issues/24).
 
 > One caveat on "completely offline": Chrome's **Web Speech API** may route audio to a network
 > service, so voice capture specifically can require connectivity. Extraction, rewriting, search,
