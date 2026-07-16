@@ -34,6 +34,7 @@ function App() {
     regenerateStory,
     editStory,
     saveEntry,
+    exportActions,
   } = useLogbookApp()
 
   return (
@@ -49,7 +50,9 @@ function App() {
         )}
         {tab === 'search' && <SearchScreen entries={entries} onOpenEntry={openEntry} />}
         {tab === 'stats' && <StatsScreen entries={entries} />}
-        {tab === 'settings' && <SettingsScreen />}
+        {tab === 'settings' && (
+          <SettingsScreen entryCount={entries.length} exports={exportActions} />
+        )}
       </div>
 
       {!overlay && <TabBar active={tab} onSelect={goTab} onNewEntry={openNewEntry} />}
@@ -58,8 +61,11 @@ function App() {
         <EntryDetailOverlay
           entry={selectedEntry}
           rawOpen={rawOpen}
+          exportBusy={exportActions.busy}
           onToggleRaw={toggleRaw}
           onClose={closeOverlay}
+          onExportMarkdown={exportActions.exportEntryMarkdown}
+          onExportPdf={exportActions.exportEntryPdf}
         />
       )}
       {overlay === 'newEntry' && (

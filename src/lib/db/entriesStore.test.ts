@@ -17,6 +17,7 @@ import {
   isPersistenceSupported,
   putEntries,
   putEntry,
+  replaceAllEntries,
 } from './entriesStore.ts'
 import type { Entry } from '../../types/entry.ts'
 
@@ -90,5 +91,22 @@ describe('entriesStore', () => {
   it('bulk-put of an empty list is a no-op', async () => {
     await putEntries([])
     expect(await getAllEntries()).toEqual([])
+  })
+
+  describe('replaceAllEntries', () => {
+    it('drops the previous entries and stores the new ones', async () => {
+      await putEntries([makeEntry({ id: 1 }), makeEntry({ id: 2 })])
+      await replaceAllEntries([makeEntry({ id: 9, title: 'Restored' })])
+
+      const all = await getAllEntries()
+      expect(all).toHaveLength(1)
+      expect(all[0].title).toBe('Restored')
+    })
+
+    it('clears the store when restoring an empty backup', async () => {
+      await putEntries([makeEntry({ id: 1 })])
+      await replaceAllEntries([])
+      expect(await getAllEntries()).toEqual([])
+    })
   })
 })

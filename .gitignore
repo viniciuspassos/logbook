@@ -27,3 +27,7 @@ dist-ssr
 *.sw?
 #
 .env
+
+# Agent / tooling scratch space
+.claude/worktrees
+.playwright-mcp

@@ -1,0 +1,13 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 512 512" role="img" aria-label="Logbook">
+  <!-- Logbook's app mark: the terracotta accent and cream surface from the app's
+       own palette (see src/index.css), drawn with the same triangle / circle /
+       diamond vocabulary the timeline uses to distinguish adventure types.
+       Artwork sits inside the maskable safe zone (an 80% centred circle), so
+       this single composition works cropped or full-bleed. -->
+  <rect width="512" height="512" rx="112" fill="#C1552C" />
+  <circle cx="352" cy="175" r="36" fill="#FFD8C6" />
+  <path d="M150 156 L176 182 L150 208 L124 182 Z" fill="#FFD8C6" />
+  <path d="M176 240 L296 374 L116 374 Z" fill="#E9A987" />
+  <path d="M288 196 L400 374 L176 374 Z" fill="#F8ECE0" />
+  <rect x="112" y="374" width="288" height="10" rx="5" fill="#F8ECE0" />
+</svg>
