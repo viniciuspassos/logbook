@@ -50,7 +50,7 @@ describe('parseSearchQuery', () => {
           ),
         destroy,
       }),
-      availability: jest.fn(),
+      availability: jest.fn().mockResolvedValue('available'),
     }
     const criteria = await parseSearchQuery('windy climbs in July')
     expect(criteria.keywords).toEqual(['climb'])
@@ -64,9 +64,18 @@ describe('parseSearchQuery', () => {
         prompt: jest.fn().mockResolvedValue('garbage'),
         destroy: jest.fn(),
       }),
-      availability: jest.fn(),
+      availability: jest.fn().mockResolvedValue('available'),
     }
     expect(await parseSearchQuery('snowy hikes')).toEqual({ keywords: ['snowy', 'hikes'] })
+  })
+
+  it('falls back to a keyword split without creating a session when availability reports unavailable', async () => {
+    const create = jest.fn()
+    g.LanguageModel = { create, availability: jest.fn().mockResolvedValue('unavailable') }
+    expect(await parseSearchQuery('windy climbs july')).toEqual({
+      keywords: ['windy', 'climbs', 'july'],
+    })
+    expect(create).not.toHaveBeenCalled()
   })
 })
 

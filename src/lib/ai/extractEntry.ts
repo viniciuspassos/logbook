@@ -93,6 +93,7 @@ export async function extractEntry(
   const session = await LanguageModel.create({
     signal: opts?.signal,
     initialPrompts: [{ role: 'system', content: SYSTEM_PROMPT }],
+    expectedOutputs: [{ type: 'text', languages: ['en'] }],
   })
 
   try {

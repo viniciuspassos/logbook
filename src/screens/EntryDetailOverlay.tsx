@@ -1,6 +1,8 @@
 import { OverlayHeader } from '../components/OverlayHeader.tsx'
 import { PhotoPlaceholder } from '../components/PhotoPlaceholder.tsx'
 import { ShapeGlyph } from '../components/ShapeGlyph.tsx'
+import type { ExportStatus } from '../hooks/useExportActions.ts'
+import { cx } from '../lib/cx.ts'
 import type { Entry } from '../types/entry.ts'
 import './EntryDetailOverlay.css'
 
@@ -9,6 +11,8 @@ interface EntryDetailOverlayProps {
   rawOpen: boolean
   /** Disables the export buttons while another export is already in flight. */
   exportBusy?: boolean
+  /** Outcome of the last export triggered from this overlay, if any. */
+  exportStatus?: ExportStatus | null
   onToggleRaw: () => void
   onClose: () => void
   onExportMarkdown: (entry: Entry) => void
@@ -19,6 +23,7 @@ export function EntryDetailOverlay({
   entry,
   rawOpen,
   exportBusy = false,
+  exportStatus = null,
   onToggleRaw,
   onClose,
   onExportMarkdown,
@@ -97,6 +102,20 @@ export function EntryDetailOverlay({
           >
             Export PDF
           </button>
+        </div>
+
+        {/* Announces the outcome of an export the user just triggered. */}
+        <div className="entry-detail__status" role="status" aria-live="polite">
+          {exportStatus && (
+            <span
+              className={cx(
+                'entry-detail__status-text',
+                exportStatus.tone === 'error' && 'entry-detail__status-text--error',
+              )}
+            >
+              {exportStatus.message}
+            </span>
+          )}
         </div>
       </div>
     </div>

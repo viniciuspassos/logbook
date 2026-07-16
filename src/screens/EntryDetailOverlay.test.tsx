@@ -81,4 +81,21 @@ describe('EntryDetailOverlay', () => {
     expect(screen.getByRole('button', { name: 'Export Markdown' })).toBeDisabled()
     expect(screen.getByRole('button', { name: 'Export PDF' })).toBeDisabled()
   })
+
+  it('renders no status text when exportStatus is absent', () => {
+    renderOverlay()
+    expect(screen.getByRole('status')).toHaveTextContent('')
+  })
+
+  it('announces a successful export via the status region', () => {
+    renderOverlay({ exportStatus: { tone: 'info', message: 'Markdown exported.' } })
+    expect(screen.getByRole('status')).toHaveTextContent('Markdown exported.')
+  })
+
+  it('announces a failed export via the status region', () => {
+    renderOverlay({ exportStatus: { tone: 'error', message: 'Something went wrong.' } })
+    const status = screen.getByRole('status')
+    expect(status).toHaveTextContent('Something went wrong.')
+    expect(status.querySelector('.entry-detail__status-text--error')).toBeInTheDocument()
+  })
 })

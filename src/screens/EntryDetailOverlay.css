@@ -139,3 +139,18 @@
   cursor: pointer;
   font-family: inherit;
 }
+
+/* Reserve the line's height so a status message doesn't shift the layout. */
+.entry-detail__status {
+  min-height: 18px;
+  margin-top: 10px;
+  padding: 0 2px;
+}
+
+.entry-detail__status-text {
+  font-size: 12px;
+  color: var(--lb-success);
+}
+.entry-detail__status-text--error {
+  color: var(--lb-danger);
+}
