@@ -24,6 +24,10 @@ hooks, and the build/PWA pipeline, see `docs/INFRASTRUCTURE.md`.
 
 `.githooks/pre-commit` gates every commit on typecheck → lint → tests, and `.githooks/commit-msg` enforces Conventional Commits. `npm install` wires the hooks up via the `prepare` script.
 
+## Before implementing
+
+Sync local `main` (`git fetch origin && git log origin/main`) and search the codebase/issue tracker for the requested behavior before writing code. Several past sessions duplicated work that had already merged (e.g. the soft-delete tombstone feature) — a grep is orders of magnitude cheaper than a redundant implementation, review, and PR.
+
 ## Testing
 
 Follow Test-Driven Development: write the failing Jest test for the behavior first, then write the minimum code to make it pass, then refactor. Every function, both backend and frontend, must have a unit test written with Jest. When adding a function, add or update its corresponding Jest test in the same change.
