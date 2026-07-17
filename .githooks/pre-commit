@@ -9,12 +9,8 @@ npx tsc -b
 echo "[pre-commit] linting (eslint)"
 npm run lint --silent
 
-if node -e "process.exit(require('./package.json').scripts.test ? 0 : 1)" 2>/dev/null; then
-  echo "[pre-commit] running tests (with coverage gate)"
-  npm test --silent -- --coverage
-else
-  echo "[pre-commit] no \"test\" script in package.json yet, skipping"
-fi
+echo "[pre-commit] running tests (with coverage gate)"
+npm test --silent -- --coverage
 
 # server/ is a standalone NestJS package with its own package.json/node_modules,
 # deliberately NOT wired into the root package.json or workspaces (see

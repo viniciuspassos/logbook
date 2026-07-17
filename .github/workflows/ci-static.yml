@@ -111,21 +111,11 @@ jobs:
         run: npm run migration:run
 
       - name: Fail if entities and migrations have drifted
-        run: |
-          set -e
-          before="$(ls src/database/migrations | wc -l)"
-          # migration:generate exits 1 (deliberately, per TypeORM) when there
-          # is NO drift to report — "No changes in database schema were
-          # found" is the success case here, so the exit code is ignored and
-          # the actual signal is whether a new migration file was written.
-          npm run migration:generate -- src/database/migrations/DriftCheck || true
-          after="$(ls src/database/migrations | wc -l)"
-          if [ "$after" -ne "$before" ]; then
-            echo "::error::Entities and migrations have drifted. Run 'npm run migration:generate' locally against a real Postgres, review the generated migration, and commit it — see docs/INFRASTRUCTURE.md."
-            # The newly generated migration is untracked, so `git diff` shows
-            # nothing for it — `git status --porcelain` is what actually
-            # surfaces it (and any other uncommitted change) in the job log.
-            git status --porcelain -- src/database/migrations
-            exit 1
-          fi
-          echo "No drift detected between entities and committed migrations."
+        # Delegates to scripts/check-migration-drift.ts (backed by the
+        # tested src/database/migration-drift.util.ts) rather than a bare
+        # `migration:generate ... || true`: that blanket `|| true` would
+        # swallow a genuine CLI crash (bad invocation, connection drop)
+        # right alongside TypeORM's deliberate exit-1 "no drift found" case,
+        # reporting a false green either way. The script distinguishes them
+        # and fails loudly on anything but the documented no-drift message.
+        run: npm run migration:drift-check
