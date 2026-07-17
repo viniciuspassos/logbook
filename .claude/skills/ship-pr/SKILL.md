@@ -45,7 +45,21 @@ what `git commit` itself enforces via `.githooks/`.
    ```
    Fix any failures before proceeding — do not push red code.
 
-4. **Commit, if there are uncommitted changes.**
+4. **Code review.** Before committing, invoke the `code-reviewer` skill
+   (via the `Skill` tool, `skill: "code-reviewer"`) over the diff —
+   this is the one quality gate before a PR exists, and it applies no
+   matter who's calling `ship-pr` (a specialist agent, `product-engineer`,
+   or a direct request to push/ship). Fix any `CONFIRMED` findings
+   yourself before proceeding; note anything deliberately left
+   (`PLAUSIBLE` but out of scope) so it can be mentioned when reporting
+   back. If the calling agent already ran `code-reviewer` on this exact
+   diff earlier in the same turn, don't re-run it — but don't assume
+   that without checking; if in doubt, run it. Don't also invoke the
+   generic `code-review` skill on the same diff — `code-reviewer` is
+   the one quality gate here, and stacking a second review on the
+   same changes is duplicated effort for no benefit.
+
+5. **Commit, if there are uncommitted changes.**
    ```
    git status --porcelain
    ```
@@ -55,12 +69,12 @@ what `git commit` itself enforces via `.githooks/`.
    subject line. `git commit` runs `.githooks/commit-msg`
    automatically and rejects a non-conforming subject.
 
-5. **Push with upstream tracking.**
+6. **Push with upstream tracking.**
    ```
    git push -u origin <branch-name>
    ```
 
-6. **Open the PR.**
+7. **Open the PR.**
    ```
    gh pr create --title "<type>: <summary>"
    ```
@@ -69,7 +83,7 @@ what `git commit` itself enforces via `.githooks/`.
    than inventing new structure. Base branch is `main` unless told
    otherwise.
 
-7. **Wait for `static-gates`, then merge — no confirmation needed.**
+8. **Wait for `static-gates`, then merge — no confirmation needed.**
    The only required status check on `main` is `static-gates`
    (`enforce_admins` is off). Once `static-gates` reports success,
    merge and clean up the branch:
@@ -82,7 +96,7 @@ what `git commit` itself enforces via `.githooks/`.
    Merge as soon as `static-gates` is green — don't ask the user
    first for this repo.
 
-8. **Report back** the PR URL and the merge result.
+9. **Report back** the PR URL and the merge result.
 
 ## Gotchas
 
