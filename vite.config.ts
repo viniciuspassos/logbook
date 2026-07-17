@@ -4,6 +4,27 @@ import { VitePWA } from 'vite-plugin-pwa'
 
 // https://vite.dev/config/
 export default defineConfig({
+  server: {
+    proxy: {
+      // #26: the optional backend (server/) has no CORS headers at all
+      // (server/src/main.ts) — same-origin only, by design (see its own
+      // docs). Proxying `/api` -> the backend during `npm run dev` keeps the
+      // browser's view of things same-origin so cookies flow, without
+      // needing the server to grow CORS just for local dev. Production
+      // deploys are expected to serve this app and the backend from the same
+      // origin (see docs/ARCHITECTURE.md) so this proxy has no prod
+      // equivalent to configure — src/lib/sync/config.ts's `/api` default
+      // matches this rewrite either way. A missing/unreachable backend here
+      // is harmless: every sync/*Api call degrades gracefully on failure
+      // (see CLAUDE.md's Browser AI/offline-capture rules), so `npm run dev`
+      // with no server running keeps working exactly as before #26.
+      '/api': {
+        target: 'http://localhost:3000',
+        changeOrigin: true,
+        rewrite: (path) => path.replace(/^\/api/, ''),
+      },
+    },
+  },
   plugins: [
     react(),
     VitePWA({

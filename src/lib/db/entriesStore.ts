@@ -1,3 +1,4 @@
+import { ENTRIES_STORE as STORE, isPersistenceSupported, openLogbookDb } from './database.ts'
 import type { Entry } from '../../types/entry.ts'
 
 /**
@@ -8,29 +9,16 @@ import type { Entry } from '../../types/entry.ts'
  * Entries are keyed by their numeric `id` and read back newest-first (highest
  * id), so a freshly saved entry — which always takes the next-highest id —
  * stays at the top of the timeline across reloads.
+ *
+ * The database itself (name, version, object store creation) is shared with
+ * outboxStore.ts/syncStateStore.ts via database.ts (#26) — see that file's
+ * docstring for why a single opener is required.
  */
 
-const DB_NAME = 'logbook'
-const DB_VERSION = 1
-const STORE = 'entries'
-
-/** Whether this environment can persist at all (false in SSR/jsdom). */
-export function isPersistenceSupported(): boolean {
-  return typeof indexedDB !== 'undefined'
-}
+export { isPersistenceSupported }
 
 function openDb(): Promise<IDBDatabase> {
-  return new Promise((resolve, reject) => {
-    const request = indexedDB.open(DB_NAME, DB_VERSION)
-    request.onupgradeneeded = () => {
-      const db = request.result
-      if (!db.objectStoreNames.contains(STORE)) {
-        db.createObjectStore(STORE, { keyPath: 'id' })
-      }
-    }
-    request.onsuccess = () => resolve(request.result)
-    request.onerror = () => reject(request.error)
-  })
+  return openLogbookDb()
 }
 
 /** Resolve/reject a write transaction as a whole so callers can await it. */

@@ -1,6 +1,8 @@
+import { AttachmentGallery } from '../components/AttachmentGallery.tsx'
 import { OverlayHeader } from '../components/OverlayHeader.tsx'
 import { PhotoPlaceholder } from '../components/PhotoPlaceholder.tsx'
 import { ShapeGlyph } from '../components/ShapeGlyph.tsx'
+import type { AttachmentPreview, AttachmentStatus } from '../hooks/useEntryAttachments.ts'
 import type { ExportStatus } from '../hooks/useExportActions.ts'
 import { cx } from '../lib/cx.ts'
 import type { Entry } from '../types/entry.ts'
@@ -13,10 +15,16 @@ interface EntryDetailOverlayProps {
   exportBusy?: boolean
   /** Outcome of the last export triggered from this overlay, if any. */
   exportStatus?: ExportStatus | null
+  /** Real, uploaded photo attachments (#26) for this entry — separate from
+   *  `entry.media`'s decorative hint strings rendered just above. */
+  attachments?: AttachmentPreview[]
+  attachmentsBusy?: boolean
+  attachmentsStatus?: AttachmentStatus | null
   onToggleRaw: () => void
   onClose: () => void
   onExportMarkdown: (entry: Entry) => void
   onExportPdf: (entry: Entry) => void
+  onAddPhoto?: (file: File) => void
 }
 
 export function EntryDetailOverlay({
@@ -24,10 +32,14 @@ export function EntryDetailOverlay({
   rawOpen,
   exportBusy = false,
   exportStatus = null,
+  attachments = [],
+  attachmentsBusy = false,
+  attachmentsStatus = null,
   onToggleRaw,
   onClose,
   onExportMarkdown,
   onExportPdf,
+  onAddPhoto = () => {},
 }: EntryDetailOverlayProps) {
   return (
     <div className="entry-detail">
@@ -80,6 +92,14 @@ export function EntryDetailOverlay({
           ))}
         </div>
 
+        <div className="entry-detail__section-label">Attachments</div>
+        <AttachmentGallery
+          attachments={attachments}
+          busy={attachmentsBusy}
+          status={attachmentsStatus}
+          onAddPhoto={onAddPhoto}
+        />
+
         <button type="button" className="entry-detail__raw-toggle" onClick={onToggleRaw}>
           {rawOpen ? 'Hide raw notes' : 'Show raw notes'}
         </button>
@@ -104,8 +124,10 @@ export function EntryDetailOverlay({
           </button>
         </div>
 
-        {/* Announces the outcome of an export the user just triggered. */}
-        <div className="entry-detail__status" role="status" aria-live="polite">
+        {/* Announces the outcome of an export the user just triggered. Named
+         *  distinctly from AttachmentGallery's own status region so the two
+         *  aria-live regions on this screen stay individually addressable. */}
+        <div className="entry-detail__status" role="status" aria-live="polite" aria-label="Export status">
           {exportStatus && (
             <span
               className={cx(
