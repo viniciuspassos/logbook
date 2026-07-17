@@ -55,3 +55,23 @@ export async function getAiCapabilities(): Promise<AiCapabilities> {
 export function isCapabilityUsable(capability: AiCapability): boolean {
   return capability !== 'unavailable'
 }
+
+export type AiProcessingStatus = 'enabled' | 'downloading' | 'unavailable'
+
+/**
+ * The "On-device processing" status the Settings screen shows, derived from
+ * the same Prompt + Rewriter capabilities the capture flow relies on for
+ * entry extraction/rewriting (`useNewEntryFlow`). `'unavailable'` wins if
+ * either capability can't be used at all; otherwise `'downloading'` covers
+ * `'downloadable'`/`'downloading'` per {@link isCapabilityUsable} — usable,
+ * but not actually ready yet, so it shouldn't be reported as flatly
+ * "Enabled". Only once both models are `'available'` is it truly enabled.
+ */
+export function describeAiProcessingStatus(
+  capabilities: Pick<AiCapabilities, 'prompt' | 'rewriter'>,
+): AiProcessingStatus {
+  const values: AiCapability[] = [capabilities.prompt, capabilities.rewriter]
+  if (values.some((value) => !isCapabilityUsable(value))) return 'unavailable'
+  if (values.some((value) => value !== 'available')) return 'downloading'
+  return 'enabled'
+}

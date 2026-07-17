@@ -2,7 +2,7 @@ import { useState } from 'react'
 import { OverlayHeader } from '../components/OverlayHeader.tsx'
 import { PhotoPlaceholder } from '../components/PhotoPlaceholder.tsx'
 import type { NewEntryStep } from '../hooks/useNewEntryFlow.ts'
-import type { Draft } from '../lib/buildEntry.ts'
+import { DEFAULT_MEDIA_HINTS, type Draft } from '../lib/buildEntry.ts'
 import type { ExtractedEntryFields } from '../lib/ai/extractEntry.ts'
 import './NewEntryOverlay.css'
 
@@ -178,15 +178,11 @@ export function NewEntryOverlay({
 
           <div className="new-entry__section-label">Add photos &amp; video</div>
           <div className="new-entry__media">
-            <div className="new-entry__media-item">
-              <PhotoPlaceholder hint="ridge shot" shape="rounded" radius={12} />
-            </div>
-            <div className="new-entry__media-item">
-              <PhotoPlaceholder hint="summit view" shape="rounded" radius={12} />
-            </div>
-            <div className="new-entry__media-item">
-              <PhotoPlaceholder hint="add video" shape="rounded" radius={12} />
-            </div>
+            {DEFAULT_MEDIA_HINTS.map((hint) => (
+              <div className="new-entry__media-item" key={hint}>
+                <PhotoPlaceholder hint={hint} shape="rounded" radius={12} />
+              </div>
+            ))}
           </div>
 
           <div className="new-entry__section-label">

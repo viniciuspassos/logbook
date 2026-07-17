@@ -1,4 +1,4 @@
-import { buildEntryFromDraft, formatEntryDate } from './buildEntry.ts'
+import { buildEntryFromDraft, DEFAULT_MEDIA_HINTS, formatEntryDate } from './buildEntry.ts'
 import type { ExtractedEntryFields } from './ai/extractEntry.ts'
 
 const extracted: ExtractedEntryFields = {
@@ -60,5 +60,16 @@ describe('buildEntryFromDraft', () => {
     )
     expect(entry.location).toBe('—')
     expect(entry.weather).toBe('—')
+  })
+
+  it('writes the same placeholder media hints the review preview shows', () => {
+    const entry = buildEntryFromDraft(
+      { raw: 'climbed pico', extracted, story: 'A story.' },
+      { id: 3, date },
+    )
+    expect(entry.media).toEqual(DEFAULT_MEDIA_HINTS)
+    // Not the same array reference — each saved entry owns its own copy.
+    expect(entry.media).not.toBe(DEFAULT_MEDIA_HINTS)
+    expect(entry.photoHint).toBe(DEFAULT_MEDIA_HINTS[0])
   })
 })

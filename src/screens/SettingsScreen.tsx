@@ -1,5 +1,10 @@
-import type { ReactNode } from 'react'
+import { useEffect, useState, type ReactNode } from 'react'
 import type { ExportActions } from '../hooks/useExportActions.ts'
+import {
+  describeAiProcessingStatus,
+  getAiCapabilities,
+  type AiProcessingStatus,
+} from '../lib/ai/availability.ts'
 import { entryCountLabel } from '../lib/export/exportHeader.ts'
 import { cx } from '../lib/cx.ts'
 import './SettingsScreen.css'
@@ -40,6 +45,51 @@ function SettingsActionRow({ label, hint, disabled, onClick }: SettingsActionRow
         <span aria-hidden="true">›</span>
       </span>
     </button>
+  )
+}
+
+const AI_PROCESSING_LABEL: Record<AiProcessingStatus, string> = {
+  enabled: 'Enabled',
+  downloading: 'Downloading…',
+  unavailable: 'Not available in this browser',
+}
+
+/**
+ * The real on-device AI availability (`src/lib/ai/availability.ts`), not a
+ * hardcoded "Enabled" — this is UI-local display state with nothing else in
+ * the app depending on it, so it doesn't need to live in a shared hook.
+ * `aria-live` announces the status once the async capability check resolves.
+ */
+function AiProcessingValue() {
+  const [status, setStatus] = useState<AiProcessingStatus | null>(null)
+
+  useEffect(() => {
+    let cancelled = false
+    getAiCapabilities()
+      .then((capabilities) => {
+        if (!cancelled) setStatus(describeAiProcessingStatus(capabilities))
+      })
+      .catch(() => {
+        // Never let a capability-check failure block rendering or surface an
+        // unhandled rejection — report the safe "unavailable" state instead.
+        if (!cancelled) setStatus('unavailable')
+      })
+    return () => {
+      cancelled = true
+    }
+  }, [])
+
+  if (status === null) {
+    return <span aria-live="polite">Checking…</span>
+  }
+
+  return (
+    <span
+      className={status === 'enabled' ? 'settings-screen__enabled' : undefined}
+      aria-live="polite"
+    >
+      {AI_PROCESSING_LABEL[status]}
+    </span>
   )
 }
 
@@ -100,10 +150,7 @@ export function SettingsScreen({ entryCount, exports }: SettingsScreenProps) {
       </div>
 
       <SettingsGroup label="Voice & AI">
-        <SettingsRow
-          label="On-device processing"
-          value={<span className="settings-screen__enabled">Enabled</span>}
-        />
+        <SettingsRow label="On-device processing" value={<AiProcessingValue />} />
         <SettingsRow label="Language" value="English" />
       </SettingsGroup>
 

@@ -1,14 +1,13 @@
 import type { Entry } from '../types/entry.ts'
 import type { ExtractedEntryFields } from './ai/extractEntry.ts'
 import { deriveExcerpt } from './ai/rewriteStory.ts'
+import { DASH } from './export/entryFields.ts'
 
 export interface Draft {
   raw: string
   extracted: ExtractedEntryFields | null
   story: string
 }
-
-const DASH = '—'
 
 function fieldOr(value: string | undefined, fallback = DASH): string {
   const trimmed = value?.trim()
@@ -30,6 +29,20 @@ function titleFromText(text: string): string {
   const words = text.trim().split(/\s+/).slice(0, 6).join(' ')
   return words || 'Untitled adventure'
 }
+
+/**
+ * Decorative photo/video placeholder captions for a freshly captured entry
+ * (see the doc comment on `Entry.photoHint`/`Entry.media` in
+ * `types/entry.ts`). This is the single source of truth for those strings:
+ * `NewEntryOverlay`'s review-step preview renders these same three captions,
+ * so what a user previews before saving can never drift from what
+ * `buildEntryFromDraft` actually writes onto the entry.
+ */
+export const DEFAULT_MEDIA_HINTS: [string, string, string] = [
+  'ridge shot',
+  'summit view',
+  'add video',
+]
 
 /**
  * Build a persistable {@link Entry} from a captured {@link Draft}. Pure: the
@@ -60,8 +73,8 @@ export function buildEntryFromDraft(
     participants: fieldOr(extracted?.participants),
     raw: raw.trim(),
     story: effectiveStory,
-    photoHint: 'new entry',
-    media: ['photo one', 'photo two', 'clip'],
+    photoHint: DEFAULT_MEDIA_HINTS[0],
+    media: [...DEFAULT_MEDIA_HINTS],
     mapX: 50,
     mapY: 50,
   }
