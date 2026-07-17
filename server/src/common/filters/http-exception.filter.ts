@@ -12,7 +12,16 @@ interface ErrorPayload {
   statusCode: number
   timestamp: string
   path: string
-  message: string | object
+  message: string | string[]
+  [key: string]: unknown
+}
+
+function isRecord(value: unknown): value is Record<string, unknown> {
+  return typeof value === 'object' && value !== null
+}
+
+function isStringArray(value: unknown): value is string[] {
+  return Array.isArray(value) && value.every((item) => typeof item === 'string')
 }
 
 /**
@@ -22,6 +31,17 @@ interface ErrorPayload {
  * non-Error value, ...) is logged server-side with full detail but the
  * client only ever sees a generic 500 body — internal error messages
  * (stack traces, DB errors, etc.) must never leak into an API response.
+ *
+ * `HttpException#getResponse()` can return either a plain string or an
+ * object (Nest's own exceptions build `{ statusCode, message, error }`;
+ * the global ValidationPipe's BadRequestException builds `message` as a
+ * string[] of per-field errors; custom exceptions may add their own
+ * fields, e.g. EntryVersionConflictException's `currentEntry`).
+ * Object-shaped responses are spread onto the top-level payload rather than
+ * nested under a `message` key — otherwise every extra field a custom
+ * exception attaches (and every built-in exception's own `message`) would
+ * end up double-nested at `body.message.<field>` instead of `body.<field>`,
+ * which is not a shape any client should have to know to reach into.
  */
 @Catch()
 export class AllExceptionsFilter implements ExceptionFilter {
@@ -36,9 +56,6 @@ export class AllExceptionsFilter implements ExceptionFilter {
     const status = isHttpException
       ? exception.getStatus()
       : HttpStatus.INTERNAL_SERVER_ERROR
-    const message: string | object = isHttpException
-      ? exception.getResponse()
-      : 'Internal server error'
 
     if (!isHttpException) {
       this.logger.error(
@@ -46,7 +63,19 @@ export class AllExceptionsFilter implements ExceptionFilter {
       )
     }
 
+    const responseBody: string | object = isHttpException
+      ? exception.getResponse()
+      : 'Internal server error'
+    const extraFields = isRecord(responseBody) ? responseBody : {}
+    const message: string | string[] =
+      typeof extraFields.message === 'string' || isStringArray(extraFields.message)
+        ? extraFields.message
+        : typeof responseBody === 'string'
+          ? responseBody
+          : 'Internal server error'
+
     const payload: ErrorPayload = {
+      ...extraFields,
       statusCode: status,
       timestamp: new Date().toISOString(),
       path: request.url,

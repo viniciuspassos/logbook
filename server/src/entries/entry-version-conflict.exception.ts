@@ -14,13 +14,12 @@ import type { Entry } from './entry.entity'
  *
  * Response shape: `getResponse()` returns `{ message: string, currentEntry:
  * Entry }`. The running app (main.ts) registers the global
- * AllExceptionsFilter (common/filters/http-exception.filter.ts), which nests
- * that object under a top-level `message` key like every other HttpException
- * in this app — so a real client reads the current entry at
- * `response.body.message.currentEntry`. The e2e suites in this app
- * deliberately don't register that filter (see entries.e2e.test.ts's
- * module setup), so in tests the same object appears one level up, at
- * `response.body.currentEntry`.
+ * AllExceptionsFilter (common/filters/http-exception.filter.ts), which spreads
+ * that object onto the top-level JSON response rather than nesting it under
+ * `message` — so a real client reads the current entry at
+ * `response.body.currentEntry`. The e2e suites in this app register that
+ * same filter (see entries.e2e.test.ts's module setup) so they exercise the
+ * real contract rather than Nest's un-filtered default exception handling.
  */
 export class EntryVersionConflictException extends ConflictException {
   constructor(currentEntry: Entry) {

@@ -13,6 +13,7 @@ import {
   type AuthenticatedRequestContext,
 } from '../auth/test-support/auth-e2e.helper'
 import { loadConfig } from '../config/configuration'
+import { AllExceptionsFilter } from '../common/filters/http-exception.filter'
 import { StorageModule } from '../storage/storage.module'
 import { EntriesModule } from './entries.module'
 import { Entry } from './entry.entity'
@@ -20,12 +21,20 @@ import { Attachment } from '../attachments/attachment.entity'
 
 /**
  * Integration test: boots a real Nest app (global ValidationPipe + the real
- * auth guards included, via AuthModule) wired to EntriesModule against an
+ * auth guards included, via AuthModule, + the real AllExceptionsFilter that
+ * main.ts registers in production) wired to EntriesModule against an
  * in-memory sql.js (pure-JS SQLite) database, so the full
- * controller -> service -> repository -> TypeORM path — and the auth layer
- * in front of it — is exercised without needing a running Postgres instance
- * for `npm test`. Production still targets Postgres (see
- * database/typeorm.config.ts).
+ * controller -> service -> repository -> TypeORM path — and the auth and
+ * error-response layers in front of it — is exercised without needing a
+ * running Postgres instance for `npm test`. Production still targets
+ * Postgres (see database/typeorm.config.ts).
+ *
+ * Registering AllExceptionsFilter here (rather than leaving the default Nest
+ * exception handling in place) matters: it's what actually shapes an error
+ * response body in production, and a custom exception's `getResponse()`
+ * contract alone (see EntryVersionConflictException) isn't the real contract
+ * a client sees — the filter's wrapping is. Skipping it let a prior version
+ * of this suite pass while asserting a shape the real API never served.
  *
  * StorageModule and the Attachment entity are wired in even though this
  * suite never uploads anything: EntriesService's cascade-delete (#20) needs
@@ -91,6 +100,7 @@ describe('Entries (e2e)', () => {
     app.useGlobalPipes(
       new ValidationPipe({ whitelist: true, forbidNonWhitelisted: true, transform: true }),
     )
+    app.useGlobalFilters(new AllExceptionsFilter())
     await app.init()
 
     auth = await loginForTests(app)
