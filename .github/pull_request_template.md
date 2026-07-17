@@ -4,11 +4,12 @@
 ## Test plan
 - [ ] `git hook run pre-commit` passes (typecheck, lint, test)
 - [ ] `npm run build` succeeds
-- [ ] `/qa` run if this is a critical/breaking change (see below)
+- [ ] `qa-release-gate` agent run locally if this is a critical/breaking change (see below)
 
 <!--
-`/qa` runs a real Playwright + Claude session — it costs money and time,
-and is not required to merge (only `static-gates` blocks merge).
+The `qa-release-gate` agent runs a real Playwright + Claude session — it
+costs money and time, is invoked locally (not in CI), and is not required
+to merge (only `static-gates` blocks merge).
 
 Skip it for routine changes: docs, config, small fixes, refactors,
 anything low-risk.

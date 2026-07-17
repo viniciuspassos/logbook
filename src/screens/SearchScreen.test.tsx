@@ -1,9 +1,33 @@
-import { render, screen } from '@testing-library/react'
+import { act, render, screen } from '@testing-library/react'
 import userEvent from '@testing-library/user-event'
 import { SearchScreen } from './SearchScreen.tsx'
 import { entries } from '../data/entries.ts'
 
 describe('SearchScreen', () => {
+  afterEach(() => {
+    jest.useRealTimers()
+  })
+
+  it('applies AI-parsed (fallback keyword, since AI is unavailable in jsdom) results once the debounce window elapses', async () => {
+    jest.useFakeTimers()
+    const user = userEvent.setup({ advanceTimers: jest.advanceTimersByTime })
+    render(<SearchScreen entries={entries} onOpenEntry={() => {}} />)
+
+    await user.type(screen.getByRole('searchbox'), 'nepal')
+
+    // Debounced AI parse: jsdom has no Chrome AI globals, so parseSearchQuery
+    // degrades to a plain keyword split (never blocking, per the Browser AI
+    // rules) — this exercises that debounced `.then` re-render.
+    await act(async () => {
+      jest.advanceTimersByTime(250)
+      await Promise.resolve()
+      await Promise.resolve()
+    })
+
+    expect(screen.getByText('Annapurna Base Camp')).toBeInTheDocument()
+    expect(screen.queryByText('Solo tandem jump')).not.toBeInTheDocument()
+  })
+
   it('lists every entry with no query typed', () => {
     render(<SearchScreen entries={entries} onOpenEntry={() => {}} />)
     for (const entry of entries) {

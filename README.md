@@ -183,8 +183,8 @@ npm test -- --watch   # watch mode while developing
 - Work on a feature branch (`feat/…`, `fix/…`, `chore/…`), never directly on `main`.
 - Commits must follow **Conventional Commits**; the `.githooks/commit-msg` hook enforces the
   subject format, and `.githooks/pre-commit` gates every commit on **typecheck → lint → tests**.
-- Open a PR against `main`. CI runs the static gates automatically; comment **`/qa`** on the PR
-  to trigger the AI QA release-gate check when you're ready. Both must be green before merge.
+- Open a PR against `main`. CI runs the static gates automatically; they must be green before
+  merge.
 
 `CLAUDE.md` is the deeper development guide for contributors and AI coding assistants.
 

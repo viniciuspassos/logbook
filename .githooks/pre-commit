@@ -10,8 +10,8 @@ echo "[pre-commit] linting (eslint)"
 npm run lint --silent
 
 if node -e "process.exit(require('./package.json').scripts.test ? 0 : 1)" 2>/dev/null; then
-  echo "[pre-commit] running tests"
-  npm test --silent
+  echo "[pre-commit] running tests (with coverage gate)"
+  npm test --silent -- --coverage
 else
   echo "[pre-commit] no \"test\" script in package.json yet, skipping"
 fi
@@ -41,8 +41,8 @@ if git diff --cached --name-only --diff-filter=ACMR | grep -q '^server/'; then
   echo "[pre-commit] server/: linting (eslint)"
   (cd server && npm run lint --silent)
 
-  echo "[pre-commit] server/: running tests"
-  (cd server && npm test --silent)
+  echo "[pre-commit] server/: running tests (with coverage gate)"
+  (cd server && npm test --silent -- --coverage)
 else
   echo "[pre-commit] no staged changes under server/, skipping backend gates"
 fi

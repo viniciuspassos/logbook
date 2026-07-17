@@ -2,9 +2,17 @@ import { act, renderHook } from '@testing-library/react'
 import { useLogbookApp } from './useLogbookApp.ts'
 import { extractEntry } from '../lib/ai/extractEntry.ts'
 import { rewriteStory } from '../lib/ai/rewriteStory.ts'
+import { importBackup } from '../lib/backup/exportBackup.ts'
+import type { Entry } from '../types/entry.ts'
 
 const extractMock = extractEntry as jest.Mock
 const rewriteMock = rewriteStory as jest.Mock
+const importBackupMock = importBackup as jest.Mock
+
+jest.mock('../lib/backup/exportBackup.ts', () => {
+  const actual = jest.requireActual('../lib/backup/exportBackup.ts')
+  return { ...actual, importBackup: jest.fn().mockResolvedValue(null) }
+})
 
 // Orchestration-only tests: the speech and AI wrappers are mocked so these
 // focus on state transitions, not on the real (browser-only) APIs.
@@ -221,6 +229,45 @@ describe('useLogbookApp', () => {
     act(() => result.current.startRecording())
     expect(() => act(() => result.current.closeOverlay())).not.toThrow()
     expect(result.current.overlay).toBeNull()
+  })
+
+  it('restoring a backup closes any open overlay and replaces the entries list', async () => {
+    const restored: Entry[] = [
+      {
+        id: 99,
+        title: 'Restored entry',
+        shape: 'circle',
+        location: 'Somewhere',
+        date: 'Jul 1',
+        metric: '',
+        excerpt: '',
+        weather: '',
+        duration: '',
+        difficulty: '',
+        equipment: '',
+        participants: '',
+        raw: '',
+        story: '',
+        photoHint: '',
+        media: ['', '', ''],
+        mapX: 50,
+        mapY: 50,
+      },
+    ]
+    importBackupMock.mockResolvedValue(restored)
+    const { result } = renderHook(() => useLogbookApp())
+
+    act(() => result.current.openEntry(2))
+    expect(result.current.overlay).toBe('entry')
+    await act(async () => {})
+
+    await act(async () => {
+      result.current.exportActions.restoreFromFile()
+    })
+
+    expect(result.current.overlay).toBeNull()
+    expect(result.current.entries).toEqual(restored)
+    expect(result.current.exportActions.status).toEqual({ tone: 'info', message: 'Restored 1 entry.' })
   })
 
   it('unmounts cleanly while capturing', () => {

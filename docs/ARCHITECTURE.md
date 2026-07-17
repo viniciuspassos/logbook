@@ -150,5 +150,5 @@ export can't drift apart by one of them forgetting a field the other added.
   test first (TDD, see `CLAUDE.md` → Testing), then wire it into the owning hook.
 - **Adding UI state?** Decide which hook in [State composition](#state-composition) owns the
   concern before touching `useLogbookApp`.
-- **CI, git hooks, the PWA build, and the AI QA-gate workflow** are covered in
+- **CI, git hooks, and the PWA build** are covered in
   [`docs/INFRASTRUCTURE.md`](INFRASTRUCTURE.md), not here.

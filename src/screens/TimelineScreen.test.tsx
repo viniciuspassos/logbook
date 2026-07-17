@@ -60,4 +60,51 @@ describe('TimelineScreen', () => {
     await user.click(screen.getByRole('tab', { name: 'Map' }))
     expect(onChangeView).toHaveBeenCalledWith('map')
   })
+
+  it('calls onChangeView when switching back to the List tab', async () => {
+    const onChangeView = jest.fn()
+    const user = userEvent.setup()
+    render(
+      <TimelineScreen
+        entries={entries}
+        timelineView="map"
+        onChangeView={onChangeView}
+        onOpenEntry={() => {}}
+      />,
+    )
+    await user.click(screen.getByRole('tab', { name: 'List' }))
+    expect(onChangeView).toHaveBeenCalledWith('list')
+  })
+
+  it('opens an entry when its map pin is clicked', async () => {
+    const onOpenEntry = jest.fn()
+    const user = userEvent.setup()
+    render(
+      <TimelineScreen
+        entries={entries}
+        timelineView="map"
+        onChangeView={() => {}}
+        onOpenEntry={onOpenEntry}
+      />,
+    )
+    await user.click(screen.getByRole('button', { name: entries[0].title }))
+    expect(onOpenEntry).toHaveBeenCalledWith(entries[0].id)
+  })
+
+  it('opens an entry when its filmstrip card is clicked', async () => {
+    const onOpenEntry = jest.fn()
+    const user = userEvent.setup()
+    const { container } = render(
+      <TimelineScreen
+        entries={entries}
+        timelineView="map"
+        onChangeView={() => {}}
+        onOpenEntry={onOpenEntry}
+      />,
+    )
+    const stripCard = container.querySelector('.timeline-screen__strip-card')
+    expect(stripCard).not.toBeNull()
+    await user.click(stripCard as HTMLElement)
+    expect(onOpenEntry).toHaveBeenCalledWith(entries[0].id)
+  })
 })

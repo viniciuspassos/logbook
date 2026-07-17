@@ -120,4 +120,13 @@ describe('EntryDetailOverlay', () => {
     await user.upload(screen.getByLabelText('Add photo'), file)
     expect(onAddPhoto).toHaveBeenCalledWith(file)
   })
+
+  it('defaults onAddPhoto to a no-op when the caller does not pass one', async () => {
+    const user = userEvent.setup()
+    // Deliberately omit onAddPhoto so the component's own default applies —
+    // uploading a photo must not throw even with no handler wired up.
+    renderOverlay()
+    const file = new File(['bytes'], 'summit.jpg', { type: 'image/jpeg' })
+    await expect(user.upload(screen.getByLabelText('Add photo'), file)).resolves.not.toThrow()
+  })
 })
