@@ -67,17 +67,21 @@ describe('useLogbookApp', () => {
     expect(result.current.timelineView).toBe('list')
   })
 
-  it('goTab switches tabs and closes any open overlay', () => {
+  it('goTab switches tabs and closes any open overlay', async () => {
     const { result } = renderHook(() => useLogbookApp())
     act(() => result.current.openEntry(2))
     expect(result.current.overlay).toBe('entry')
+    // openEntry hands the id to useEntryAttachments, which loads that
+    // entry's attachment gallery asynchronously (#26) — flush that
+    // microtask so the resulting state update lands inside `act`.
+    await act(async () => {})
 
     act(() => result.current.goTab('stats'))
     expect(result.current.tab).toBe('stats')
     expect(result.current.overlay).toBeNull()
   })
 
-  it('openEntry selects the entry and resets raw notes visibility', () => {
+  it('openEntry selects the entry and resets raw notes visibility', async () => {
     const { result } = renderHook(() => useLogbookApp())
     act(() => result.current.toggleRaw())
     act(() => result.current.openEntry(3))
@@ -85,6 +89,7 @@ describe('useLogbookApp', () => {
     expect(result.current.overlay).toBe('entry')
     expect(result.current.selectedEntry?.id).toBe(3)
     expect(result.current.rawOpen).toBe(false)
+    await act(async () => {})
   })
 
   it('has no selected entry until one is opened (no silent fallback)', () => {

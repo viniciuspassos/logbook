@@ -35,6 +35,7 @@ function App() {
     editStory,
     saveEntry,
     exportActions,
+    attachments,
   } = useLogbookApp()
 
   return (
@@ -67,6 +68,10 @@ function App() {
           onClose={closeOverlay}
           onExportMarkdown={exportActions.exportEntryMarkdown}
           onExportPdf={exportActions.exportEntryPdf}
+          attachments={attachments.attachments}
+          attachmentsBusy={attachments.busy}
+          attachmentsStatus={attachments.status}
+          onAddPhoto={attachments.addPhoto}
         />
       )}
       {overlay === 'newEntry' && (
