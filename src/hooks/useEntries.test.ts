@@ -99,6 +99,22 @@ describe('useEntries', () => {
     await waitFor(() => expect(putEntryMock).toHaveBeenCalledWith(fresh))
   })
 
+  it('does not surface an unhandled rejection when the write-through fails', async () => {
+    supportedMock.mockReturnValue(true)
+    getAllMock.mockResolvedValue([makeEntry(1)])
+    putEntryMock.mockRejectedValue(new Error('disk full'))
+    const { result } = renderHook(() => useEntries(seed))
+    await waitFor(() => expect(result.current.loaded).toBe(true))
+
+    const fresh = makeEntry(2, 'Fresh')
+    act(() => result.current.addEntry(fresh))
+
+    // State updates synchronously regardless; the write-through failure is
+    // swallowed (fire-and-forget) rather than crashing the app.
+    expect(result.current.entries.map((e) => e.id)).toEqual([2, 1])
+    await waitFor(() => expect(putEntryMock).toHaveBeenCalledWith(fresh))
+  })
+
   it('still updates state when addEntry cannot persist', async () => {
     supportedMock.mockReturnValue(false)
     const { result } = renderHook(() => useEntries(seed))

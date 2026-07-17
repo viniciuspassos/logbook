@@ -208,6 +208,51 @@ describe('drainOutbox', () => {
     expect(summary).toEqual({ processed: 0, stoppedReason: 'error', error: 'server exploded' })
   })
 
+  it('stops mid-drain when the signal is aborted before a record is processed', async () => {
+    const controller = new AbortController()
+    getAllRecordsMock.mockResolvedValue([
+      createRecord({ queueId: 1 }),
+      createRecord({ queueId: 2 }),
+    ])
+    createEntryMock.mockImplementation(() => {
+      controller.abort()
+      return Promise.resolve({ id: 42, version: 1 })
+    })
+
+    const summary = await drainOutbox(controller.signal)
+
+    expect(summary).toEqual({ processed: 1, stoppedReason: 'aborted' })
+    expect(removeRecordMock).toHaveBeenCalledTimes(1)
+  })
+
+  it('falls back to a generic message when the failure is not an Error instance', async () => {
+    createEntryMock.mockRejectedValue('a raw string rejection')
+    getAllRecordsMock.mockResolvedValue([createRecord({ queueId: 1 })])
+
+    const summary = await drainOutbox()
+
+    expect(summary).toEqual({ processed: 0, stoppedReason: 'error', error: 'Unknown sync error.' })
+  })
+
+  it('reports an error summary (rather than throwing) when reading the queue itself fails', async () => {
+    getAllRecordsMock.mockRejectedValue(new Error('indexeddb read failed'))
+
+    const summary = await drainOutbox()
+
+    expect(summary).toEqual({ processed: 0, stoppedReason: 'error', error: 'indexeddb read failed' })
+  })
+
+  it('still reports the original failure even when recording the attempt failure itself fails', async () => {
+    createEntryMock.mockRejectedValue(new Error('server exploded'))
+    recordFailureMock.mockRejectedValue(new Error('db write failed'))
+    getAllRecordsMock.mockResolvedValue([createRecord({ queueId: 1 })])
+
+    const summary = await drainOutbox()
+
+    expect(recordFailureMock).toHaveBeenCalledWith(1, 'server exploded')
+    expect(summary).toEqual({ processed: 0, stoppedReason: 'error', error: 'server exploded' })
+  })
+
   it('shares one in-flight drain across concurrent callers instead of racing', async () => {
     let resolveReachable: ((value: boolean) => void) | undefined
     reachableMock.mockReturnValue(
@@ -245,4 +290,9 @@ describe('startAutoSync', () => {
     window.dispatchEvent(new Event('online'))
     expect(reachableMock).not.toHaveBeenCalled()
   })
+
+  // The `typeof window === 'undefined'` (SSR) branch can't be exercised here:
+  // jsdom's `window` global is non-configurable, so it can't be deleted or
+  // stubbed from within a jsdom test. See outboxRunner.ssr.test.ts, which runs
+  // under Jest's `node` environment where `window` is genuinely absent.
 })

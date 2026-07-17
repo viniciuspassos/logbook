@@ -71,8 +71,7 @@ what `git commit` itself enforces via `.githooks/`.
 
 7. **Wait for `static-gates`, then merge — no confirmation needed.**
    The only required status check on `main` is `static-gates`
-   (branch protection here does not require `qa-release-gate`, and
-   `enforce_admins` is off). Once `static-gates` reports success,
+   (`enforce_admins` is off). Once `static-gates` reports success,
    merge and clean up the branch:
    ```
    gh pr checks <pr-number> --watch
@@ -80,22 +79,13 @@ what `git commit` itself enforces via `.githooks/`.
    ```
    This repo's convention is squash merge — recent history is one
    commit per PR with the PR number in the subject, no merge commits.
-   Merge as soon as `static-gates` is green; don't wait for `/qa` and
-   don't ask the user first for this repo.
+   Merge as soon as `static-gates` is green — don't ask the user
+   first for this repo.
 
-8. **Report back** the PR URL and the merge result. Mention that
-   commenting `/qa` on the PR (before merging, if there's time to
-   wait for it) runs the AI release-QA smoke check, but it's
-   informational only here — it does not block merge — so skip
-   waiting on it unless the user asks for it.
+8. **Report back** the PR URL and the merge result.
 
 ## Gotchas
 
-- `qa-release-gate` shows as "Queued" the moment the PR opens (a
-  separate workflow seeds it) — that's expected, not a bug. It only
-  moves to in_progress/completed after someone comments `/qa`, and
-  since it isn't a required check, a merge does not need to wait for
-  it.
 - Required checks use `strict: true` — if `main` moves after you've
   already pushed and opened the PR, rebasing/merging it in re-queues
   `static-gates`, requiring it to go green again before merge.

@@ -292,6 +292,24 @@ describe('importBackup', () => {
     jest.restoreAllMocks()
   })
 
+  it('returns the entries from a file chosen via the input-fallback `change` event', async () => {
+    clearPickers()
+    const entries = [makeEntry({ id: 1, title: 'Chosen via input' })]
+    const json = serializeBackup(entries, { date: new Date(2026, 6, 16) })
+    const file = fileWith(json)
+
+    jest.spyOn(HTMLInputElement.prototype, 'click').mockImplementation(function (
+      this: HTMLInputElement,
+    ) {
+      Object.defineProperty(this, 'files', { value: [file], configurable: true })
+      this.dispatchEvent(new Event('change'))
+    })
+
+    await expect(importBackup()).resolves.toEqual(entries)
+    expect(document.querySelector('input[type=file]')).toBeNull()
+    jest.restoreAllMocks()
+  })
+
   it('settles on window focus for engines that never fire `cancel`', async () => {
     clearPickers()
     // Simulate an older browser: opening the dialog fires no input event at

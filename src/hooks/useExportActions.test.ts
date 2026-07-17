@@ -65,6 +65,22 @@ beforeEach(() => {
 })
 
 describe('useExportActions', () => {
+  it('defaults to the real clock (`new Date()`) when no `now` is injected', async () => {
+    // Every other test injects a fixed `now` for determinism; this one
+    // deliberately omits it to exercise the hook's own fallback clock.
+    const onRestore = jest.fn().mockResolvedValue(undefined)
+    const entries = [makeEntry({ id: 1 })]
+    const before = Date.now()
+    const { result } = renderHook(() => useExportActions(entries, { onRestore }))
+
+    await act(async () => result.current.backupToFile())
+
+    expect(mockExportBackup).toHaveBeenCalledTimes(1)
+    const usedDate = mockExportBackup.mock.calls[0][1].date
+    expect(usedDate.getTime()).toBeGreaterThanOrEqual(before)
+    expect(usedDate.getTime()).toBeLessThanOrEqual(Date.now())
+  })
+
   it('starts idle', () => {
     const { result } = setup()
     expect(result.current.status).toBeNull()

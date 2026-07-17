@@ -5,6 +5,7 @@ import { drainOutbox } from '../lib/sync/outboxRunner.ts'
 import { validateAttachmentFile } from '../lib/sync/attachmentValidation.ts'
 import { attachmentFileUrl } from '../lib/sync/attachmentsApi.ts'
 import type { Entry } from '../types/entry.ts'
+import type { OutboxRecord } from '../types/outbox.ts'
 import type { ServerAttachment } from '../types/sync.ts'
 
 jest.mock('../lib/sync/outboxQueue.ts', () => ({
@@ -96,6 +97,25 @@ describe('useEntryAttachments', () => {
       url: '/api/attachments/10/file',
       pending: false,
     })
+  })
+
+  it('renders a preview for a still-queued (pending) attachment', async () => {
+    const pendingRecord: OutboxRecord = {
+      queueId: 5,
+      createdAt: '2026-01-01T00:00:00.000Z',
+      attempts: 0,
+      operation: {
+        kind: 'upload-attachment',
+        localEntryId: 1,
+        file: new Blob(['bytes'], { type: 'image/jpeg' }),
+        filename: 'summit.jpg',
+      },
+    }
+    sourcesMock.mockResolvedValue({ serverAttachments: [], pending: [pendingRecord] })
+    const { result } = renderHook(() => useEntryAttachments(makeEntry(1)))
+
+    await waitFor(() => expect(result.current.attachments).toHaveLength(1))
+    expect(result.current.attachments[0]).toMatchObject({ key: 'pending-5', pending: true })
   })
 
   it('reloads when the open entry changes', async () => {

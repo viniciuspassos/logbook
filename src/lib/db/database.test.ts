@@ -91,4 +91,23 @@ describe('openLogbookDb', () => {
     delete globalThis.indexedDB
     await expect(openLogbookDb()).rejects.toBeDefined()
   })
+
+  it('rejects with the request error when the open request itself errors', async () => {
+    // Real IndexedDB engines rarely fail an `open()` call outright, but the
+    // wiring (`request.onerror = () => reject(request.error)`) still needs
+    // coverage. Swap in a minimal fake factory that fires `onerror`.
+    const fakeError = new Error('open failed')
+    const fakeRequest: { onerror?: () => void; error?: unknown } = {}
+    globalThis.indexedDB = {
+      open: () => {
+        queueMicrotask(() => {
+          fakeRequest.error = fakeError
+          fakeRequest.onerror?.()
+        })
+        return fakeRequest
+      },
+    } as unknown as IDBFactory
+
+    await expect(openLogbookDb()).rejects.toBe(fakeError)
+  })
 })

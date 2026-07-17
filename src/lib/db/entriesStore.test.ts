@@ -110,3 +110,114 @@ describe('entriesStore', () => {
     })
   })
 })
+
+// --- failure paths ------------------------------------------------------------
+//
+// The happy paths above exercise real fake-indexeddb behaviour end to end, but
+// fake-indexeddb has no supported way to force a transaction/request into an
+// error or abort state. To cover that wiring (errors must reject the returned
+// promise, not hang or throw unhandled) these tests swap `indexedDB.open` for
+// a minimal hand-built fake whose transaction/request objects we can fail on
+// demand, the same pattern used in database.test.ts.
+
+interface FakeRequest {
+  onsuccess?: () => void
+  onerror?: () => void
+  result?: unknown
+  error?: unknown
+}
+
+interface FakeTx {
+  objectStore: () => { getAll: () => FakeRequest; put: () => void; delete: () => void }
+  oncomplete?: () => void
+  onerror?: () => void
+  onabort?: () => void
+  error?: unknown
+}
+
+/** Waits for `check` to become true, flushing the microtask queue between polls. */
+async function waitUntil(check: () => boolean, attempts = 20): Promise<void> {
+  for (let i = 0; i < attempts && !check(); i++) {
+    await Promise.resolve()
+  }
+}
+
+function installFakeIndexedDb(db: unknown): void {
+  globalThis.indexedDB = {
+    open: () => {
+      const request: FakeRequest = {}
+      queueMicrotask(() => {
+        request.result = db
+        request.onsuccess?.()
+      })
+      return request
+    },
+  } as unknown as IDBFactory
+}
+
+describe('write/read failure wiring', () => {
+  it('rejects a write (e.g. putEntry) when the transaction errors', async () => {
+    const txError = new Error('write failed')
+    let tx: FakeTx | undefined
+    const db = {
+      transaction: () => {
+        tx = { objectStore: () => ({ getAll: () => ({}), put: () => {}, delete: () => {} }) }
+        return tx
+      },
+      close: jest.fn(),
+    }
+    installFakeIndexedDb(db)
+
+    const pending = putEntry(makeEntry({ id: 1 }))
+    await waitUntil(() => tx?.onerror !== undefined)
+    tx!.error = txError
+    tx!.onerror!()
+
+    await expect(pending).rejects.toBe(txError)
+    expect(db.close).toHaveBeenCalled()
+  })
+
+  it('rejects a write (e.g. putEntry) when the transaction aborts', async () => {
+    const txError = new Error('write aborted')
+    let tx: FakeTx | undefined
+    const db = {
+      transaction: () => {
+        tx = { objectStore: () => ({ getAll: () => ({}), put: () => {}, delete: () => {} }) }
+        return tx
+      },
+      close: jest.fn(),
+    }
+    installFakeIndexedDb(db)
+
+    const pending = putEntry(makeEntry({ id: 1 }))
+    await waitUntil(() => tx?.onabort !== undefined)
+    tx!.error = txError
+    tx!.onabort!()
+
+    await expect(pending).rejects.toBe(txError)
+  })
+
+  it('rejects getAllEntries when the getAll request errors', async () => {
+    const reqError = new Error('read failed')
+    let request: FakeRequest | undefined
+    const db = {
+      transaction: () => ({
+        objectStore: () => ({
+          getAll: () => {
+            request = {}
+            return request
+          },
+        }),
+      }),
+      close: jest.fn(),
+    }
+    installFakeIndexedDb(db)
+
+    const pending = getAllEntries()
+    await waitUntil(() => request?.onerror !== undefined)
+    request!.error = reqError
+    request!.onerror!()
+
+    await expect(pending).rejects.toBe(reqError)
+  })
+})

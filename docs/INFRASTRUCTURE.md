@@ -1,8 +1,8 @@
 # Infrastructure
 
 This document covers everything that runs *around* the app code: local dev environment, git
-hooks, CI, the AI-driven QA gate, and how the production build is produced. For the app's own
-architecture, see [`docs/ARCHITECTURE.md`](ARCHITECTURE.md).
+hooks, CI, and how the production build is produced. For the app's own architecture, see
+[`docs/ARCHITECTURE.md`](ARCHITECTURE.md).
 
 ## Local dev environment
 
@@ -192,12 +192,12 @@ rationale lives in the auth PR description; this section is the operational summ
 Hooks are plain shell scripts, versioned in the repo (not `.git/hooks`, which isn't checked in),
 wired up via `core.hooksPath`:
 
-- **`pre-commit`** — runs, in order: `tsc -b` (typecheck) → `eslint` (lint) → `npm test` (full
-  Jest suite), all for the frontend. Any failure aborts the commit. This is intentionally the
-  *same* sequence CI runs, so a passing local commit is a strong signal the CI static gate will
-  also pass. It then checks whether any staged file is under `server/`; if so, it additionally
-  runs `server/`'s own typecheck → lint → test sequence (see below for why this is scoped rather
-  than unconditional).
+- **`pre-commit`** — runs, in order: `tsc -b` (typecheck) → `eslint` (lint) → `npm test --
+  --coverage` (full Jest suite, with coverage collected and enforced), all for the frontend. Any
+  failure aborts the commit. This is intentionally the *same* sequence CI runs, so a passing local
+  commit is a strong signal the CI static gate will also pass. It then checks whether any staged
+  file is under `server/`; if so, it additionally runs `server/`'s own typecheck → lint → test
+  (with `--coverage`) sequence (see below for why this is scoped rather than unconditional).
 - **`commit-msg`** — rejects a commit whose subject line doesn't match Conventional Commits
   (`feat|fix|docs|style|refactor|perf|test|build|ci|chore|revert(scope)?: description`).
 
@@ -223,10 +223,10 @@ Neither hook can be bypassed by CI — see below, the same checks run again serv
 
 ## CI pipeline (`.github/workflows/`)
 
-Three workflows, all PR-triggered, none of which deploy anywhere (there is currently no hosted
+One workflow, PR-triggered, which does not deploy anywhere (there is currently no hosted
 deployment target — see [Build output](#build-output-and-hosting) below).
 
-### 1. `ci-static.yml` — static gates
+### `ci-static.yml` — static gates
 
 Triggers on every PR open/sync/reopen and now runs three independent jobs:
 
@@ -249,62 +249,19 @@ All three jobs run unconditionally on every PR — none needs a comment or manua
 status checks in this repository's branch-protection settings (alongside `static-gates`) is a
 GitHub repo setting, not something tracked in this file or in workflow YAML.
 
-### 2. `qa-gate-pending.yml` + `qa-gate-run.yml` — AI-driven QA release gate
-
-This is a two-part, comment-triggered check:
-
-```
-PR opened/synced
-      │
-      ▼
-qa-gate-pending.yml ──creates/resets a `qa-release-gate` check-run──► status: queued
-                                                                       "comment /qa to run"
-      │
-      │  (a maintainer comments "/qa" on the PR)
-      ▼
-qa-gate-run.yml
-      │
-      ├─ marks the check-run in_progress
-      ├─ npm ci, playwright install
-      ├─ runs the Claude Code Action, instructed to follow
-      │  .claude/agents/qa-release-gate.md: static gates, then start the
-      │  dev server and drive every screen/flow with Playwright MCP tools
-      ├─ parses the agent's structured `{ verdict, summary }` JSON output
-      │  (GO / NO-GO / GO WITH CAVEATS)
-      └─ completes the check-run (failure only on NO-GO — GO WITH CAVEATS
-         passes, since caveats are meant to be visible but non-blocking)
-         and posts the verdict as a PR comment
-```
-
-Both check-run-writing steps **update an existing check-run for the PR's head SHA instead of
-creating a new one** (`checks.listForRef` → update if found, create only if not). This is
-deliberate: `checks.create()` always makes a new check-run object even when one already exists for
-that SHA, so a naive re-run would "orphan" the earlier one stuck in whatever status it was left in
-(never resolving to success/failure) and leave two competing check-runs on the PR. The comment in
-`qa-gate-pending.yml` explains this explicitly — don't switch either workflow to a blind
-`checks.create()`.
-
-`/qa` only runs for commenters whose `author_association` is `OWNER`, `MEMBER`, or `COLLABORATOR`
-— an external contributor commenting `/qa` on a fork PR cannot trigger it.
-
-**Required secret:** `CLAUDE_CODE_OAUTH_TOKEN`, consumed by `anthropics/claude-code-action@v1` to
-run the QA agent. Without it, `/qa` will fail at that step (the seed check-run and static gates
-still work independently of it).
-
-The QA agent itself is defined in `.claude/agents/qa-release-gate.md` and is also invokable
-locally as a subagent (see the `qa-release-gate` entry in this repo's available agents) — the CI
-workflow and a local "QA this before I ship" request run the *same* procedure, just with different
-triggers.
+The AI-driven QA release gate (`qa-release-gate`) no longer runs in CI — it was dropped as
+unhelpful. The underlying agent still exists at `.claude/agents/qa-release-gate.md` and is
+invokable locally as a subagent (see the `qa-release-gate` entry in this repo's available agents)
+for an on-demand "QA this before I ship" pass; it just no longer has a GitHub Actions workflow or
+PR check-run attached to it.
 
 ### Branch protection expectation
 
-Per `README.md` → "Contributing / git workflow": both `ci-static` and `qa-release-gate` are
-expected to be green before merge. `ci-static` runs unconditionally (as its `static-gates`,
-`server-static-gates`, and `server-migrations-drift` jobs); `qa-release-gate` starts `queued` and
-only resolves once someone comments `/qa` — so a PR can sit with one green, one pending check until
-a maintainer explicitly requests the QA run. Whether `server-static-gates` and
-`server-migrations-drift` are marked as required checks alongside `static-gates` in this
-repository's branch-protection rules is a manual GitHub setting outside this
+Per `README.md` → "Contributing / git workflow": `ci-static` is expected to be green before merge.
+It runs unconditionally (as its `static-gates`, `server-static-gates`, and
+`server-migrations-drift` jobs). Whether `server-static-gates` and `server-migrations-drift` are
+marked as required checks alongside `static-gates` in this repository's branch-protection rules is
+a manual GitHub setting outside this
 repo's version-controlled config.
 
 ## Build output and hosting

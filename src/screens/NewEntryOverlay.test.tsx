@@ -89,6 +89,18 @@ describe('NewEntryOverlay', () => {
     expect(props.onSubmitTyped).toHaveBeenCalledWith('quick evening hike')
   })
 
+  it('switches back to voice mode from the text box', async () => {
+    const user = userEvent.setup()
+    renderOverlay()
+
+    await user.click(screen.getByRole('button', { name: 'Type instead' }))
+    expect(screen.getByRole('textbox', { name: 'Adventure notes' })).toBeInTheDocument()
+
+    await user.click(screen.getByRole('button', { name: 'Use voice instead' }))
+    expect(screen.getByRole('button', { name: 'Start recording' })).toBeInTheDocument()
+    expect(screen.queryByRole('textbox', { name: 'Adventure notes' })).not.toBeInTheDocument()
+  })
+
   it('renders the listening step with the live transcript', () => {
     renderOverlay({ step: 'listening', transcript: 'climbed', interimTranscript: ' up' })
     expect(screen.getByText(/listening/i)).toBeInTheDocument()
