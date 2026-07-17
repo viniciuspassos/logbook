@@ -1,4 +1,5 @@
 import type { Entry } from '../types/entry.ts'
+import { DASH } from './export/entryFields.ts'
 
 export interface StatTile {
   label: string
@@ -15,8 +16,6 @@ export interface Stats {
   tiles: StatTile[]
   breakdown: ActivityBreakdown[]
 }
-
-const DASH = '—'
 
 /** Group entries lacking a richer `activityType` under a single bucket. */
 const FALLBACK_ACTIVITY = 'Other'

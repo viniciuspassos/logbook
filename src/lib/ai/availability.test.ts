@@ -1,4 +1,5 @@
 import {
+  describeAiProcessingStatus,
   getAiCapabilities,
   getLanguageModelAvailability,
   getRewriterAvailability,
@@ -89,5 +90,37 @@ describe('isCapabilityUsable', () => {
     ['unavailable', false],
   ] as const)('%s -> %s', (capability, expected) => {
     expect(isCapabilityUsable(capability)).toBe(expected)
+  })
+})
+
+describe('describeAiProcessingStatus', () => {
+  it('is enabled only once both the prompt and rewriter models are ready', () => {
+    expect(describeAiProcessingStatus({ prompt: 'available', rewriter: 'available' })).toBe(
+      'enabled',
+    )
+  })
+
+  it('is unavailable if either capability is unavailable', () => {
+    expect(describeAiProcessingStatus({ prompt: 'unavailable', rewriter: 'available' })).toBe(
+      'unavailable',
+    )
+    expect(describeAiProcessingStatus({ prompt: 'available', rewriter: 'unavailable' })).toBe(
+      'unavailable',
+    )
+  })
+
+  it('is downloading when a usable capability still needs its model fetched', () => {
+    expect(describeAiProcessingStatus({ prompt: 'downloadable', rewriter: 'available' })).toBe(
+      'downloading',
+    )
+    expect(describeAiProcessingStatus({ prompt: 'available', rewriter: 'downloading' })).toBe(
+      'downloading',
+    )
+  })
+
+  it('prefers unavailable over downloading when both are present', () => {
+    expect(describeAiProcessingStatus({ prompt: 'unavailable', rewriter: 'downloadable' })).toBe(
+      'unavailable',
+    )
   })
 })

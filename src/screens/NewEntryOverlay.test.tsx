@@ -1,7 +1,7 @@
 import { render, screen } from '@testing-library/react'
 import userEvent from '@testing-library/user-event'
 import { NewEntryOverlay } from './NewEntryOverlay.tsx'
-import type { Draft } from '../lib/buildEntry.ts'
+import { DEFAULT_MEDIA_HINTS, type Draft } from '../lib/buildEntry.ts'
 import type { ExtractedEntryFields } from '../lib/ai/extractEntry.ts'
 import type { NewEntryStep } from '../hooks/useNewEntryFlow.ts'
 
@@ -134,6 +134,16 @@ describe('NewEntryOverlay', () => {
 
     await user.click(screen.getByRole('button', { name: 'Save entry' }))
     expect(props.onSave).toHaveBeenCalledTimes(1)
+  })
+
+  it('previews the same media hints buildEntryFromDraft writes onto the saved entry', () => {
+    renderOverlay({
+      step: 'review',
+      draft: { raw: 'climbed pico', extracted, story: 'A polished ascent.' },
+    })
+    for (const hint of DEFAULT_MEDIA_HINTS) {
+      expect(screen.getByRole('img', { name: hint })).toBeInTheDocument()
+    }
   })
 
   it('disables Regenerate while regenerating', () => {
