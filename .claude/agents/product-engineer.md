@@ -29,7 +29,7 @@ description: |
   Single-specialty requests should go straight to the relevant agent, not through the orchestrator.
   </commentary>
   </example>
-model: sonnet
+model: opus
 color: orange
 tools: Agent, Read, Grep, Glob, Bash, Write, Edit, TaskCreate, TaskUpdate, TaskList
 ---
