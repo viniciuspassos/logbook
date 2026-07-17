@@ -7,7 +7,7 @@
 # docker-compose.yml at the repo root) — there is no hosted deployment target
 # for it yet.
 
-FROM node:20.18-bookworm-slim AS build
+FROM node:24.18-bookworm-slim AS build
 WORKDIR /app
 
 # Install dependencies first (incl. dev deps needed to compile) so this layer
@@ -25,7 +25,7 @@ RUN npm run build
 # the lockfile-resolved versions identical between build and runtime).
 RUN npm prune --omit=dev
 
-FROM node:20.18-bookworm-slim AS runtime
+FROM node:24.18-bookworm-slim AS runtime
 WORKDIR /app
 ENV NODE_ENV=production
 
