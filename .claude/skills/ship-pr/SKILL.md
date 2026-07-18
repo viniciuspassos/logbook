@@ -59,6 +59,14 @@ what `git commit` itself enforces via `.githooks/`.
    the one quality gate here, and stacking a second review on the
    same changes is duplicated effort for no benefit.
 
+   **Skip this step if the diff only touches Markdown docs** (`CLAUDE.md`,
+   `README.md`, `docs/*.md`, skill `SKILL.md` files, etc.) with no
+   application or infrastructure code changed — `code-reviewer`'s test-
+   coverage/SOLID/YAGNI checks don't apply to prose, so running it there
+   is pure overhead. If the diff mixes docs with real code or infra
+   (Dockerfiles, workflow YAML, config with runtime effect), still run
+   the review — just scope it to the code/infra portion.
+
 5. **Commit, if there are uncommitted changes.**
    ```
    git status --porcelain
