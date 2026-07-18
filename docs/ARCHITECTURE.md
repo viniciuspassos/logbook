@@ -18,17 +18,30 @@ This constraint **survives** the server-canonical decision below. A capture with
 completes locally and queues. What changed is *which copy is authoritative*, not *whether you can
 write offline*.
 
-### Source of truth: server-canonical (decided, not yet implemented)
+### Source of truth: server-canonical (decided, partially built)
 
 Per [issue #23](https://github.com/viniciuspassos/logbook/issues/23), the target architecture is
 **the server owns the truth; IndexedDB is a local read cache and write queue**. This reverses the
 original design, in which IndexedDB *was* the truth and the network did not exist at all.
 
-**Current state: not built.** Nothing under `src/` calls the backend added in #17 — IndexedDB
-remains the de facto source of truth in shipped code. The cache/queue client is tracked in
-[#26](https://github.com/viniciuspassos/logbook/issues/26) and its conflict semantics in
-[#24](https://github.com/viniciuspassos/logbook/issues/24). Read this section as the direction to
-build toward, not a description of what runs today.
+**Current state: push-only outbox, IndexedDB still authoritative.**
+[#26](https://github.com/viniciuspassos/logbook/issues/26) landed `src/lib/sync/` — a backend HTTP
+client (`entriesApi`, `attachmentsApi`, `authApi`, `health`) — and an offline outbox
+(`outboxQueue`/`outboxRunner`, driven by the `useSyncOutbox` hook) that pushes entry
+creates/updates/deletes and attachment uploads to the backend added in #17 whenever it's reachable,
+no-op'ing silently otherwise. Two things separate this from the target architecture above:
+
+- **No pull/reconcile path.** The client only ever pushes local changes; it never fetches server
+  state back down, so a second device's writes or a server-side edit are invisible locally. A
+  version conflict ([#24](https://github.com/viniciuspassos/logbook/issues/24)) is left queued with
+  its error recorded rather than auto-resolved — there's no manual-resolution UI yet.
+- **No login screen.** The backend requires a session cookie for every route except `/health` and
+  `/auth/login` (see `docs/INFRASTRUCTURE.md` → "Backend authentication"). `src/lib/sync/authApi.ts`
+  implements `login`/`logout`, but nothing under `src/screens` calls it, so against a real
+  deployment every outbox request 401s and is left queued until a login UI lands.
+
+Read this section as the current midpoint, not the end state — `entriesStore.ts` is still what
+every screen reads from.
 
 ## Data flow, end to end
 
@@ -73,7 +86,10 @@ Two properties of this flow are load-bearing and easy to break by accident:
   `useEntries.addEntry` updates React state synchronously and fires the IndexedDB write
   fire-and-forget (`.catch(() => {})`). A slow or failing write must never stall the UI. The one
   exception is `replaceEntries` (backup restore), which *does* await the write and lets failures
-  propagate — a restore that silently didn't stick would be worse than a visible error.
+  propagate — a restore that silently didn't stick would be worse than a visible error. The same
+  applies one layer further out: `saveEntry` (`useLogbookApp.ts`) calls `useSyncOutbox`'s
+  `queueEntryCreate` right after `addEntry`, also fire-and-forget — queueing (and the drain it
+  triggers) never blocks the save or the UI.
 
 ## State composition
 
@@ -87,10 +103,13 @@ everything else is delegated to a single-concern hook:
 | `useEntries` | The persisted entry list: load-on-mount, seed-if-empty, write-through on add/replace |
 | `useNewEntryFlow` | The capture → listening → processing → review state machine, speech, AI orchestration |
 | `useExportActions` | Markdown/PDF export, JSON backup export/restore, a `busy` guard and status message |
+| `useSyncOutbox` | Registers the reconnect trigger and does a mount-time drain against the backend outbox; exposes `queueEntryCreate` |
+| `useEntryAttachments` | The attachment gallery (server-confirmed + locally-queued photos) for whichever entry is open, and the upload flow |
 
-**Why this shape instead of one hook, or a global store (Redux/Zustand):** the app has four
+**Why this shape instead of one hook, or a global store (Redux/Zustand):** the app has several
 genuinely independent concerns (routing-ish UI state, persisted domain data, a multi-step capture
-wizard, and export side effects) that rarely need to read each other's internals — `useLogbookApp`
+wizard, export side effects, and the additive server-sync/attachment concerns) that rarely need to
+read each other's internals — `useLogbookApp`
 is the only place that wires them together, and it does so through plain function calls, not a
 shared store. Adding new state should extend the hook that owns that concern, or introduce a new
 one — see `CLAUDE.md` → "State composition" for the explicit rule against growing
@@ -113,10 +132,13 @@ module, and only that module touches the global:
 
 - `src/lib/ai/` — `availability`, `extractEntry`, `rewriteStory`, `searchEntries` (Prompt +
   Rewriter APIs)
-- `src/lib/db/entriesStore.ts` — IndexedDB
+- `src/lib/db/` — IndexedDB: `entriesStore.ts` (entries), `outboxStore.ts` (pending sync ops),
+  `syncStateStore.ts` (local-id ↔ server-id/version mapping)
 - `src/lib/backup/` — File System Access (JSON snapshot export/import)
 - `src/lib/export/` — pure Markdown/printable-HTML formatters (no browser API — deliberately pure
   so they're trivial to unit test)
+- `src/lib/sync/` — the HTTP client for the `server/` backend (`httpClient`, `entriesApi`,
+  `attachmentsApi`, `authApi`, `health`) plus the offline outbox (`outboxQueue`, `outboxRunner`)
 
 **Why:** Chrome's built-in AI APIs are an active origin trial — flag names, method shapes, and
 capability strings have already changed between Chrome versions during this project's life. If
@@ -137,9 +159,9 @@ export can't drift apart by one of them forgetting a field the other added.
 | **Postgres** for server-side persistence ([#25](https://github.com/viniciuspassos/logbook/issues/25)) | SQLite | SQLite is meaningfully simpler to operate — one file, no container, trivial backups — and was the right question to ask, because when Postgres was first chosen its justification was *speculative*: multi-writer and sync headroom that nothing actually used. Two later decisions made that headroom real. [#23](https://github.com/viniciuspassos/logbook/issues/23) put multiple devices reconciling write queues against one server (the multi-writer case), and [#18](https://github.com/viniciuspassos/logbook/issues/18) put the session store in Postgres, so auth depends on it too. SQLite's single-writer model now sits badly with both. Cost accepted: a second container and heavier local dev than a file would be. |
 | **IndexedDB** for persistence (`lib/db/entriesStore.ts`) | `localStorage` | Entries carry structured fields plus media placeholders; `localStorage`'s string-only, ~5MB, synchronous API doesn't scale to that and blocks the main thread. IndexedDB is async and has no practical size ceiling for this use case. |
 | **On-device AI** (Chrome Prompt/Rewriter APIs) over a cloud LLM | Calling an LLM API over the network | The core product requirement is working with no connectivity. A cloud call is a hard dependency the app can't have on its capture path. The cost is real: the feature is flag-gated, download-gated, and desktop-Chrome-only — accepted deliberately, with unavailability always degrading to a manual path (see `README.md` → "Browser AI best practices"). |
-| **Composed single-concern hooks**, no global store | Redux/Zustand/Context-as-store | Four concerns (nav, entries, new-entry flow, export) that don't need cross-cutting selectors or middleware. A composition-root hook keeps the wiring visible in one function instead of behind a store's action/reducer indirection. |
+| **Composed single-concern hooks**, no global store | Redux/Zustand/Context-as-store | Several concerns (nav, entries, new-entry flow, export, server-sync, attachments) that don't need cross-cutting selectors or middleware. A composition-root hook keeps the wiring visible in one function instead of behind a store's action/reducer indirection. |
 | **`vite-plugin-pwa` with `generateSW` + `registerType: 'autoUpdate'`** | `injectManifest` (custom service worker logic), or prompting the user to refresh | Logbook is a single-user personal log with no server contract to coordinate (no "your data is stale, refresh" concern), so silently activating the newest build is safe and avoids nagging the user with an update prompt. `devOptions.enabled: true` additionally serves the service worker under `npm run dev`, not just a production build, so offline behaviour is exercisable without a separate `preview` step. |
-| **File System Access API for local JSON backup**, no cloud sync yet | Implementing cloud backup now | Cloud sync is explicitly optional in the product vision and needs a server + auth story that doesn't exist yet. A local file-based export/import gives users a durable, portable escape hatch today without that dependency; see `README.md` → Product vision for the deferred cloud-sync bullet. |
+| **File System Access API for local JSON backup**, kept alongside the [#26](https://github.com/viniciuspassos/logbook/issues/26) backend outbox | Treating the backend outbox as the only durability path | The outbox only pushes best-effort and has no pull/reconcile path or login UI yet (see "Source of truth" above), so it isn't a substitute for a user-controlled escape hatch. Local JSON backup stays the durable, portable fallback that doesn't depend on a reachable server or a signed-in session. |
 | **Co-located `*.test.ts(x)` files, TDD, one test per function** | A separate `__tests__` tree, or partial coverage | Keeps a test physically next to the code it exercises so it's never orphaned by a rename, and makes "does this file have a test" a one-glance check. Enforced by `CLAUDE.md` and the pre-commit hook running the full suite on every commit. |
 | **TypeScript project references** (`tsconfig.app.json` / `tsconfig.node.json`) | A single flat `tsconfig.json` | Separates app code (bundler resolution, DOM lib, strict unused-checks) from Vite's own Node-side config (Node lib, different module target) so each gets the right ambient types without leaking into the other. |
 | **Ambient ` src/types/*.d.ts` declarations** for Speech/Chrome-AI/File-System-Access APIs | `@types/*` packages or `any` | These APIs aren't in the DOM lib and don't have stable published types (some are origin-trial-only). Hand-written ambient declarations, scoped to exactly what the app calls, keep `any` out of the codebase per the ESLint policy in `CLAUDE.md`. |

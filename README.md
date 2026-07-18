@@ -7,11 +7,15 @@ capturing, structuring, and polishing an adventure log works without a network r
 
 > **Project status — working, with gaps.**
 > Voice capture, on-device AI extraction/rewrite, natural-language search, IndexedDB
-> persistence, computed statistics, the installable PWA/offline shell, and the
+> persistence, computed statistics, the installable PWA/offline shell, photo attachments, and the
 > Markdown/PDF/JSON-backup exports are all implemented and covered by tests.
 > `src/data/entries.ts` is now only a **one-time seed** for an empty store, not the live source
-> of truth. Still outstanding: **photo attachments** and the optional **cloud backup sync**
-> listed under [Product vision](#product-vision).
+> of truth. A background outbox also pushes entries and photos to a NestJS + Postgres backend
+> (`server/`) whenever it's reachable, degrading silently otherwise.
+>
+> Still outstanding on the cloud-sync side (see [Product vision](#product-vision)): there's no
+> pull/reconcile path back from the server (today's outbox only pushes local changes), and no
+> login screen is wired up, so sync will 401 against a deployment with auth enabled.
 >
 > The AI features need desktop Chrome with the built-in AI flags enabled (see
 > [Browser & AI requirements](#browser--ai-requirements)); without them the app degrades to
@@ -136,17 +140,21 @@ src/
   types/                 # Shared models (Entry) + ambient decls for APIs the DOM lib lacks
   data/                  # One-time seed data for an empty store
   hooks/                 # useLogbookApp (composition root), useNavigation, useEntries,
-                         #   useNewEntryFlow, useSpeechCapture, useExportActions
+                         #   useNewEntryFlow, useSpeechCapture, useExportActions,
+                         #   useSyncOutbox, useEntryAttachments
   lib/
     ai/                  # Chrome built-in AI wrappers: availability, extractEntry,
                          #   rewriteStory, searchEntries
-    db/                  # entriesStore — the IndexedDB wrapper
+    db/                  # entriesStore, outboxStore, syncStateStore — IndexedDB wrappers
     backup/              # JSON snapshot export/import (File System Access)
     export/              # Markdown + printable-PDF formatters
+    sync/                # Backend HTTP client (entriesApi, attachmentsApi, authApi, health)
+                         #   + the offline outbox (outboxQueue, outboxRunner)
     …                    # Pure helpers: buildEntry, computeStats, filterEntries, cx
   screens/               # Full-screen views: Timeline, Search, Stats, Settings, + overlays
   components/            # Reusable UI: TabBar, EntryCard, badges, glyphs, placeholders
 public/                  # Static assets: app icons + PWA icon set
+server/                  # Separate NestJS + Postgres backend package — see docs/INFRASTRUCTURE.md
 ```
 
 Each unit of logic has a co-located `*.test.ts(x)` file. Build tooling: **Vite** +
@@ -192,8 +200,8 @@ npm test -- --watch   # watch mode while developing
 
 ## Product vision
 
-The sections below describe the intended product. Everything here is implemented except the two
-items explicitly marked _not yet implemented_.
+The sections below describe the intended product. Everything here is implemented except the
+sync gaps called out explicitly below (no pull/reconcile sync, no login screen).
 
 ### Core features
 
@@ -225,9 +233,13 @@ The application must:
 - Never require cloud AI services for core functionality.
 - Treat the **server as the source of truth**, with **IndexedDB** (`src/lib/db/entriesStore.ts`)
   as the local read cache and write queue.
-  _Not yet implemented_ — IndexedDB is still authoritative in shipped code and nothing calls the
-  backend. Tracked in [#26](https://github.com/viniciuspassos/logbook/issues/26), with conflict
-  semantics in [#24](https://github.com/viniciuspassos/logbook/issues/24).
+  _Partially implemented_ ([#26](https://github.com/viniciuspassos/logbook/issues/26)) — a
+  background outbox (`src/lib/sync/`) pushes creates, updates, deletes, and attachment uploads to
+  the backend whenever it's reachable. IndexedDB is still authoritative in shipped code, though:
+  there's no pull/reconcile path back from the server yet, a version conflict
+  ([#24](https://github.com/viniciuspassos/logbook/issues/24)) is left queued rather than
+  auto-resolved, and there's no login screen wired up, so sync 401s against a deployment with auth
+  enabled until that lands.
 
 > One caveat on "completely offline": Chrome's **Web Speech API** may route audio to a network
 > service, so voice capture specifically can require connectivity. Extraction, rewriting, search,
@@ -238,12 +250,13 @@ The application must:
 Timeline of adventures · full-text and **AI-powered natural-language** search · statistics
 dashboard · export to Markdown · export to PDF (via the browser's own print-to-PDF, no PDF
 library) · local backup export/restore via the File System Access API · photo attachments
-(_not yet implemented_).
+(queued locally, uploaded to the backend via the offline outbox).
 
 ### Tech stack
 
 TypeScript · React · Vite · PWA (service worker + manifest) · IndexedDB · Web Speech API ·
-Browser Prompt API · Browser Rewriter API · File System Access API.
+Browser Prompt API · Browser Rewriter API · File System Access API · NestJS + Postgres (backend
+sync, `server/`).
 
 ### Development principles
 
