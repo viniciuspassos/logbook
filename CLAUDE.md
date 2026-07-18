@@ -6,7 +6,7 @@ This file provides guidance to Claude Code (claude.ai/code) when working with co
 
 Logbook is an offline-first Progressive Web App (PWA) for mountaineers and skydivers to record their adventures, even in places with little or no internet connectivity (see `package.json` description). It is a working app: an installable, offline-capable PWA that captures entries by voice, structures and polishes them with Chrome's built-in on-device AI, persists them in IndexedDB, and exports them to Markdown/PDF/JSON.
 
-Two features from the product vision are not implemented yet: **photo attachments** and **optional cloud backup sync**. Everything else in `README.md`'s "Product vision" is live.
+Photo attachments and a background sync client are now implemented ([#26](https://github.com/viniciuspassos/logbook/issues/26)): entries and photos push to a NestJS + Postgres backend (`server/`) through an offline outbox, best-effort and silently degrading when the backend is unreachable — see `docs/ARCHITECTURE.md` → "Source of truth". Two things are still missing before that's a real cloud-sync feature: there's no pull/reconcile path back from the server (today's outbox only pushes local changes), and no login screen is wired up (`src/lib/sync/authApi.ts` exists but nothing calls it), so sync will 401 against a deployment with auth enabled. Everything else in `README.md`'s "Product vision" is live.
 
 The AI and speech features require desktop Chrome with the built-in AI flags enabled (README → "Browser & AI requirements"). They are always optional at runtime — see Browser AI rules below.
 
@@ -23,6 +23,8 @@ hooks, and the build/PWA pipeline, see `docs/INFRASTRUCTURE.md`.
 - `npm run preview` — serve the production build locally (needed to exercise the real PWA/offline behaviour)
 
 `.githooks/pre-commit` gates every commit on typecheck → lint → tests, and `.githooks/commit-msg` enforces Conventional Commits. `npm install` wires the hooks up via the `prepare` script.
+
+`server/` is a separate NestJS + Postgres backend package with its own `package.json`/`npm install`/scripts — not wired into the root project references, and not required to run, build, or test the frontend. See `docs/INFRASTRUCTURE.md` for its commands, Docker Compose setup, and how CI gates it.
 
 ## Before implementing
 
@@ -53,19 +55,22 @@ Tests must never be deleted to make a change land. If a test's behavior is genui
 - `useEntries` — the persisted list; loads from IndexedDB on mount, seeds from `src/data/entries.ts` only when the store is empty, and write-throughs on save. `data/entries.ts` is seed data, **not** the live source of truth.
 - `useNewEntryFlow` — the capture → listening → processing → review state machine, speech, and AI orchestration.
 - `useExportActions` — Markdown/PDF/backup/restore, with a `busy` guard and a status message.
+- `useSyncOutbox` — registers the reconnect trigger and does a mount-time drain against the backend outbox (`src/lib/sync/`); exposes `queueEntryCreate` for `saveEntry` to call.
+- `useEntryAttachments` — the attachment gallery (server-confirmed + locally-queued photos) for whichever entry is open, and the upload flow.
 
 Keep these concerns separate: put new state in the hook that owns that concern (or a new one) rather than growing `useLogbookApp` back into a god hook.
 
-**Source of truth is moving to the server** ([#23](https://github.com/viniciuspassos/logbook/issues/23)): the target is that the backend owns the truth and IndexedDB becomes a local read cache and write queue. **This is decided but not built** — nothing under `src/` calls the backend today, so `entriesStore` is still authoritative in shipped code. Don't write new frontend code that assumes a server exists until [#26](https://github.com/viniciuspassos/logbook/issues/26) lands. The offline-capture rule is unaffected either way: creating and reading entries must keep working with no network, so a failed write queues rather than blocking the user — the same degradation philosophy as the Browser AI rules below.
+**Source of truth is moving to the server** ([#23](https://github.com/viniciuspassos/logbook/issues/23)): the target is that the backend owns the truth and IndexedDB becomes a local read cache and write queue. **Partially built**: [#26](https://github.com/viniciuspassos/logbook/issues/26) landed a background outbox (`src/lib/sync/`, `useSyncOutbox`) that pushes entry creates/updates/deletes and attachment uploads to the backend when it's reachable. `entriesStore` is still authoritative in shipped code, though — there's no pull/reconcile path back from the server yet, and a version conflict ([#24](https://github.com/viniciuspassos/logbook/issues/24)) is left queued with its error recorded rather than auto-resolved. The offline-capture rule is unaffected either way: creating and reading entries must keep working with no network, so a failed write queues rather than blocking the user — the same degradation philosophy as the Browser AI rules below.
 
 ### Layering
 
 Screens and hooks must not touch flag-gated browser globals directly. All browser-API access goes through thin, individually-tested wrappers:
 
 - `src/lib/ai/` — `availability`, `extractEntry`, `rewriteStory`, `searchEntries` (Prompt + Rewriter APIs)
-- `src/lib/db/entriesStore.ts` — IndexedDB
+- `src/lib/db/` — IndexedDB: `entriesStore.ts` (entries), `outboxStore.ts` (pending sync ops), `syncStateStore.ts` (local-id ↔ server-id/version mapping)
 - `src/lib/backup/` — File System Access (JSON snapshot export/import)
 - `src/lib/export/` — pure Markdown/printable-HTML formatters; shared field rules live in `entryFields.ts` so formats can't drift apart
+- `src/lib/sync/` — the HTTP client for the `server/` backend (`httpClient`, `entriesApi`, `attachmentsApi`, `authApi`, `health`) plus the offline outbox (`outboxQueue`, `outboxRunner`)
 - `src/types/*.d.ts` — ambient declarations for APIs missing from the DOM lib (speech, Chrome AI, File System Access)
 
 This is what keeps a shifting origin-trial API surface a one-file change.
