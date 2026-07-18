@@ -30,6 +30,8 @@ hooks, and the build/PWA pipeline, see `docs/INFRASTRUCTURE.md`.
 
 Sync local `main` (`git fetch origin && git log origin/main`) and search the codebase/issue tracker for the requested behavior before writing code. Several past sessions duplicated work that had already merged (e.g. the soft-delete tombstone feature) — a grep is orders of magnitude cheaper than a redundant implementation, review, and PR.
 
+**Isolate parallel sessions on their own branch.** The user often runs multiple unrelated Claude Code sessions against this repo at once, and a new session inherits whatever branch happens to be checked out — which may belong to a different, unrelated task another session is mid-way through. Before making any code or documentation change, check whether the current branch's purpose matches this task; if it doesn't (or you're on `main`), create a fresh branch off `origin/main` (`git fetch origin && git checkout -b <type>/<slug> origin/main`) before editing anything. Only keep working on the current branch when this task is a continuation of what that branch is already doing.
+
 ## Testing
 
 Follow Test-Driven Development: write the failing Jest test for the behavior first, then write the minimum code to make it pass, then refactor. Every function, both backend and frontend, must have a unit test written with Jest. When adding a function, add or update its corresponding Jest test in the same change.
