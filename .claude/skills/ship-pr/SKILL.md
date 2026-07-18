@@ -38,12 +38,9 @@ what `git commit` itself enforces via `.githooks/`.
    (`feat/`, `fix/`, `chore/`, etc.) — e.g. `feat/offline-sync-queue`.
    If already on a non-main branch, reuse it.
 
-3. **Validate.** Run the checks a commit will enforce, without
-   committing yet (see `validate-before-commit`):
-   ```
-   git hook run pre-commit
-   ```
-   Fix any failures before proceeding — do not push red code.
+3. **Validate.** Run `validate-before-commit`'s checks (`git hook run
+   pre-commit`) without committing yet. Fix any failures before
+   proceeding — do not push red code.
 
 4. **Code review.** Before committing, invoke the `code-reviewer` skill
    (via the `Skill` tool, `skill: "code-reviewer"`) over the diff —
