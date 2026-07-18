@@ -7,9 +7,8 @@ Paths below are relative to the repo root (`logbook/`).
 
 This is the single quality gate an agent runs before committing. It
 replaces ad hoc self-review: call this skill exactly once per change,
-right before handing off to `ship-pr`, and don't also invoke the
-generic `code-review` skill on the same diff — that would just
-duplicate this pass on the same changes.
+right before handing off to `ship-pr` (see Gotchas for why not to
+stack it with the generic `code-review` skill).
 
 ## What this reviews, in priority order
 
