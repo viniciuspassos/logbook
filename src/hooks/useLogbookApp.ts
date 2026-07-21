@@ -1,5 +1,6 @@
 import { entries as seedEntries } from '../data/entries.ts'
 import { buildEntryFromDraft } from '../lib/buildEntry.ts'
+import { shouldUseMockData } from '../lib/config/mockData.ts'
 import { useEntries } from './useEntries.ts'
 import { useEntryAttachments } from './useEntryAttachments.ts'
 import { useExportActions } from './useExportActions.ts'
@@ -18,9 +19,12 @@ export type { AttachmentPreview, AttachmentStatus } from './useEntryAttachments.
  * Entries load from (and write through to) IndexedDB via `useEntries`, which
  * stays the sole local source of truth; `useSyncOutbox` layers an additive,
  * best-effort server sync on top without this hook knowing outbox internals.
+ * `src/data/entries.ts`'s sample adventures only seed an empty store under
+ * `npm run dev:mocked` (`shouldUseMockData`) — a normal run starts from a
+ * real, empty timeline instead.
  */
 export function useLogbookApp() {
-  const { entries, addEntry, replaceEntries } = useEntries(seedEntries)
+  const { entries, addEntry, replaceEntries } = useEntries(shouldUseMockData() ? seedEntries : [])
   const nav = useNavigation(entries)
   const flow = useNewEntryFlow()
   const syncOutbox = useSyncOutbox()

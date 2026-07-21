@@ -17,6 +17,17 @@ jest.mock('../lib/backup/exportBackup.ts', () => {
 // Orchestration-only tests: the speech and AI wrappers are mocked so these
 // focus on state transitions, not on the real (browser-only) APIs.
 
+// These tests exercise navigation/save behavior against known seed-entry ids
+// (2, 3, ...), so opt into the same seeding `npm run dev:mocked` provides via
+// vite.config.ts's `define` — see src/lib/config/mockData.ts.
+beforeAll(() => {
+  globalThis.__LOGBOOK_MOCKED__ = true
+})
+
+afterAll(() => {
+  delete (globalThis as { __LOGBOOK_MOCKED__?: boolean }).__LOGBOOK_MOCKED__
+})
+
 let capturedOnEnd: ((finalTranscript: string) => void) | undefined
 
 jest.mock('./useSpeechCapture.ts', () => ({
@@ -275,5 +286,12 @@ describe('useLogbookApp', () => {
     act(() => result.current.openNewEntry())
     act(() => result.current.startRecording())
     expect(() => unmount()).not.toThrow()
+  })
+
+  it('starts from a real, empty timeline outside mocked mode (no sample entries)', () => {
+    delete (globalThis as { __LOGBOOK_MOCKED__?: boolean }).__LOGBOOK_MOCKED__
+    const { result } = renderHook(() => useLogbookApp())
+    expect(result.current.entries).toEqual([])
+    globalThis.__LOGBOOK_MOCKED__ = true
   })
 })
