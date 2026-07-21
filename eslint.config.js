@@ -14,7 +14,7 @@ export default defineConfig([
   // deliberately not part of this project's tsconfig project references, so
   // this root config's `**/*.{ts,tsx}` glob must not pick its files up (they
   // fail to parse against tsconfig.app.json/tsconfig.node.json otherwise).
-  globalIgnores(['dist', '.claude', 'server']),
+  globalIgnores(['dist', 'dist-ssr', 'dev-dist', 'coverage', '.claude', 'server']),
   {
     files: ['**/*.{ts,tsx}'],
     extends: [

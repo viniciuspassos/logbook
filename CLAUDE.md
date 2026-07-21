@@ -12,7 +12,9 @@ The AI and speech features require desktop Chrome with the built-in AI flags ena
 
 For the *why* behind the architecture (state composition, layering, key decisions like
 IndexedDB-over-localStorage or on-device-AI-over-cloud) see `docs/ARCHITECTURE.md`. For CI, git
-hooks, and the build/PWA pipeline, see `docs/INFRASTRUCTURE.md`.
+hooks, and the build/PWA pipeline, see `docs/INFRASTRUCTURE.md`. For how Claude Code agents,
+skills, and MCP integrations (including Playwright, which is scoped to on-demand QA only) carry a
+feature from request to merged PR, see `docs/AGENTIC_WORKFLOW.md`.
 
 ## Commands
 
