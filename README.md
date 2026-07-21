@@ -194,7 +194,9 @@ npm test -- --watch   # watch mode while developing
 - Open a PR against `main`. CI runs the static gates automatically; they must be green before
   merge.
 
-`CLAUDE.md` is the deeper development guide for contributors and AI coding assistants.
+`CLAUDE.md` is the deeper development guide for contributors and AI coding assistants; see
+`docs/AGENTIC_WORKFLOW.md` for how this repo's Claude Code agents/skills/MCP integrations carry a
+feature from request to merged PR.
 
 ---
 
