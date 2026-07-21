@@ -3,6 +3,18 @@ import userEvent from '@testing-library/user-event'
 import App from './App.tsx'
 import { entries } from './data/entries.ts'
 
+// This suite exercises the real App -> useLogbookApp -> useEntries path and
+// asserts against the sample entries' titles/ids, so it needs the same
+// seeding `npm run dev:mocked` provides via vite.config.ts's `define` — see
+// src/lib/config/mockData.ts.
+beforeAll(() => {
+  globalThis.__LOGBOOK_MOCKED__ = true
+})
+
+afterAll(() => {
+  delete (globalThis as { __LOGBOOK_MOCKED__?: boolean }).__LOGBOOK_MOCKED__
+})
+
 describe('App', () => {
   it('starts on the Timeline tab showing every entry', () => {
     render(<App />)

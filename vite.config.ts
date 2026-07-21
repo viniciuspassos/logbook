@@ -3,7 +3,18 @@ import react from '@vitejs/plugin-react'
 import { VitePWA } from 'vite-plugin-pwa'
 
 // https://vite.dev/config/
-export default defineConfig({
+export default defineConfig(({ mode }) => ({
+  // `npm run dev:mocked` (= `vite --mode mocked`) seeds a fresh app with the
+  // sample entries in src/data/entries.ts; a plain `npm run dev` starts from
+  // a real, empty timeline. Built on Vite's own `--mode` flag rather than a
+  // custom CLI option — Vite's CLI (cac) rejects unrecognized flags for the
+  // `build`/`preview` subcommands, so a bespoke `--mocked` flag would work
+  // for `dev` but hard-crash `build`/`preview`. See src/lib/config/mockData.ts
+  // for why this is threaded through `define` as a global instead of
+  // `import.meta.env` (Jest/CommonJS can't parse import.meta).
+  define: {
+    __LOGBOOK_MOCKED__: JSON.stringify(mode === 'mocked'),
+  },
   server: {
     proxy: {
       // #26: the optional backend (server/) has no CORS headers at all
@@ -69,4 +80,4 @@ export default defineConfig({
       },
     }),
   ],
-})
+}))
