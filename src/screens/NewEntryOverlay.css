@@ -51,6 +51,17 @@
   margin-bottom: 6px;
 }
 
+@media (min-width: 960px) {
+  .new-entry__heading {
+    font-family: var(--serif);
+    font-weight: 600;
+  }
+
+  .new-entry__review {
+    padding: 0 44px 40px;
+  }
+}
+
 .new-entry__subheading {
   font-size: 14px;
   color: var(--lb-muted);

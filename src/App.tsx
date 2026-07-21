@@ -1,4 +1,5 @@
 import { TabBar } from './components/TabBar.tsx'
+import { useIsDesktop } from './hooks/useIsDesktop.ts'
 import { useLogbookApp } from './hooks/useLogbookApp.ts'
 import { EntryDetailOverlay } from './screens/EntryDetailOverlay.tsx'
 import { NewEntryOverlay } from './screens/NewEntryOverlay.tsx'
@@ -37,6 +38,13 @@ function App() {
     exportActions,
     attachments,
   } = useLogbookApp()
+  const isDesktop = useIsDesktop()
+  // Below the desktop breakpoint an overlay is a full-screen cover, so the
+  // rail underneath must unmount (both visually and from focus/AT). At
+  // desktop width the overlay is just the right-hand page next to the list,
+  // so the spine rail — and the ability to switch tabs or close out to a new
+  // entry — stays put instead of disappearing while reading.
+  const showTabBar = isDesktop || !overlay
 
   return (
     <div className="app">
@@ -56,7 +64,14 @@ function App() {
         )}
       </div>
 
-      {!overlay && <TabBar active={tab} onSelect={goTab} onNewEntry={openNewEntry} />}
+      {showTabBar && <TabBar active={tab} onSelect={goTab} onNewEntry={openNewEntry} />}
+
+      {!overlay && (
+        <div className="book-right-page">
+          <div className="book-right-page__rings" aria-hidden="true" />
+          <p className="book-right-page__hint">Open an entry to read it here</p>
+        </div>
+      )}
 
       {overlay === 'entry' && selectedEntry && (
         <EntryDetailOverlay
