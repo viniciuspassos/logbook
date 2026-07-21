@@ -6,6 +6,14 @@
   letter-spacing: -0.8px;
 }
 
+@media (min-width: 960px) {
+  .search-screen__title {
+    font-family: var(--serif);
+    font-weight: 600;
+    letter-spacing: -0.3px;
+  }
+}
+
 .search-screen__input {
   width: 100%;
   box-sizing: border-box;

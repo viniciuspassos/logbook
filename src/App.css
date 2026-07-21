@@ -15,3 +15,99 @@
   overflow: auto;
   padding: 20px 20px 24px;
 }
+
+.book-right-page {
+  display: none;
+}
+
+/* Above --lb-desktop, the app stops being a single phone card and becomes an
+   open logbook lying flat: a spine rail (TabBar) and two cream pages with a
+   shadowed crease between them. The overlays (EntryDetailOverlay,
+   NewEntryOverlay) already sit as plain siblings of .app-screen inside .app,
+   so reflowing them from a full-screen cover to the right-hand page is a
+   position/order change only — no markup or component logic moves. */
+@media (min-width: 960px) {
+  .app {
+    position: relative;
+    flex-direction: row;
+    align-items: stretch;
+    max-width: none;
+    width: min(1200px, 94vw);
+    height: calc(100dvh - 96px);
+    margin: 48px auto;
+    border-radius: 24px;
+    background: transparent;
+    box-shadow:
+      0 30px 60px -20px oklch(19% 0.025 50 / 0.35),
+      0 1px 0 var(--lb-border);
+    overflow: visible;
+  }
+
+  .app::before {
+    /* The rail (flex 0 0 84px) sits left of the two equal-width pages, so
+       the true seam between them is 42px (half the rail's width) right of
+       .app's own horizontal center, not at a flat 50%. */
+    content: '';
+    position: absolute;
+    left: calc(50% + 42px);
+    top: 20px;
+    bottom: 20px;
+    width: 44px;
+    margin-left: -22px;
+    background: linear-gradient(
+      to right,
+      transparent,
+      var(--lb-spine-shadow) 45%,
+      var(--lb-spine-shadow) 55%,
+      transparent
+    );
+    pointer-events: none;
+    z-index: 1;
+  }
+
+  .app-screen {
+    order: 2;
+    flex: 1 1 0;
+    background: var(--lb-bg);
+    padding: 40px 44px;
+  }
+
+  .entry-detail,
+  .new-entry,
+  .book-right-page {
+    position: static;
+    inset: auto;
+    order: 3;
+    flex: 1 1 0;
+    border-radius: 0 24px 24px 0;
+  }
+
+  .book-right-page {
+    display: flex;
+    flex-direction: column;
+    align-items: center;
+    justify-content: center;
+    gap: 18px;
+    background: var(--lb-bg);
+    color: var(--lb-muted);
+  }
+
+  .book-right-page__rings {
+    width: 130px;
+    height: 130px;
+    border-radius: 50%;
+    background: repeating-radial-gradient(
+      circle,
+      var(--lb-border) 0 1.5px,
+      transparent 1.5px 20px
+    );
+    opacity: 0.8;
+  }
+
+  .book-right-page__hint {
+    font: italic 15px/1.5 var(--serif);
+    max-width: 220px;
+    text-align: center;
+    margin: 0;
+  }
+}

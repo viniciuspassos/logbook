@@ -14,7 +14,15 @@
   --lb-inactive: oklch(68% 0.025 55);
   --lb-card-shadow: 0 3px 12px oklch(19% 0.025 50 / 0.07);
 
+  /* Desktop-only "open logbook" shell: a leather-toned spine rail and the
+     crease shadow between its two pages. Unused below --lb-desktop. */
+  --lb-rail-bg: oklch(28% 0.035 45);
+  --lb-rail-ink: oklch(92% 0.015 70);
+  --lb-rail-inactive: oklch(55% 0.03 50);
+  --lb-spine-shadow: oklch(19% 0.025 50 / 0.18);
+
   --sans: system-ui, -apple-system, 'Segoe UI', Roboto, sans-serif;
+  --serif: ui-serif, Georgia, 'Iowan Old Style', 'Times New Roman', serif;
 
   font: 15px/1.45 var(--sans);
   color-scheme: light dark;
@@ -42,6 +50,10 @@
     --lb-surface-hover: oklch(94% 0.01 60 / 0.06);
     --lb-inactive: oklch(45% 0.02 55);
     --lb-card-shadow: 0 3px 12px rgba(0, 0, 0, 0.35);
+    --lb-rail-bg: oklch(11% 0.02 50);
+    --lb-rail-ink: oklch(88% 0.015 70);
+    --lb-rail-inactive: oklch(40% 0.02 55);
+    --lb-spine-shadow: rgba(0, 0, 0, 0.5);
   }
 }
 

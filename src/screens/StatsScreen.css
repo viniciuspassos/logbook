@@ -6,6 +6,14 @@
   letter-spacing: -0.8px;
 }
 
+@media (min-width: 960px) {
+  .stats-screen__title {
+    font-family: var(--serif);
+    font-weight: 600;
+    letter-spacing: -0.3px;
+  }
+}
+
 .stats-screen__grid {
   display: grid;
   grid-template-columns: 1fr 1fr;

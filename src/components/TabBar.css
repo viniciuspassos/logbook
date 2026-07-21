@@ -114,3 +114,58 @@
   border-radius: 50%;
   background: #fff;
 }
+
+/* Above --lb-desktop the bottom bar becomes the book's spine: a vertical
+   leather-toned rail down the left edge, running the full height of the
+   two open pages. Same component, same click handlers — layout only. */
+@media (min-width: 960px) {
+  .tab-bar {
+    order: 1;
+    flex: 0 0 84px;
+    flex-direction: column;
+    align-items: center;
+    justify-content: flex-start;
+    gap: 30px;
+    padding: 36px 0;
+    border-top: none;
+    border-radius: 24px 0 0 24px;
+    background: var(--lb-rail-bg);
+  }
+
+  .tab-bar__button {
+    width: auto;
+  }
+
+  .tab-bar__label {
+    color: var(--lb-rail-ink);
+  }
+
+  .tab-bar__icon-square,
+  .tab-bar__icon-bars span {
+    background: var(--lb-rail-inactive);
+  }
+  .tab-bar__icon-square.is-active,
+  .tab-bar__icon-bars.is-active span {
+    background: var(--lb-accent);
+  }
+
+  .tab-bar__icon-ring,
+  .tab-bar__icon-dial {
+    border-color: var(--lb-rail-inactive);
+  }
+  .tab-bar__icon-ring.is-active,
+  .tab-bar__icon-dial.is-active {
+    border-color: var(--lb-accent);
+  }
+  .tab-bar__icon-dial::after {
+    background: var(--lb-rail-inactive);
+  }
+  .tab-bar__icon-dial.is-active::after {
+    background: var(--lb-accent);
+  }
+
+  .tab-bar__add {
+    margin-top: 0;
+    border-color: var(--lb-rail-bg);
+  }
+}
