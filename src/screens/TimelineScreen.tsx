@@ -51,11 +51,10 @@ export function TimelineScreen({
 
       {timelineView === 'list' ? (
         <div className="timeline-screen__list">
-          {/* Desktop-only ledger margin rule — hidden below 960px
-           *  (TimelineScreen.css). Grouping always runs (it's a cheap pure
-           *  function) so the date headers it feeds are equally available;
-           *  they're just visually hidden on mobile too. */}
-          <div className="timeline-screen__ledger-rule" aria-hidden="true" />
+          {/* Day-grouping always runs (it's a cheap pure function) so the
+           *  date headers it feeds are available for the desktop-only
+           *  reading (TimelineScreen.css) even though this is also computed
+           *  on mobile, where the headers stay visually hidden. */}
           {groupEntriesByDate(entries).map((group, index) => (
             <div key={`${group.date}-${index}`} className="timeline-screen__date-group">
               <div className="timeline-screen__date-header">{group.date}</div>

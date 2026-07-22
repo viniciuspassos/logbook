@@ -60,11 +60,10 @@
   --lb-rail-inactive: oklch(55% 0.03 50);
   --lb-spine-shadow: oklch(19% 0.025 50 / 0.18);
 
-  /* Desktop redesign accents: verdigris for secondary/instrument-data callouts,
-     ledger red for the margin-rule motif, brass for hairlines/dividers. */
+  /* Desktop redesign accents: verdigris for secondary/instrument-data
+     callouts, brass for hairlines/dividers. */
   --lb-verdigris: oklch(52% 0.08 175);
   --lb-verdigris-bg: oklch(91% 0.03 175);
-  --lb-ledger-red: oklch(48% 0.16 25);
   --lb-brass: oklch(76% 0.09 85);
 
   /* Minimal spacing/radius scale — new/changed CSS only; existing screens'
@@ -116,7 +115,6 @@
     --lb-spine-shadow: rgba(0, 0, 0, 0.5);
     --lb-verdigris: oklch(70% 0.09 175);
     --lb-verdigris-bg: oklch(28% 0.04 175);
-    --lb-ledger-red: oklch(66% 0.15 25);
     --lb-brass: oklch(58% 0.08 85);
   }
 }

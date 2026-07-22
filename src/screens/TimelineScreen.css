@@ -73,36 +73,21 @@
 }
 
 /* Hidden below 960px: the day-grouping markup always renders (see
-   TimelineScreen.tsx), but only the desktop "ledger" reading uses it —
+   TimelineScreen.tsx), but only the desktop date-header reading uses it —
    mobile stays exactly as it looked before this feature. */
-.timeline-screen__ledger-rule,
 .timeline-screen__date-header {
   display: none;
 }
 
 @media (min-width: 960px) {
   .timeline-screen__list {
-    position: relative;
     gap: 0;
-    padding-left: var(--lb-space-6);
   }
 
   /* Desktop rows are flush "ledger" rows separated by EntryCard's own
      hairline border-bottom, not by gap — so no gap between groups either. */
   .timeline-screen__date-group {
     gap: 0;
-  }
-
-  .timeline-screen__ledger-rule {
-    display: block;
-    position: absolute;
-    top: 0;
-    bottom: 0;
-    left: 58px;
-    width: 1px;
-    background: var(--lb-ledger-red);
-    opacity: 0.55;
-    pointer-events: none;
   }
 
   .timeline-screen__date-group:first-child .timeline-screen__date-header {
