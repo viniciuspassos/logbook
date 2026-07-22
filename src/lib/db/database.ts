@@ -1,3 +1,5 @@
+import { shouldUseMockData } from '../config/mockData.ts'
+
 /**
  * Shared IndexedDB opener for every store under `src/lib/db`. All stores
  * (entries, outbox, entrySyncState) live in a single database so they get
@@ -12,7 +14,20 @@
  * (see database.test.ts's upgrade test) without touching their data.
  */
 
-export const DB_NAME = 'logbook'
+/**
+ * `npm run dev:mocked` opens its own database, distinct from the one
+ * `npm run dev`/production use. Both run against the same origin
+ * (localhost:5173), so without this split, a single `dev:mocked` run seeds
+ * the shared database and its sample entries keep showing up in every plain
+ * `npm run dev` afterwards too — the seeding check in `useEntries`/this
+ * module only guards against seeding a store that already has *any* entries,
+ * it can't tell a previously-seeded sample apart from a real one once it's
+ * been written.
+ */
+export function getDbName(): string {
+  return shouldUseMockData() ? 'logbook-mocked' : 'logbook'
+}
+
 export const DB_VERSION = 2
 
 export const ENTRIES_STORE = 'entries'
@@ -36,7 +51,7 @@ export function openLogbookDb(): Promise<IDBDatabase> {
       reject(new Error('IndexedDB is not available in this environment.'))
       return
     }
-    const request = indexedDB.open(DB_NAME, DB_VERSION)
+    const request = indexedDB.open(getDbName(), DB_VERSION)
     request.onupgradeneeded = () => {
       const db = request.result
       if (!db.objectStoreNames.contains(ENTRIES_STORE)) {
