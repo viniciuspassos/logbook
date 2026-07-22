@@ -94,8 +94,20 @@ what `git commit` itself enforces via `.githooks/`.
    merge and clean up the branch:
    ```
    gh pr checks <pr-number> --watch
-   gh pr merge <pr-number> --squash --delete-branch
+   gh pr merge <pr-number> --squash
+   git push origin --delete <branch-name>
    ```
+   Don't pass `gh pr merge`'s `-d`/`--delete-branch` flag — it deletes
+   the local branch too, which makes `gh` check out the base branch
+   (`main`) in the current working tree first. In a git worktree whose
+   session isn't the one holding `main` checked out, that checkout
+   fails with `fatal: 'main' is already used by worktree at ...` (the
+   merge itself has already succeeded on GitHub by this point — only
+   the local cleanup step errors). Deleting just the remote branch
+   with `git push origin --delete` sidesteps the checkout entirely and
+   works the same whether or not you're in a worktree; there's no
+   flag on `gh pr merge` that deletes only the remote side.
+
    This repo's convention is squash merge — recent history is one
    commit per PR with the PR number in the subject, no merge commits.
    Merge as soon as `static-gates` is green — don't ask the user
@@ -114,6 +126,11 @@ what `git commit` itself enforces via `.githooks/`.
 - If `git push` fails because the branch already has a differently-
   named upstream or diverged, do not force-push without asking —
   surface the conflict instead.
+- If `gh pr merge` errors with `fatal: 'main' is already used by
+  worktree at ...` — that's the local post-merge branch-switch/delete
+  step failing, not the merge itself (already succeeded on GitHub by
+  then). See step 8: don't use `--delete-branch`, delete the remote
+  branch separately instead.
 - Never bypass hooks with `--no-verify` in this flow; if a check
   should legitimately be skipped, that's a judgment call for the
   user, not something to route around silently.
