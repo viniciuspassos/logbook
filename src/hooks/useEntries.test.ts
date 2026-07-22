@@ -1,5 +1,5 @@
 import { act, renderHook, waitFor } from '@testing-library/react'
-import { useEntries } from './useEntries.ts'
+import { mostRecentEntry, useEntries } from './useEntries.ts'
 import {
   getAllEntries,
   isPersistenceSupported,
@@ -230,5 +230,23 @@ describe('useEntries', () => {
       expect(putEntriesMock).not.toHaveBeenCalled()
       expect(result.current.entries.map((e) => e.title)).toEqual(['Restored'])
     })
+  })
+})
+
+describe('mostRecentEntry', () => {
+  it('returns undefined for an empty list', () => {
+    expect(mostRecentEntry([])).toBeUndefined()
+  })
+
+  it('returns the only entry in a single-entry list', () => {
+    const only = makeEntry(1, 'Only')
+    expect(mostRecentEntry([only])).toBe(only)
+  })
+
+  it('returns the entry with the highest id regardless of list order', () => {
+    const older = makeEntry(2, 'Older')
+    const newest = makeEntry(9, 'Newest')
+    const middle = makeEntry(5, 'Middle')
+    expect(mostRecentEntry([older, newest, middle])).toBe(newest)
   })
 })

@@ -7,3 +7,21 @@
   color: #fff;
   flex-shrink: 0;
 }
+
+/* Desktop-only "ink stamp" look: a hand-stamped outline circle instead of a
+   solid fill — mountain-type shapes (triangle/diamond) in the accent color,
+   skydiving's circle shape in verdigris (see isSkydivingShape). */
+@media (min-width: 960px) {
+  .adventure-badge {
+    background: var(--lb-accent-bg);
+    border: 1.5px solid var(--lb-accent);
+    color: var(--lb-accent);
+    transform: rotate(-6deg);
+  }
+
+  .adventure-badge--parachute {
+    border-color: var(--lb-verdigris);
+    color: var(--lb-verdigris);
+    background: var(--lb-verdigris-bg);
+  }
+}

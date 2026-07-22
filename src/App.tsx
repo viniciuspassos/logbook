@@ -1,4 +1,5 @@
 import { TabBar } from './components/TabBar.tsx'
+import { mostRecentEntry } from './hooks/useEntries.ts'
 import { useIsDesktop } from './hooks/useIsDesktop.ts'
 import { useLogbookApp } from './hooks/useLogbookApp.ts'
 import { EntryDetailOverlay } from './screens/EntryDetailOverlay.tsx'
@@ -45,6 +46,9 @@ function App() {
   // so the spine rail — and the ability to switch tabs or close out to a new
   // entry — stays put instead of disappearing while reading.
   const showTabBar = isDesktop || !overlay
+  // Desktop-only: the right-hand page defaults to showing the latest entry
+  // read-only instead of a static hint, whenever no overlay has it covered.
+  const latestEntry = isDesktop ? mostRecentEntry(entries) : undefined
 
   return (
     <div className="app">
@@ -66,7 +70,10 @@ function App() {
 
       {showTabBar && <TabBar active={tab} onSelect={goTab} onNewEntry={openNewEntry} />}
 
-      {!overlay && (
+      {!overlay && latestEntry && (
+        <EntryDetailOverlay entry={latestEntry} embedded />
+      )}
+      {!overlay && !latestEntry && (
         <div className="book-right-page">
           <div className="book-right-page__rings" aria-hidden="true" />
           <p className="book-right-page__hint">Open an entry to read it here</p>

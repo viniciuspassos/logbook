@@ -129,4 +129,69 @@ describe('EntryDetailOverlay', () => {
     const file = new File(['bytes'], 'summit.jpg', { type: 'image/jpeg' })
     await expect(user.upload(screen.getByLabelText('Add photo'), file)).resolves.not.toThrow()
   })
+
+  describe('embedded', () => {
+    it('renders the story and field values without a back button, export actions, attachments, or raw notes', () => {
+      renderOverlay({ embedded: true })
+      expect(screen.getByText(entry.title)).toBeInTheDocument()
+      expect(screen.getByText(entry.story)).toBeInTheDocument()
+      expect(screen.getByText(entry.weather)).toBeInTheDocument()
+      expect(screen.getByText(entry.equipment)).toBeInTheDocument()
+      expect(screen.queryByText('‹')).not.toBeInTheDocument()
+      expect(screen.queryByRole('button', { name: 'Export Markdown' })).not.toBeInTheDocument()
+      expect(screen.queryByRole('button', { name: 'Export PDF' })).not.toBeInTheDocument()
+      expect(screen.queryByText('Attachments')).not.toBeInTheDocument()
+      expect(screen.queryByRole('button', { name: 'Show raw notes' })).not.toBeInTheDocument()
+    })
+  })
+
+  it('renders every field in the one plain grid on mobile, with no stat strip', () => {
+    // jsdom has no matchMedia by default, so useIsDesktop() is false here —
+    // this is the real mobile rendering path, not a stand-in for it.
+    const { container } = renderOverlay()
+    expect(container.querySelector('.entry-detail__stat-strip')).not.toBeInTheDocument()
+    expect(screen.getByText(entry.weather)).toBeInTheDocument()
+    expect(screen.getByText(entry.duration)).toBeInTheDocument()
+    expect(screen.getByText(entry.difficulty)).toBeInTheDocument()
+    expect(screen.getByText(entry.participants)).toBeInTheDocument()
+    expect(screen.getByText(entry.equipment)).toBeInTheDocument()
+  })
+
+  describe('stat strip (desktop only)', () => {
+    const originalMatchMedia = window.matchMedia
+
+    beforeEach(() => {
+      window.matchMedia = jest.fn().mockImplementation((query: string) => ({
+        matches: true,
+        media: query,
+        addEventListener: () => {},
+        removeEventListener: () => {},
+      })) as unknown as typeof window.matchMedia
+    })
+
+    afterEach(() => {
+      if (originalMatchMedia) {
+        window.matchMedia = originalMatchMedia
+      } else {
+        // jsdom has no matchMedia by default; restore that absence.
+        delete (window as { matchMedia?: typeof window.matchMedia }).matchMedia
+      }
+    })
+
+    it('skips the stat strip container when fewer than 2 stat fields have a value', () => {
+      const sparse = { ...entry, weather: '', difficulty: '', participants: '' }
+      const { container } = renderOverlay({ entry: sparse })
+      expect(container.querySelector('.entry-detail__stat-strip')).not.toBeInTheDocument()
+      // The one remaining populated stat field (duration) still shows up,
+      // just in the plain field grid rather than the strip.
+      expect(screen.getByText(sparse.duration)).toBeInTheDocument()
+    })
+
+    it('renders the stat strip once at least 2 stat fields have a value', () => {
+      const { container } = renderOverlay()
+      expect(container.querySelector('.entry-detail__stat-strip')).toBeInTheDocument()
+      // The remaining (non-strip) fields still render in the plain grid below.
+      expect(screen.getByText(entry.equipment)).toBeInTheDocument()
+    })
+  })
 })

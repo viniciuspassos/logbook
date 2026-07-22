@@ -9,6 +9,25 @@
   box-shadow: var(--lb-card-shadow);
 }
 
+/* Desktop "ledger row" material: flush hairline-divided rows instead of
+   individually bordered/shadowed cards, so this list reads as one running
+   page — shared by TimelineScreen's list and SearchScreen's results, since
+   both just render this component. */
+@media (min-width: 960px) {
+  .entry-card {
+    gap: var(--lb-space-3);
+    padding: var(--lb-space-3) 0;
+    border: none;
+    border-bottom: 1px solid var(--lb-border);
+    border-radius: 0;
+    background: none;
+    box-shadow: none;
+  }
+  .entry-card:last-child {
+    border-bottom: none;
+  }
+}
+
 .entry-card__thumb {
   position: relative;
   width: 60px;

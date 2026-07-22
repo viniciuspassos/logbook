@@ -90,6 +90,12 @@ export function TabBar({ active, onSelect, onNewEntry }: TabBarProps) {
 
   return (
     <nav className="tab-bar" aria-label="Primary">
+      {/* Desktop-only rail wordmark, a single glyph in the display face — purely
+       *  decorative, hidden on mobile via CSS (TabBar.css), so it needs no
+       *  accessible name of its own. */}
+      <span className="tab-bar__mark" aria-hidden="true">
+        L
+      </span>
       {renderTab(timeline)}
       {renderTab(search)}
 
