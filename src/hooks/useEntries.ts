@@ -14,6 +14,18 @@ function byNewest(entries: Entry[]): Entry[] {
 }
 
 /**
+ * The most recently created entry, or `undefined` for an empty list. Entries
+ * have no separate `createdAt` timestamp field (see `types/entry.ts`); `id`
+ * is assigned as `max(existing) + 1` when an entry is saved
+ * (`useLogbookApp.saveEntry`), so the highest id is always the newest entry
+ * regardless of the list's own order. Used to default-open the desktop
+ * right-hand page to the latest entry instead of a static hint (App.tsx).
+ */
+export function mostRecentEntry(entries: Entry[]): Entry | undefined {
+  return byNewest(entries)[0]
+}
+
+/**
  * Owns the persisted entries list. On mount it loads from IndexedDB, seeding
  * the store from `seed` on first run; when persistence is unavailable it falls
  * back to an in-memory copy of the seed so the app still works. `addEntry`

@@ -1,4 +1,6 @@
 import { ShapeGlyph } from './ShapeGlyph.tsx'
+import { isSkydivingShape } from './adventureShape.ts'
+import { cx } from '../lib/cx.ts'
 import type { AdventureShape } from '../types/entry.ts'
 import './AdventureBadge.css'
 
@@ -12,7 +14,7 @@ const SIZE = 22
 export function AdventureBadge({ shape }: AdventureBadgeProps) {
   return (
     <div
-      className="adventure-badge"
+      className={cx('adventure-badge', isSkydivingShape(shape) && 'adventure-badge--parachute')}
       style={{ width: SIZE, height: SIZE, borderRadius: SIZE * (7 / 22) }}
     >
       <ShapeGlyph shape={shape} size={SIZE * 0.4} />

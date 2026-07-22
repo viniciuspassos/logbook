@@ -115,6 +115,10 @@
   background: #fff;
 }
 
+.tab-bar__mark {
+  display: none;
+}
+
 /* Above --lb-desktop the bottom bar becomes the book's spine: a vertical
    leather-toned rail down the left edge, running the full height of the
    two open pages. Same component, same click handlers — layout only. */
@@ -123,17 +127,51 @@
     order: 1;
     flex: 0 0 84px;
     flex-direction: column;
-    align-items: center;
+    /* Buttons stretch to the rail's full width (rather than the previous
+       align-items: center) so each button's own left edge — where the active
+       accent block below is anchored — actually sits flush with the rail's
+       real left edge instead of floating in the middle of a centered column.
+       .tab-bar__add keeps its own fixed size + centering below. */
+    align-items: stretch;
     justify-content: flex-start;
     gap: 30px;
-    padding: 36px 0;
+    padding: var(--lb-space-6) 0 var(--lb-space-4);
     border-top: none;
-    border-radius: 24px 0 0 24px;
+    border-radius: var(--lb-radius-lg) 0 0 var(--lb-radius-lg);
     background: var(--lb-rail-bg);
   }
 
+  .tab-bar__mark {
+    display: block;
+    margin-bottom: var(--lb-space-2);
+    text-align: center;
+    font-family: var(--display);
+    font-weight: 900;
+    font-size: 22px;
+    color: var(--lb-brass);
+    line-height: 1;
+  }
+
   .tab-bar__button {
+    position: relative;
     width: auto;
+    padding: var(--lb-space-2) var(--lb-space-3);
+    z-index: 1;
+  }
+
+  /* The active tab's page-edge tab divider: an accent block bleeding off the
+   *  rail's left edge, behind the icon + label. `aria-current="page"` is
+   *  already set by TabButton based on `isActive`, so this is styling only —
+   *  no new prop/state needed on TabBar itself. */
+  .tab-bar__button[aria-current='page']::before {
+    content: '';
+    position: absolute;
+    inset: 2px 0;
+    left: 0;
+    width: 20px;
+    background: var(--lb-accent);
+    border-radius: 0 5px 5px 0;
+    z-index: -1;
   }
 
   .tab-bar__label {
@@ -165,6 +203,9 @@
   }
 
   .tab-bar__add {
+    /* Keep its own fixed circle centered — align-items: stretch above is for
+       the tab buttons' bleed-to-the-edge accent, not this fixed-size button. */
+    align-self: center;
     margin-top: 0;
     border-color: var(--lb-rail-bg);
   }

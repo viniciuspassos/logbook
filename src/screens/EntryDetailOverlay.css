@@ -48,6 +48,63 @@
   .entry-detail__body {
     padding: 0 44px 40px;
   }
+
+  /* embedded's right-hand page has no OverlayHeader to supply top spacing. */
+  .entry-detail--embedded .entry-detail__body {
+    padding-top: var(--lb-space-4);
+  }
+
+  /* The "instrument panel" look: one bordered/radiused strip with hairline
+     dividers between cells, instead of four separate boxes. Only ever
+     rendered at this breakpoint (EntryDetailOverlay.tsx's showStatStrip),
+     so these rules own the whole look — there's no mobile counterpart. */
+  .entry-detail__stat-strip {
+    display: grid;
+    grid-template-columns: repeat(4, 1fr);
+    gap: 0;
+    border: 1px solid var(--lb-border);
+    border-radius: var(--lb-radius-md);
+    overflow: hidden;
+    margin-bottom: var(--lb-space-4);
+  }
+
+  .entry-detail__stat-cell {
+    border: none;
+    border-right: 1px solid var(--lb-border);
+    border-radius: 0;
+    padding: var(--lb-space-3) var(--lb-space-3);
+  }
+  .entry-detail__stat-cell:last-child {
+    border-right: none;
+  }
+
+  .entry-detail__stat-label {
+    font-family: var(--mono);
+    font-size: 10px;
+    letter-spacing: 0.04em;
+    text-transform: uppercase;
+    color: var(--lb-muted);
+  }
+
+  .entry-detail__stat-value {
+    font-family: var(--mono);
+    font-variant-numeric: tabular-nums;
+    font-weight: 600;
+    font-size: 16px;
+    margin-top: 4px;
+    color: var(--lb-ink);
+  }
+
+  /* Drop cap on the story's first paragraph only. */
+  .entry-detail__story::first-letter {
+    font-family: var(--display);
+    font-weight: 600;
+    font-size: 2.6em;
+    line-height: 0.85;
+    float: left;
+    margin: 0.04em 0.08em 0 0;
+    color: var(--lb-accent);
+  }
 }
 
 .entry-detail__subtitle {

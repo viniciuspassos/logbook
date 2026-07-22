@@ -32,7 +32,7 @@
     flex-direction: row;
     align-items: stretch;
     max-width: none;
-    width: min(1200px, 94vw);
+    width: min(1760px, 96vw);
     height: calc(100dvh - 96px);
     margin: 48px auto;
     border-radius: 24px;
@@ -46,7 +46,10 @@
   .app::before {
     /* The rail (flex 0 0 84px) sits left of the two equal-width pages, so
        the true seam between them is 42px (half the rail's width) right of
-       .app's own horizontal center, not at a flat 50%. */
+       .app's own horizontal center, not at a flat 50%. That offset is a
+       function of the rail's own fixed width, not .app's total width — both
+       pages are flex 1 1 0, so widening .app (1200px -> 1760px) grows them
+       equally and the seam stays exactly 42px off center either way. */
     content: '';
     position: absolute;
     left: calc(50% + 42px);

@@ -1,6 +1,7 @@
 import { render, screen } from '@testing-library/react'
 import userEvent from '@testing-library/user-event'
 import { TimelineScreen } from './TimelineScreen.tsx'
+import { groupEntriesByDate } from './timelineGrouping.ts'
 import { entries } from '../data/entries.ts'
 
 describe('TimelineScreen', () => {
@@ -89,6 +90,24 @@ describe('TimelineScreen', () => {
     )
     await user.click(screen.getByRole('button', { name: entries[0].title }))
     expect(onOpenEntry).toHaveBeenCalledWith(entries[0].id)
+  })
+
+  it('renders a date header per group and a ledger margin rule in list view', () => {
+    const { container } = render(
+      <TimelineScreen
+        entries={entries}
+        timelineView="list"
+        onChangeView={() => {}}
+        onOpenEntry={() => {}}
+      />,
+    )
+    expect(container.querySelector('.timeline-screen__ledger-rule')).toBeInTheDocument()
+    // Asserted against groupEntriesByDate's own consecutive-run semantics,
+    // not just unique date count — those only coincide when every date in
+    // the fixture is distinct and pre-sorted.
+    expect(container.querySelectorAll('.timeline-screen__date-header')).toHaveLength(
+      groupEntriesByDate(entries).length,
+    )
   })
 
   it('opens an entry when its filmstrip card is clicked', async () => {

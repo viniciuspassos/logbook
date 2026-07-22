@@ -4,6 +4,7 @@ import { ShapeGlyph } from '../components/ShapeGlyph.tsx'
 import { cx } from '../lib/cx.ts'
 import type { Entry } from '../types/entry.ts'
 import type { TimelineView } from '../hooks/useNavigation.ts'
+import { groupEntriesByDate } from './timelineGrouping.ts'
 import './TimelineScreen.css'
 
 interface TimelineScreenProps {
@@ -50,8 +51,18 @@ export function TimelineScreen({
 
       {timelineView === 'list' ? (
         <div className="timeline-screen__list">
-          {entries.map((entry) => (
-            <EntryCard key={entry.id} entry={entry} onOpen={() => onOpenEntry(entry.id)} />
+          {/* Desktop-only ledger margin rule — hidden below 960px
+           *  (TimelineScreen.css). Grouping always runs (it's a cheap pure
+           *  function) so the date headers it feeds are equally available;
+           *  they're just visually hidden on mobile too. */}
+          <div className="timeline-screen__ledger-rule" aria-hidden="true" />
+          {groupEntriesByDate(entries).map((group, index) => (
+            <div key={`${group.date}-${index}`} className="timeline-screen__date-group">
+              <div className="timeline-screen__date-header">{group.date}</div>
+              {group.entries.map((entry) => (
+                <EntryCard key={entry.id} entry={entry} onOpen={() => onOpenEntry(entry.id)} />
+              ))}
+            </div>
           ))}
         </div>
       ) : (

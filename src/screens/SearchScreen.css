@@ -64,6 +64,17 @@
   gap: 12px;
 }
 
+/* Reuses the same "ledger row" material as TimelineScreen's list — both just
+   render EntryCard, so restyling that component's own desktop CSS already
+   makes these rows match; this only aligns the container's rhythm (no inter-
+   row gap, since EntryCard's hairline divider supplies it) so Search and
+   Timeline read as one continuous page, not two different systems. */
+@media (min-width: 960px) {
+  .search-screen__list {
+    gap: 0;
+  }
+}
+
 .search-screen__empty {
   font-size: 13.5px;
   color: var(--lb-muted);

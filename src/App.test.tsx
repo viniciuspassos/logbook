@@ -77,4 +77,35 @@ describe('App', () => {
     // Appears as both the new card's title and its derived excerpt.
     expect(screen.getAllByText('Sunset trail run today').length).toBeGreaterThan(0)
   })
+
+  describe('desktop right-hand page', () => {
+    const originalMatchMedia = window.matchMedia
+
+    beforeEach(() => {
+      window.matchMedia = jest.fn().mockImplementation((query: string) => ({
+        matches: true,
+        media: query,
+        addEventListener: () => {},
+        removeEventListener: () => {},
+      })) as unknown as typeof window.matchMedia
+    })
+
+    afterEach(() => {
+      if (originalMatchMedia) {
+        window.matchMedia = originalMatchMedia
+      } else {
+        // jsdom has no matchMedia by default; restore that absence.
+        delete (window as { matchMedia?: typeof window.matchMedia }).matchMedia
+      }
+    })
+
+    it('shows the most recently created entry read-only instead of the static hint', () => {
+      render(<App />)
+      const mostRecent = [...entries].sort((a, b) => b.id - a.id)[0]
+      expect(screen.getByText(mostRecent.story)).toBeInTheDocument()
+      // Read-only: no back button, since it isn't a modal over anything.
+      expect(screen.queryByText('‹')).not.toBeInTheDocument()
+      expect(screen.queryByText('Open an entry to read it here')).not.toBeInTheDocument()
+    })
+  })
 })
