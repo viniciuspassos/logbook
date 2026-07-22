@@ -53,6 +53,29 @@ This also runs the `prepare` script, which points git at the repo's hooks
 
 For a typical loop: `npm run dev` to work, then `npm test && npm run build` before committing.
 
+### Running the backend (required for photo attachments)
+
+`npm run dev` alone runs Logbook entirely against the browser's own IndexedDB — text entries are
+created, edited, and read with zero extra setup. Photo attachments are the exception: they have
+**no local durable store of their own**, only a transient offline queue
+(`src/lib/sync/outboxQueue.ts`) that holds each photo until the backend confirms the upload. With
+no backend reachable, an added photo stays queued indefinitely and is never actually saved
+anywhere — it's only as durable as that IndexedDB queue, which isn't meant to be permanent
+storage.
+
+To make photo attachments actually persist, run the backend alongside the frontend:
+
+```bash
+docker compose up --build   # from the repo root: Postgres + the NestJS backend on :3000
+npm run dev                 # in another terminal — vite.config.ts proxies /api -> localhost:3000
+```
+
+See [`docs/INFRASTRUCTURE.md`](docs/INFRASTRUCTURE.md) → "Optional local backend infra" for the
+full Compose setup and → "Backend authentication" for `AUTH_PASSWORD_HASH`. One current gap: no
+login screen is wired up in the app yet (see [Product vision](#product-vision)), so even with the
+backend running, uploads 401 until a session cookie is established out-of-band — this is tracked,
+not yet closed.
+
 ---
 
 ## Browser & AI requirements
