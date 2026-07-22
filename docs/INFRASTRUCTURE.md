@@ -7,8 +7,11 @@ hooks, CI, and how the production build is produced. For the app's own architect
 ## Local dev environment
 
 - **Node 20+** (developed on Node 22, CI runs Node 24), **npm 10+**.
-- No backend, no database service, no environment variables/secrets are needed to run the app
-  locally — it's a static Vite app that persists to the browser's own IndexedDB.
+- No backend, no database service, no environment variables/secrets are needed to run the
+  frontend or persist entry text locally — it's a static Vite app that persists entries to the
+  browser's own IndexedDB. Photo attachments are the exception: they have no local durable store
+  of their own (only a transient offline-outbox queue), so actually saving a photo requires the
+  backend below to be running and reachable — see `README.md` → "Running the backend".
 - `npm install` runs the `prepare` script (`git config core.hooksPath .githooks`), which points
   git at this repo's hooks instead of the default `.git/hooks`. This is what makes the pre-commit
   gate active on a fresh clone without any manual step.
@@ -23,14 +26,18 @@ hooks, CI, and how the production build is produced. For the app's own architect
   requires `server/`'s dependencies to be installed, Docker to be installed, or any backend
   container to be running. This is the same "must never block" philosophy `CLAUDE.md` already
   applies to on-device AI availability, extended to the backend: **the backend is strictly
-  additive infrastructure, not a dependency of the frontend.**
+  additive infrastructure for running, building, and testing the frontend.** It is not additive
+  for photo attachments, though — the backend is the only durable store they have (see the note
+  above); running without it means added photos never get past the local offline queue.
 
 ## Optional local backend infra (Docker Compose)
 
 `docker-compose.yml` at the repo root brings up `server/`'s runtime dependencies for local
 development — Postgres and the backend service itself — behind `docker compose`. This is
-opt-in tooling for anyone working on `server/`; it changes nothing about how the frontend is run
-or tested, and a contributor who never touches `server/` never needs Docker installed at all.
+opt-in tooling for anyone working on `server/`, or who wants photo attachments to actually
+persist; it changes nothing about how the frontend itself is run or tested (entries still work
+with zero setup), and a contributor who never touches `server/` and doesn't care about photo
+durability never needs Docker installed at all.
 
 ```
 docker compose up --build     # start db + backend (db must report healthy before backend starts)
