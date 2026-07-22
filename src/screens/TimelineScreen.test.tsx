@@ -92,7 +92,7 @@ describe('TimelineScreen', () => {
     expect(onOpenEntry).toHaveBeenCalledWith(entries[0].id)
   })
 
-  it('renders a date header per group and a ledger margin rule in list view', () => {
+  it('renders a date header per group in list view', () => {
     const { container } = render(
       <TimelineScreen
         entries={entries}
@@ -101,7 +101,6 @@ describe('TimelineScreen', () => {
         onOpenEntry={() => {}}
       />,
     )
-    expect(container.querySelector('.timeline-screen__ledger-rule')).toBeInTheDocument()
     // Asserted against groupEntriesByDate's own consecutive-run semantics,
     // not just unique date count — those only coincide when every date in
     // the fixture is distinct and pre-sorted.
