@@ -84,7 +84,10 @@
   .timeline-screen__list {
     position: relative;
     gap: 0;
-    padding-left: var(--lb-space-6);
+    /* Clears the ledger rule (left: 58px below) with a 16px gutter, so the
+       rule reads as a margin line beside the date headers/cards instead of
+       cutting through their text. */
+    padding-left: 74px;
   }
 
   /* Desktop rows are flush "ledger" rows separated by EntryCard's own
