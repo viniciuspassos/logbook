@@ -3,6 +3,7 @@ import userEvent from '@testing-library/user-event'
 import { SettingsScreen } from './SettingsScreen.tsx'
 import { getAiCapabilities } from '../lib/ai/availability.ts'
 import type { ExportActions } from '../hooks/useExportActions.ts'
+import type { UseAuthResult } from '../hooks/useAuth.ts'
 
 jest.mock('../lib/ai/availability.ts', () => {
   const actual = jest.requireActual('../lib/ai/availability.ts')
@@ -34,15 +35,33 @@ function makeExports(overrides: Partial<ExportActions> = {}): ExportActions {
   }
 }
 
+function makeAuth(overrides: Partial<UseAuthResult> = {}): UseAuthResult {
+  return {
+    state: 'unknown',
+    pending: false,
+    error: null,
+    login: jest.fn().mockResolvedValue(true),
+    logout: jest.fn(),
+    noteAuthRequired: jest.fn(),
+    noteAuthConfirmed: jest.fn(),
+    clearError: jest.fn(),
+    ...overrides,
+  }
+}
+
 /** Renders and flushes the AI-capability check's microtask before returning,
  * so every caller sees its settled effect without an act() warning. */
 async function renderScreen(
-  { entryCount = 5, ...overrides }: Partial<ExportActions> & { entryCount?: number } = {},
+  { entryCount = 5, auth: authOverrides, ...overrides }: Partial<ExportActions> & {
+    entryCount?: number
+    auth?: Partial<UseAuthResult>
+  } = {},
 ) {
   const exports = makeExports(overrides)
-  render(<SettingsScreen entryCount={entryCount} exports={exports} />)
+  const auth = makeAuth(authOverrides)
+  render(<SettingsScreen entryCount={entryCount} exports={exports} auth={auth} />)
   await act(async () => {})
-  return exports
+  return { exports, auth }
 }
 
 describe('SettingsScreen', () => {
@@ -72,7 +91,7 @@ describe('SettingsScreen', () => {
     ['Export as PDF', 'exportLogbookPdf'],
   ] as const)('runs %s', async (label, action) => {
     const user = userEvent.setup()
-    const exports = await renderScreen()
+    const { exports } = await renderScreen()
     await user.click(screen.getByRole('button', { name: new RegExp(label) }))
     expect(exports[action]).toHaveBeenCalledTimes(1)
   })
@@ -117,7 +136,7 @@ describe('SettingsScreen', () => {
     // Deliberately unawaited: assert the pre-resolution render, before the
     // capability check's microtask has had a chance to settle.
     getAiCapabilitiesMock.mockReturnValue(new Promise(() => {}))
-    render(<SettingsScreen entryCount={5} exports={makeExports()} />)
+    render(<SettingsScreen entryCount={5} exports={makeExports()} auth={makeAuth()} />)
     expect(screen.getByText('Checking…')).toBeInTheDocument()
   })
 
@@ -159,5 +178,37 @@ describe('SettingsScreen', () => {
     await renderScreen()
     expect(screen.getByText('Version')).toBeInTheDocument()
     expect(screen.getByText('1.0.0')).toBeInTheDocument()
+  })
+
+  it('renders an Account section offering a sign-in form when not signed in', async () => {
+    await renderScreen({ auth: { state: 'unknown' } })
+    expect(screen.getByText('Account')).toBeInTheDocument()
+    expect(screen.getByLabelText(/password/i)).toBeInTheDocument()
+  })
+
+  it('renders the Account section as signed-in with a sign-out control', async () => {
+    await renderScreen({ auth: { state: 'signedIn' } })
+    expect(screen.getByText(/signed in/i)).toBeInTheDocument()
+    expect(screen.getByRole('button', { name: /sign out/i })).toBeInTheDocument()
+  })
+
+  it('wires a password submission through to auth.login', async () => {
+    const user = userEvent.setup()
+    const login = jest.fn().mockResolvedValue(true)
+    const { auth } = await renderScreen({ auth: { state: 'unknown', login } })
+
+    await user.type(screen.getByLabelText(/password/i), 'hunter2')
+    await user.click(screen.getByRole('button', { name: /sign in/i }))
+
+    expect(auth.login).toHaveBeenCalledWith('hunter2')
+  })
+
+  it('wires the sign-out button through to auth.logout', async () => {
+    const user = userEvent.setup()
+    const { auth } = await renderScreen({ auth: { state: 'signedIn' } })
+
+    await user.click(screen.getByRole('button', { name: /sign out/i }))
+
+    expect(auth.logout).toHaveBeenCalledTimes(1)
   })
 })

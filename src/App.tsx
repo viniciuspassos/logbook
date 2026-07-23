@@ -38,6 +38,7 @@ function App() {
     saveEntry,
     exportActions,
     attachments,
+    auth,
   } = useLogbookApp()
   const isDesktop = useIsDesktop()
   // Below the desktop breakpoint an overlay is a full-screen cover, so the
@@ -64,7 +65,7 @@ function App() {
         {tab === 'search' && <SearchScreen entries={entries} onOpenEntry={openEntry} />}
         {tab === 'stats' && <StatsScreen entries={entries} />}
         {tab === 'settings' && (
-          <SettingsScreen entryCount={entries.length} exports={exportActions} />
+          <SettingsScreen entryCount={entries.length} exports={exportActions} auth={auth} />
         )}
       </div>
 

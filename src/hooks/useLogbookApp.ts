@@ -1,6 +1,7 @@
 import { entries as seedEntries } from '../data/entries.ts'
 import { buildEntryFromDraft } from '../lib/buildEntry.ts'
 import { shouldUseMockData } from '../lib/config/mockData.ts'
+import { useAuth } from './useAuth.ts'
 import { useEntries } from './useEntries.ts'
 import { useEntryAttachments } from './useEntryAttachments.ts'
 import { useExportActions } from './useExportActions.ts'
@@ -11,24 +12,40 @@ import { useSyncOutbox } from './useSyncOutbox.ts'
 export type { Tab, Overlay, TimelineView } from './useNavigation.ts'
 export type { NewEntryStep } from './useNewEntryFlow.ts'
 export type { AttachmentPreview, AttachmentStatus } from './useEntryAttachments.ts'
+export type { AuthState, UseAuthResult } from './useAuth.ts'
 
 /**
  * Top-level app state: composes navigation, the persisted entries list, the
- * new-entry AI flow, the export/backup actions, and (#26) the background
- * server-sync outbox + the attachment gallery for whichever entry is open.
+ * new-entry AI flow, the export/backup actions, (#26) the background
+ * server-sync outbox + the attachment gallery for whichever entry is open,
+ * and (#57) sign-in state for that backend.
  * Entries load from (and write through to) IndexedDB via `useEntries`, which
  * stays the sole local source of truth; `useSyncOutbox` layers an additive,
  * best-effort server sync on top without this hook knowing outbox internals.
  * `src/data/entries.ts`'s sample adventures only seed an empty store under
  * `npm run dev:mocked` (`shouldUseMockData`) — a normal run starts from a
  * real, empty timeline instead.
+ *
+ * `useAuth` owns sign-in state; this hook only wires its `noteAuthRequired`/
+ * `noteAuthConfirmed` callbacks into the two places that actually attempt a
+ * sync (the outbox drain and the attachment upload flow) — neither of those
+ * hooks needs to know auth exists beyond "something to call when a drain
+ * finds out". Signing in/out is never a gate on entry capture: it's surfaced
+ * only in Settings (see SettingsScreen's Account section).
  */
 export function useLogbookApp() {
   const { entries, addEntry, replaceEntries } = useEntries(shouldUseMockData() ? seedEntries : [])
   const nav = useNavigation(entries)
   const flow = useNewEntryFlow()
-  const syncOutbox = useSyncOutbox()
-  const attachments = useEntryAttachments(nav.selectedEntry)
+  const auth = useAuth()
+  const syncOutbox = useSyncOutbox({
+    onAuthRequired: auth.noteAuthRequired,
+    onAuthConfirmed: auth.noteAuthConfirmed,
+  })
+  const attachments = useEntryAttachments(nav.selectedEntry, {
+    onAuthRequired: auth.noteAuthRequired,
+    onAuthConfirmed: auth.noteAuthConfirmed,
+  })
   // Restoring a backup replaces the whole list, so a stale detail overlay
   // could be pointing at an entry that no longer exists — close it first.
   const exportActions = useExportActions(entries, {
@@ -89,5 +106,7 @@ export function useLogbookApp() {
     exportActions,
     // attachments (#26) — the gallery for whichever entry `selectedEntry` is
     attachments,
+    // sign-in state (#57) for the sync backend
+    auth,
   }
 }
