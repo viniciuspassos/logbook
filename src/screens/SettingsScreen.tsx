@@ -1,4 +1,6 @@
 import { useEffect, useState, type ReactNode } from 'react'
+import { AccountSettings } from '../components/AccountSettings.tsx'
+import type { UseAuthResult } from '../hooks/useAuth.ts'
 import type { ExportActions } from '../hooks/useExportActions.ts'
 import {
   describeAiProcessingStatus,
@@ -105,14 +107,27 @@ function SettingsGroup({ label, children }: { label: string; children: ReactNode
 interface SettingsScreenProps {
   entryCount: number
   exports: ExportActions
+  auth: UseAuthResult
 }
 
-export function SettingsScreen({ entryCount, exports }: SettingsScreenProps) {
+export function SettingsScreen({ entryCount, exports, auth }: SettingsScreenProps) {
   const { status, busy } = exports
 
   return (
     <div className="settings-screen">
       <h1 className="settings-screen__title">Settings</h1>
+
+      {/* Contextual, never a startup gate — see AccountSettings.tsx's doc
+          comment and CLAUDE.md's Browser AI/sync degradation rule. */}
+      <SettingsGroup label="Account">
+        <AccountSettings
+          state={auth.state}
+          pending={auth.pending}
+          error={auth.error}
+          onLogin={auth.login}
+          onLogout={auth.logout}
+        />
+      </SettingsGroup>
 
       <SettingsGroup label="Data">
         <SettingsRow label="Local storage" value={entryCountLabel(entryCount)} />

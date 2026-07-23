@@ -154,6 +154,52 @@ describe('useEntryAttachments', () => {
     expect(result.current.busy).toBe(false)
   })
 
+  it('shows a "sign in" hint (not the generic offline message) when the drain finds the session is gone', async () => {
+    drainMock.mockResolvedValue({ processed: 0, stoppedReason: 'auth', error: 'Authentication required.' })
+    const onAuthRequired = jest.fn()
+    const { result } = renderHook(() => useEntryAttachments(makeEntry(1), { onAuthRequired }))
+    await waitFor(() => expect(sourcesMock).toHaveBeenCalled())
+
+    act(() => result.current.addPhoto(fakeFile('summit.jpg')))
+
+    await waitFor(() =>
+      expect(result.current.status).toEqual({
+        tone: 'info',
+        message: "Photo queued — sign in to sync it.",
+      }),
+    )
+    expect(onAuthRequired).toHaveBeenCalledTimes(1)
+  })
+
+  it('still shows the generic offline message for a non-auth reason not to sync', async () => {
+    drainMock.mockResolvedValue({ processed: 0, stoppedReason: 'unreachable' })
+    const onAuthRequired = jest.fn()
+    const { result } = renderHook(() => useEntryAttachments(makeEntry(1), { onAuthRequired }))
+    await waitFor(() => expect(sourcesMock).toHaveBeenCalled())
+
+    act(() => result.current.addPhoto(fakeFile('summit.jpg')))
+
+    await waitFor(() =>
+      expect(result.current.status).toEqual({
+        tone: 'info',
+        message: "Photo queued — it'll upload once you're back online.",
+      }),
+    )
+    expect(onAuthRequired).not.toHaveBeenCalled()
+  })
+
+  it('reports the session is confirmed valid once a photo actually uploads', async () => {
+    drainMock.mockResolvedValue({ processed: 1, stoppedReason: 'empty' })
+    const onAuthConfirmed = jest.fn()
+    const { result } = renderHook(() => useEntryAttachments(makeEntry(1), { onAuthConfirmed }))
+    await waitFor(() => expect(sourcesMock).toHaveBeenCalled())
+
+    act(() => result.current.addPhoto(fakeFile('summit.jpg')))
+
+    await waitFor(() => expect(result.current.status?.message).toBe('Photo uploaded.'))
+    expect(onAuthConfirmed).toHaveBeenCalledTimes(1)
+  })
+
   it('shows an error status when queuing itself fails', async () => {
     queueUploadMock.mockRejectedValue(new Error('boom'))
     const { result } = renderHook(() => useEntryAttachments(makeEntry(1)))

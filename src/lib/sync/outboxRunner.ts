@@ -3,6 +3,7 @@ import { getAllRecords, recordAttemptFailure, removeRecord } from '../db/outboxS
 import { deleteSyncState, getSyncState, putSyncState } from '../db/syncStateStore.ts'
 import { uploadAttachment } from './attachmentsApi.ts'
 import { createEntry, deleteEntry, updateEntry } from './entriesApi.ts'
+import { SyncAuthError } from './errors.ts'
 import { isBackendReachable } from './health.ts'
 import type {
   CreateEntryOperation,
@@ -34,7 +35,13 @@ import type {
 
 export interface DrainSummary {
   processed: number
-  stoppedReason: 'unsupported' | 'unreachable' | 'empty' | 'error' | 'aborted'
+  /**
+   * `'auth'` is its own reason (not folded into the generic `'error'`) so
+   * callers can tell "the session cookie is missing/expired" apart from any
+   * other failure and show a "sign in" message instead of the generic
+   * "queued, will retry" one — see useEntryAttachments.ts and useAuth.ts.
+   */
+  stoppedReason: 'unsupported' | 'unreachable' | 'empty' | 'error' | 'auth' | 'aborted'
   error?: string
 }
 
@@ -106,7 +113,8 @@ async function runDrain(signal?: AbortSignal): Promise<DrainSummary> {
       } catch (error) {
         const message = errorMessage(error)
         await recordAttemptFailure(record.queueId, message).catch(() => {})
-        return { processed, stoppedReason: 'error', error: message }
+        const stoppedReason = error instanceof SyncAuthError ? 'auth' : 'error'
+        return { processed, stoppedReason, error: message }
       }
     }
     return { processed, stoppedReason: 'empty' }

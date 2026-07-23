@@ -18,6 +18,13 @@ export interface AttachmentStatus {
   message: string
 }
 
+export interface UseEntryAttachmentsOptions {
+  /** The upload's drain discovered the session is gone (a 401/403). */
+  onAuthRequired?: () => void
+  /** The upload's drain actually got a mutating call through. */
+  onAuthConfirmed?: () => void
+}
+
 /**
  * Owns the attachment gallery for whichever entry is currently open in
  * EntryDetailOverlay: the merged list of server-confirmed + locally-queued
@@ -33,12 +40,16 @@ export interface AttachmentStatus {
  * lifecycle (create per pending file, revoke on the next load/unmount) is
  * kept local to this hook since it's tied 1:1 to this hook's own state.
  */
-export function useEntryAttachments(entry: Entry | null): {
+export function useEntryAttachments(
+  entry: Entry | null,
+  options: UseEntryAttachmentsOptions = {},
+): {
   attachments: AttachmentPreview[]
   busy: boolean
   status: AttachmentStatus | null
   addPhoto: (file: File) => void
 } {
+  const { onAuthRequired, onAuthConfirmed } = options
   const [attachments, setAttachments] = useState<AttachmentPreview[]>([])
   const [busy, setBusy] = useState(false)
   const [status, setStatus] = useState<AttachmentStatus | null>(null)
@@ -136,6 +147,15 @@ export function useEntryAttachments(entry: Entry | null): {
             await load(entry)
             if (isStale()) return
             setStatus({ tone: 'info', message: 'Photo uploaded.' })
+            onAuthConfirmed?.()
+          } else if (summary.stoppedReason === 'auth') {
+            // Distinguishes "you're not signed in" from "you're offline" —
+            // the generic offline message below would otherwise be shown for
+            // both, which is what prompted this hook's auth-awareness (see
+            // the bug this fixes: a reachable-but-unauthenticated backend
+            // looked identical to no connectivity at all).
+            setStatus({ tone: 'info', message: 'Photo queued — sign in to sync it.' })
+            onAuthRequired?.()
           } else {
             setStatus({ tone: 'info', message: "Photo queued — it'll upload once you're back online." })
           }
@@ -146,7 +166,7 @@ export function useEntryAttachments(entry: Entry | null): {
         }
       })()
     },
-    [entry, load],
+    [entry, load, onAuthRequired, onAuthConfirmed],
   )
 
   return { attachments, busy, status, addPhoto }

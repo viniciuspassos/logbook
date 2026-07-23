@@ -1,0 +1,78 @@
+.account-settings {
+  padding: 13px 14px;
+}
+
+.account-settings__row {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+}
+
+.account-settings__row-label {
+  font-size: 14px;
+  color: var(--lb-ink);
+}
+
+.account-settings__form {
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+}
+
+.account-settings__label {
+  font-size: 12px;
+  color: var(--lb-muted);
+}
+
+.account-settings__field-row {
+  display: flex;
+  gap: 8px;
+}
+
+.account-settings__input {
+  flex: 1;
+  box-sizing: border-box;
+  border: 1px solid var(--lb-border);
+  border-radius: var(--lb-radius-sm);
+  padding: 8px 10px;
+  font-size: 14px;
+  font-family: inherit;
+  color: var(--lb-ink);
+  background: var(--lb-bg);
+}
+.account-settings__input:disabled {
+  opacity: 0.6;
+}
+
+.account-settings__button {
+  border: none;
+  border-radius: var(--lb-radius-sm);
+  padding: 8px 14px;
+  font-size: 13px;
+  font-weight: 600;
+  font-family: inherit;
+  color: var(--lb-bg);
+  background: var(--lb-accent);
+  cursor: pointer;
+  white-space: nowrap;
+}
+.account-settings__button:disabled {
+  cursor: default;
+  opacity: 0.5;
+}
+
+.account-settings__button--secondary {
+  color: var(--lb-accent-ink);
+  background: var(--lb-accent-bg);
+}
+
+/* Reserves the line's height so an error message doesn't shift the group. */
+.account-settings__status {
+  min-height: 16px;
+  margin-top: 8px;
+}
+
+.account-settings__status-text {
+  font-size: 12px;
+  color: var(--lb-danger);
+}

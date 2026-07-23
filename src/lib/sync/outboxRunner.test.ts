@@ -5,6 +5,7 @@ import { isPersistenceSupported } from '../db/database.ts'
 import { isBackendReachable } from './health.ts'
 import { createEntry, deleteEntry, updateEntry } from './entriesApi.ts'
 import { uploadAttachment } from './attachmentsApi.ts'
+import { SyncAuthError } from './errors.ts'
 import type { OutboxRecord } from '../../types/outbox.ts'
 import type { CreateEntryPayload, ServerEntry } from '../../types/sync.ts'
 
@@ -206,6 +207,25 @@ describe('drainOutbox', () => {
     expect(uploadAttachmentMock).not.toHaveBeenCalled()
     expect(recordFailureMock).toHaveBeenCalledWith(1, 'server exploded')
     expect(summary).toEqual({ processed: 0, stoppedReason: 'error', error: 'server exploded' })
+  })
+
+  it('stops with a dedicated "auth" reason (not the generic "error") when a record 401s', async () => {
+    createEntryMock.mockRejectedValue(new SyncAuthError(401, null, 'Authentication required.'))
+    getAllRecordsMock.mockResolvedValue([createRecord({ queueId: 1 })])
+
+    const summary = await drainOutbox()
+
+    expect(summary).toEqual({ processed: 0, stoppedReason: 'auth', error: 'Authentication required.' })
+    expect(recordFailureMock).toHaveBeenCalledWith(1, 'Authentication required.')
+  })
+
+  it('also reports "auth" for a 403 (forbidden session), not just a 401', async () => {
+    createEntryMock.mockRejectedValue(new SyncAuthError(403, null, 'Forbidden.'))
+    getAllRecordsMock.mockResolvedValue([createRecord({ queueId: 1 })])
+
+    const summary = await drainOutbox()
+
+    expect(summary.stoppedReason).toBe('auth')
   })
 
   it('stops mid-drain when the signal is aborted before a record is processed', async () => {

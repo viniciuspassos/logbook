@@ -288,6 +288,13 @@ describe('useLogbookApp', () => {
     expect(() => unmount()).not.toThrow()
   })
 
+  it('exposes auth (#57) so Settings can offer a sign-in form without useLogbookApp owning any auth state itself', () => {
+    const { result } = renderHook(() => useLogbookApp())
+    expect(result.current.auth.state).toBe('unknown')
+    expect(typeof result.current.auth.login).toBe('function')
+    expect(typeof result.current.auth.logout).toBe('function')
+  })
+
   it('starts from a real, empty timeline outside mocked mode (no sample entries)', () => {
     delete (globalThis as { __LOGBOOK_MOCKED__?: boolean }).__LOGBOOK_MOCKED__
     const { result } = renderHook(() => useLogbookApp())
