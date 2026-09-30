@@ -40,11 +40,23 @@ export const ENTRY_EXTRACTION_SCHEMA = {
   additionalProperties: false,
 } as const
 
+// Without its own description, Gemini Nano copied the `shape` bucket into
+// `activityType` too (a "triangle" tag in the review step), so both are
+// spelled out and told apart explicitly.
 const SYSTEM_PROMPT =
   'You extract structured facts from a mountaineer or skydiver\'s spoken adventure note. ' +
-  'Respond only with the requested JSON. Choose `shape` as the closest icon bucket: ' +
-  'circle for skydiving/aerial jumps, triangle for climbing/mountaineering, ' +
-  'diamond for hiking/trekking/skiing. Leave a field out if the note does not mention it.'
+  'Respond only with the requested JSON. `activityType` is the activity in plain words, ' +
+  'such as "Climbing", "Mountaineering", "Skydiving" or "Trekking". `shape` is a separate ' +
+  'icon bucket: circle for skydiving/aerial jumps, triangle for climbing/mountaineering, ' +
+  'diamond for hiking/trekking/skiing; never use a `shape` value as the `activityType`. ' +
+  'Leave a field out if the note does not mention it.'
+
+/** Plain-language activity for each icon bucket, for when the model echoes the bucket name. */
+const SHAPE_ACTIVITY: Record<AdventureShape, string> = {
+  circle: 'Skydiving',
+  triangle: 'Climbing',
+  diamond: 'Trekking',
+}
 
 /** Defensive keyword mapping from a free-text activity to the 3-value icon bucket. */
 export function mapActivityToShape(activityType: string): AdventureShape {
@@ -103,9 +115,15 @@ export async function extractEntry(
     })
     const parsed = parseResponse(response)
 
-    const activityType = str(parsed.activityType)
+    const rawActivity = str(parsed.activityType)
     const rawShape = str(parsed.shape) as AdventureShape
-    const shape = SHAPES.includes(rawShape) ? rawShape : mapActivityToShape(activityType)
+    // Never trust the output shape: an activity that is really an icon bucket
+    // name is replaced by that bucket's plain-language activity.
+    const echoedShape = SHAPES.find((s) => s === rawActivity.toLowerCase())
+    const shape = SHAPES.includes(rawShape)
+      ? rawShape
+      : (echoedShape ?? mapActivityToShape(rawActivity))
+    const activityType = echoedShape ? SHAPE_ACTIVITY[shape] : rawActivity
 
     return {
       title: str(parsed.title) || 'Untitled adventure',
