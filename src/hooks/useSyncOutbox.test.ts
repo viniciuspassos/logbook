@@ -1,7 +1,7 @@
 import { act, renderHook } from '@testing-library/react'
 import { useSyncOutbox } from './useSyncOutbox.ts'
 import { drainOutbox, startAutoSync, subscribeToDrains } from '../lib/sync/outboxRunner.ts'
-import { queueEntryCreate } from '../lib/sync/outboxQueue.ts'
+import { queueEntryCreate, queueEntryCreates } from '../lib/sync/outboxQueue.ts'
 import type { Entry } from '../types/entry.ts'
 
 jest.mock('../lib/sync/outboxRunner.ts', () => ({
@@ -11,12 +11,14 @@ jest.mock('../lib/sync/outboxRunner.ts', () => ({
 }))
 jest.mock('../lib/sync/outboxQueue.ts', () => ({
   queueEntryCreate: jest.fn().mockResolvedValue(undefined),
+  queueEntryCreates: jest.fn().mockResolvedValue(undefined),
 }))
 
 const drainMock = drainOutbox as jest.Mock
 const startAutoSyncMock = startAutoSync as jest.Mock
 const subscribeMock = subscribeToDrains as jest.Mock
 const queueEntryCreateMock = queueEntryCreate as jest.Mock
+const queueEntryCreatesMock = queueEntryCreates as jest.Mock
 
 function makeEntry(id: number): Entry {
   return {
@@ -47,6 +49,7 @@ beforeEach(() => {
   startAutoSyncMock.mockReturnValue(jest.fn())
   subscribeMock.mockReturnValue(jest.fn())
   queueEntryCreateMock.mockResolvedValue(undefined)
+  queueEntryCreatesMock.mockResolvedValue(undefined)
 })
 
 describe('useSyncOutbox', () => {
@@ -91,6 +94,30 @@ describe('useSyncOutbox', () => {
     const { unmount } = renderHook(() => useSyncOutbox())
     unmount()
     expect(cleanup).toHaveBeenCalledTimes(1)
+  })
+
+  it('queueEntryCreates enqueues every entry and kicks a single drain', async () => {
+    const { result } = renderHook(() => useSyncOutbox())
+    drainMock.mockClear()
+
+    await act(async () => {
+      result.current.queueEntryCreates([makeEntry(1), makeEntry(2)])
+    })
+
+    expect(queueEntryCreatesMock).toHaveBeenCalledWith([makeEntry(1), makeEntry(2)])
+    expect(drainMock).toHaveBeenCalledTimes(1)
+  })
+
+  it('queueEntryCreates still drains and never rejects when queueing throws', async () => {
+    queueEntryCreatesMock.mockRejectedValue(new Error('boom'))
+    const { result } = renderHook(() => useSyncOutbox())
+    drainMock.mockClear()
+
+    await act(async () => {
+      result.current.queueEntryCreates([makeEntry(1)])
+    })
+
+    expect(drainMock).toHaveBeenCalledTimes(1)
   })
 
   it('queueEntryCreate enqueues the entry and kicks a drain', async () => {
