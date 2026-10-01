@@ -4,6 +4,7 @@ import {
   listPendingAttachments,
   queueAttachmentUpload,
   queueEntryCreate,
+  queueEntryCreates,
   queueEntryDelete,
   queueEntryUpdate,
 } from './outboxQueue.ts'
@@ -247,5 +248,40 @@ describe('getEntryAttachmentSources', () => {
     getAllRecordsMock.mockResolvedValue([pendingRecord])
     const result = await getEntryAttachmentSources(makeEntry({ id: 3 }))
     expect(result.pending).toEqual([pendingRecord])
+  })
+})
+
+describe('queueEntryCreates', () => {
+  beforeEach(() => {
+    jest.clearAllMocks()
+    supportedMock.mockReturnValue(true)
+    enqueueMock.mockResolvedValue(undefined)
+  })
+
+  it('queues a create-entry op for every entry', async () => {
+    await queueEntryCreates([makeEntry({ id: 1 }), makeEntry({ id: 2 })])
+
+    expect(enqueueMock).toHaveBeenCalledTimes(2)
+    expect(enqueueMock).toHaveBeenNthCalledWith(1, {
+      kind: 'create-entry',
+      localEntryId: 1,
+      payload: entryToCreatePayload(makeEntry({ id: 1 })),
+    })
+    expect(enqueueMock).toHaveBeenNthCalledWith(2, expect.objectContaining({ localEntryId: 2 }))
+  })
+
+  it('does nothing when persistence is unsupported', async () => {
+    supportedMock.mockReturnValue(false)
+
+    await queueEntryCreates([makeEntry({ id: 1 })])
+
+    expect(enqueueMock).not.toHaveBeenCalled()
+  })
+
+  it('keeps queueing the rest when one enqueue fails', async () => {
+    enqueueMock.mockRejectedValueOnce(new Error('quota'))
+
+    await expect(queueEntryCreates([makeEntry({ id: 1 }), makeEntry({ id: 2 })])).resolves.toBeUndefined()
+    expect(enqueueMock).toHaveBeenCalledTimes(2)
   })
 })

@@ -5,7 +5,10 @@ import {
   subscribeToDrains,
   type DrainSummary,
 } from '../lib/sync/outboxRunner.ts'
-import { queueEntryCreate as queueEntryCreateOp } from '../lib/sync/outboxQueue.ts'
+import {
+  queueEntryCreate as queueEntryCreateOp,
+  queueEntryCreates as queueEntryCreatesOp,
+} from '../lib/sync/outboxQueue.ts'
 import { syncStatusLabel } from '../lib/sync/syncStatus.ts'
 import type { Entry } from '../types/entry.ts'
 
@@ -21,7 +24,8 @@ export interface UseSyncOutboxOptions {
  * outboxRunner.ts's startAutoSync, so this hook never touches `window`
  * itself) and does one drain attempt on mount in case the backend was
  * already reachable when the app opened. Exposes `queueEntryCreate` for
- * useLogbookApp.saveEntry to call once a new entry is saved locally, and
+ * useLogbookApp.saveEntry to call once a new entry is saved locally,
+ * `queueEntryCreates` for a backup restore to queue every restored entry, and
  * `syncStatus`, the timeline's sync line, from the last drain that finished
  * anywhere in the app (outboxRunner.ts's subscribeToDrains).
  *
@@ -62,22 +66,32 @@ export function useSyncOutbox(options: UseSyncOutboxOptions = {}) {
     return startAutoSync()
   }, [])
 
-  const queueEntryCreate = useCallback((entry: Entry) => {
+  // Queue, then drain regardless: queueing may have no-op'd (unsupported
+  // storage) but a drain is always safe to attempt and harmless if there's
+  // nothing to send. The catch is defence-in-depth — the queue functions
+  // already swallow their own failures — so a future change there can never
+  // turn into an unhandled rejection here.
+  const queueThenDrain = useCallback((queue: () => Promise<void>) => {
     void (async () => {
       try {
-        await queueEntryCreateOp(entry)
+        await queue()
       } catch {
-        // outboxQueue.queueEntryCreate already swallows its own failures;
-        // this catch is defence-in-depth so a future change there can never
-        // turn into an unhandled rejection here.
+        // See above.
       } finally {
-        // Kick a drain regardless: queueing may have no-op'd (unsupported
-        // storage) but a drain is always safe to attempt and harmless if
-        // there's nothing to send.
         await drainOutbox()
       }
     })()
   }, [])
 
-  return { queueEntryCreate, syncStatus: syncStatusLabel(lastDrain) }
+  const queueEntryCreate = useCallback(
+    (entry: Entry) => queueThenDrain(() => queueEntryCreateOp(entry)),
+    [queueThenDrain],
+  )
+
+  const queueEntryCreates = useCallback(
+    (entries: Entry[]) => queueThenDrain(() => queueEntryCreatesOp(entries)),
+    [queueThenDrain],
+  )
+
+  return { queueEntryCreate, queueEntryCreates, syncStatus: syncStatusLabel(lastDrain) }
 }

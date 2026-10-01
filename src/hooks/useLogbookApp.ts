@@ -52,6 +52,7 @@ export function useLogbookApp() {
     onRestore: async (restored) => {
       nav.closeOverlay()
       await replaceEntries(restored)
+      syncOutbox.queueEntryCreates(restored)
     },
   })
 

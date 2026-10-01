@@ -89,7 +89,9 @@ Two properties of this flow are load-bearing and easy to break by accident:
   propagate — a restore that silently didn't stick would be worse than a visible error. The same
   applies one layer further out: `saveEntry` (`useLogbookApp.ts`) calls `useSyncOutbox`'s
   `queueEntryCreate` right after `addEntry`, also fire-and-forget — queueing (and the drain it
-  triggers) never blocks the save or the UI.
+  triggers) never blocks the save or the UI. A restore does the same with `queueEntryCreates`, but
+  only *after* the awaited `replaceEntries` succeeds, so entries that didn't persist locally never
+  sync; re-queuing is safe because the runner no-ops a create whose local id already has a server id.
 
 ## State composition
 
@@ -103,7 +105,7 @@ everything else is delegated to a single-concern hook:
 | `useEntries` | The persisted entry list: load-on-mount, seed-if-empty, write-through on add/replace |
 | `useNewEntryFlow` | The capture → listening → processing → review state machine, speech, AI orchestration |
 | `useExportActions` | Markdown/PDF export, JSON backup export/restore, a `busy` guard and status message |
-| `useSyncOutbox` | Registers the reconnect trigger and does a mount-time drain against the backend outbox; exposes `queueEntryCreate` and the timeline's `syncStatus`, read from every finished drain via `subscribeToDrains` |
+| `useSyncOutbox` | Registers the reconnect trigger and does a mount-time drain against the backend outbox; exposes `queueEntryCreate`, `queueEntryCreates` (backup restore) and the timeline's `syncStatus`, read from every finished drain via `subscribeToDrains` |
 | `useEntryAttachments` | The attachment gallery (server-confirmed + locally-queued photos) for whichever entry is open, and the upload flow |
 
 **Why this shape instead of one hook, or a global store (Redux/Zustand):** the app has several

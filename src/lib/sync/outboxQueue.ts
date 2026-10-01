@@ -94,6 +94,18 @@ async function hasPendingCreate(localEntryId: number): Promise<boolean> {
 }
 
 /**
+ * Queues a create for every entry in `entries` — used when a backup restore
+ * replaces the whole list, so the restored entries reach the backend like any
+ * freshly saved one. Re-queuing is harmless: outboxRunner's processCreate
+ * no-ops once a serverId is mapped, so duplicates (a second restore before a
+ * drain, or entries that already synced) never create twice. Never throws,
+ * same as queueEntryCreate.
+ */
+export async function queueEntryCreates(entries: Entry[]): Promise<void> {
+  for (const entry of entries) await queueEntryCreate(entry)
+}
+
+/**
  * Queues a photo upload for `entry`. An attachment upload needs a *real*
  * server entry id, which only exists once the entry's create-entry op has
  * drained — so this ensures one is either already synced, already queued

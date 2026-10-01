@@ -4,18 +4,26 @@ import { extractEntry } from '../lib/ai/extractEntry.ts'
 import { rewriteStory } from '../lib/ai/rewriteStory.ts'
 import { importBackup } from '../lib/backup/exportBackup.ts'
 import { subscribeToDrains } from '../lib/sync/outboxRunner.ts'
+import { queueEntryCreates } from '../lib/sync/outboxQueue.ts'
+import { entries as seedEntries } from '../data/entries.ts'
 import type { Entry } from '../types/entry.ts'
 
 const extractMock = extractEntry as jest.Mock
 const rewriteMock = rewriteStory as jest.Mock
 const importBackupMock = importBackup as jest.Mock
 const subscribeToDrainsMock = subscribeToDrains as jest.Mock
+const queueEntryCreatesMock = queueEntryCreates as jest.Mock
 
 // The real runner, with subscribeToDrains wrapped so a test can hand a drain
 // outcome straight to whoever subscribed.
 jest.mock('../lib/sync/outboxRunner.ts', () => {
   const actual = jest.requireActual('../lib/sync/outboxRunner.ts')
   return { ...actual, subscribeToDrains: jest.fn(actual.subscribeToDrains) }
+})
+
+jest.mock('../lib/sync/outboxQueue.ts', () => {
+  const actual = jest.requireActual('../lib/sync/outboxQueue.ts')
+  return { ...actual, queueEntryCreates: jest.fn(actual.queueEntryCreates) }
 })
 
 jest.mock('../lib/backup/exportBackup.ts', () => {
@@ -297,6 +305,19 @@ describe('useLogbookApp', () => {
     expect(result.current.overlay).toBeNull()
     expect(result.current.entries).toEqual(restored)
     expect(result.current.exportActions.status).toEqual({ tone: 'info', message: 'Restored 1 entry.' })
+  })
+
+  it('restoring a backup queues the restored entries for sync', async () => {
+    const restored = [{ ...seedEntries[0], id: 99, title: 'Restored entry' }]
+    importBackupMock.mockResolvedValue(restored)
+    const { result } = renderHook(() => useLogbookApp())
+    await act(async () => {})
+
+    await act(async () => {
+      result.current.exportActions.restoreFromFile()
+    })
+
+    expect(queueEntryCreatesMock).toHaveBeenCalledWith(restored)
   })
 
   it('unmounts cleanly while capturing', () => {
