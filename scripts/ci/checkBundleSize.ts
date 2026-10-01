@@ -52,7 +52,7 @@ export async function walkDistAssets(assetsDir: string): Promise<BundleFile[]> {
 }
 
 function formatTableRow(file: string, kb: number): string {
-  return `${file.padEnd(40)} ${kb.toFixed(1).padStart(8)} KB`
+  return `${file.padEnd(40)} ${kb.toFixed(1).padStart(8)} KiB`
 }
 
 function toKb(bytes: number): number {
