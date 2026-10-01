@@ -397,16 +397,34 @@ or a code change mitigating it), documented, and discussed in review before merg
 intentionally **not** configured to auto-open PRs, since its PRs would fail the `pr-hygiene` gate
 (every PR needs a linked issue) and would require manual issue creation anyway.
 
+### `ci-bundle-size.yml` — bundle size budget
+
+One job, **`frontend-bundle-size`**, on every PR (same trigger as static gates). Measures gzip
+sizes of all `.js` and `.css` files under `dist/assets` and fails if:
+
+- Total JS exceeds the budget (currently 89088 bytes / 87 KiB, `maxTotalJsBytes`)
+- Total CSS exceeds the budget (currently 6144 bytes / 6 KiB, `maxTotalCssBytes`)
+- Any single JS chunk exceeds the per-file max (currently 89088 bytes / 87 KiB, `maxSingleJsChunkBytes`)
+
+An offline-first PWA should make bundle growth a conscious decision. The budgets are defined as
+constants in `scripts/ci/bundleSize.ts` with comments explaining how and why to change them.
+Measured sizes and justification belong in the PR description when raising a budget.
+
+Rules are pure functions in `scripts/ci/bundleSize.ts`; file walking and gzip measurement in
+`scripts/ci/checkBundleSize.ts`. `scripts/` is part of the Jest suite *and* the 100%-function
+coverage gate.
+
 ### Branch protection expectation
 
 Per `README.md` → "Contributing / git workflow": every check is expected to be green before
 merge. These are the required status checks on `main` (strict mode, so a PR must be up to date):
 `frontend-typecheck`, `frontend-lint`, `frontend-complexity`, `frontend-test-coverage`,
-`frontend-diff-coverage`, `frontend-build`, `server-typecheck`, `server-lint`,
-`server-complexity`, `server-test-coverage`, `server-diff-coverage`, `server-build`,
-`server-migrations-drift`, `server-docker-build`, `secret-scan`, `dependency-audit` and `pr-hygiene`. This is a repo setting outside the
-version-controlled config: **renaming or adding a job means updating that list too**, or
-`main` will wait forever on a check that no longer exists (or silently not gate on a new one).
+`frontend-diff-coverage`, `frontend-build`, `frontend-bundle-size`, `server-typecheck`,
+`server-lint`, `server-complexity`, `server-test-coverage`, `server-diff-coverage`,
+`server-build`, `server-migrations-drift`, `server-docker-build`, `secret-scan`,
+`dependency-audit` and `pr-hygiene`. This is a repo setting outside the version-controlled config:
+**renaming or adding a job means updating that list too**, or `main` will wait forever on a check
+that no longer exists (or silently not gate on a new one).
 
 ## Build output and hosting
 

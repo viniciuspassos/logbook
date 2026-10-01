@@ -1,0 +1,33 @@
+name: CI - Bundle Size
+
+on:
+  pull_request:
+    types: [opened, synchronize, reopened]
+
+permissions:
+  contents: read
+
+concurrency:
+  group: ci-bundle-size-${{ github.event.pull_request.number }}
+  cancel-in-progress: true
+
+jobs:
+  frontend-bundle-size:
+    name: frontend-bundle-size
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v5
+        with:
+          ref: ${{ github.event.pull_request.head.sha }}
+
+      - uses: actions/setup-node@v5
+        with:
+          node-version: 24
+          cache: npm
+
+      - run: npm ci
+
+      - run: npm run build
+
+      - name: Check bundle size budget
+        run: node scripts/ci/runBundleSize.ts

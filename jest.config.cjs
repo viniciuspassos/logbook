@@ -25,6 +25,7 @@ module.exports = {
     '!scripts/**/*.test.ts',
     '!scripts/ci/runCheckPrMetadata.ts',
     '!scripts/ci/runDiffCoverage.ts',
+    '!scripts/ci/runBundleSize.ts',
   ],
   coverageThreshold: {
     global: {
