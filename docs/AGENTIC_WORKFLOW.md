@@ -8,7 +8,7 @@ whoever is configuring or reasoning about the `.claude/` setup itself, not at th
 
 ## Agents (`.claude/agents/`)
 
-Five subagents are defined for this repo. Each has its full routing logic in its own frontmatter
+Seven subagents are defined for this repo. Each has its full routing logic in its own frontmatter
 `description` (Claude Code uses that to pick an agent automatically) — this is the short version:
 
 | Agent | Scope | Writes code? |
@@ -18,6 +18,8 @@ Five subagents are defined for this repo. Each has its full routing logic in its
 | `backend-engineer` | Node/TypeScript service (`server/`) — NestJS by default, Express for genuinely simple services | Yes |
 | `devops-engineer` | Docker/Compose (local-only, no cloud target) and GitHub Actions CI | Yes |
 | `qa-release-gate` | Live smoke test of the running app before a release cut — not per-commit | No (Bash/Read/Write for its own report only) |
+| `monkey-tester-frontend` | Randomized chaos test of the running UI (hostile input, random clicks, offline toggles); reports crashes and console errors with repro steps | No — reports findings only |
+| `monkey-tester-backend` | Randomized fuzz test of the running `server/` API (malformed/boundary/hostile requests); reports 5xx, leaked internals and contract bugs with `curl` repros | No — reports findings only |
 
 A request scoped to one layer goes straight to that layer's specialist (`frontend-engineer`,
 `backend-engineer`, `devops-engineer`) — routing it through `product-engineer` first just adds a
@@ -31,10 +33,16 @@ it drives the already-built app in a real browser and reports GO/NO-GO. It's inv
 ("QA this before we ship", before tagging a release) — see "How tests fit in" below for why it's
 not part of the standard per-feature loop.
 
+The two `monkey-tester-*` agents are the same kind of read-the-running-app agent, aimed at finding
+bugs rather than giving a verdict. They're normally launched through the `monkey-test` skill below,
+not directly. They live in the repo, rather than only in a developer's `~/.claude/`, because a
+nightly cloud routine (see "Nightly monkey test" below) runs them from a fresh clone, and a fresh
+clone sees only what's committed.
+
 ## Skills (`.claude/skills/`)
 
-Three repo-local skills carry the mechanical parts of shipping a change, so each agent's prompt
-states policy ("run the quality gate") rather than reimplementing the steps:
+Four repo-local skills. The first three carry the mechanical parts of shipping a change, so each
+agent's prompt states policy ("run the quality gate") rather than reimplementing the steps:
 
 - **`validate-before-commit`** — runs the real `.githooks/pre-commit` (typecheck → lint → complexity → test) and
   `.githooks/commit-msg` (Conventional Commits) via `git hook run`, rather than a hand-rolled
@@ -50,6 +58,11 @@ states policy ("run the quality gate") rather than reimplementing the steps:
   surface to check), commit, push with upstream tracking, open the PR (using
   `.github/pull_request_template.md`), then merge with `--squash --delete-branch` as soon as
   the required checks are green — no per-PR confirmation needed in this repo.
+- **`monkey-test`** (`/monkey-test frontend|backend [scope]`) — not a shipping gate. It runs a
+  chaos test in two steps: a read-only Sonnet `Plan` subagent writes a project-specific test plan
+  (start command, priority flows or endpoints, a hostile-input corpus fitted to the real fields and
+  DTOs), then the matching `monkey-tester-*` agent runs that plan on Haiku. Planning needs judgment,
+  so it gets the bigger model. Execution is a long loop of cheap actions, so it gets the cheaper one.
 
 All four implementing agents (`product-engineer` excluded) call these in the same order: **write
 code test-first → `code-reviewer` → `ship-pr`** (which itself calls `validate-before-commit` and
@@ -73,10 +86,10 @@ Enabled plugins live in `.claude/settings.json`:
   usages across `src/`/`server/`.
 - **`code-review`** — the generic PR-review skill described above.
 - **`frontend-design`** — visual/UX guidance for `frontend-engineer`.
-- **`playwright`** (`mcp__plugin_playwright_playwright__*`) — real browser automation. **Scoped
-  entirely to `qa-release-gate`**; no other agent's tool list includes it, and there is no
-  Playwright config or spec file checked into this repo — it's agent-driven interactive browser
-  control, not a committed e2e test suite. See "Does this repo still use Playwright?" below.
+- **`playwright`** (`mcp__plugin_playwright_playwright__*`) — real browser automation, used by
+  `qa-release-gate` and `monkey-tester-frontend` only. There is no Playwright config or spec file
+  checked into this repo — it's agent-driven interactive browser control, not a committed e2e test
+  suite. See "Does this repo still use Playwright?" below.
 
 `claude-in-chrome` (browser automation against the user's actual Chrome session, not a fresh
 Playwright-controlled browser) is a separate, general-purpose integration available in interactive
@@ -128,10 +141,22 @@ them separate:
 
 ### Does this repo still use Playwright?
 
-**Yes, but only in this one place.** There's no `playwright.config.ts` and no `*.spec.ts` e2e
-suite committed to the repo — Playwright shows up exclusively as the `playwright` plugin's MCP
-tools (`mcp__plugin_playwright_playwright__*`), wired into `qa-release-gate`'s tool list alone. It
-drives a real, ephemeral browser against `npm run dev` for an on-demand smoke test before a release
-or a "make sure nothing broke" check — none of `.github/workflows/ci-static.yml`'s jobs
-(the `frontend-*`, `server-*` jobs and `server-migrations-drift`) touch a browser or Playwright,
-and no other agent has Playwright in its tool list.
+**Yes, but only for agent-driven browser sessions.** There's no `playwright.config.ts` and no
+`*.spec.ts` e2e suite committed to the repo. Playwright shows up as the `playwright` plugin's MCP
+tools (`mcp__plugin_playwright_playwright__*`), used by two agents: `qa-release-gate` for an
+on-demand smoke test before a release, and `monkey-tester-frontend` for chaos testing. Where the
+MCP tools aren't available (the nightly cloud routine below), `monkey-tester-frontend` falls back to
+a throwaway Playwright script written outside the repo. None of `.github/workflows/ci-static.yml`'s
+jobs (the `frontend-*`, `server-*` jobs and `server-migrations-drift`) touch a browser or
+Playwright.
+
+## Nightly monkey test
+
+A Claude Code cloud routine (a scheduled cloud session, managed at claude.ai/code/routines, not
+in this repo) runs every night at 23:22 America/Sao_Paulo (`22 2 * * *` UTC). It clones `main`,
+starts a throwaway Postgres and `server/` inside its own sandbox, runs `/monkey-test backend` and
+then `/monkey-test frontend` against `localhost`, and files each reproducible finding as a GitHub
+issue. Issues use the `bug_report.yml` sections with the `bug` and `severity:` labels. Before
+filing, it searches open and recently closed issues so the same root cause isn't filed every night.
+It never edits code, commits or pushes. Its findings are leads for a human or a specialist agent to
+pick up through the normal workflow above.
