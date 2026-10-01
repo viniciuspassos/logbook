@@ -8,6 +8,8 @@ import { groupEntriesByDate } from './timelineGrouping.ts'
 import './TimelineScreen.css'
 
 interface TimelineScreenProps {
+  /** From useSyncOutbox: "Saved locally", optionally with how the last sync went. */
+  syncStatus: string
   entries: Entry[]
   timelineView: TimelineView
   onChangeView: (view: TimelineView) => void
@@ -15,6 +17,7 @@ interface TimelineScreenProps {
 }
 
 export function TimelineScreen({
+  syncStatus,
   entries,
   timelineView,
   onChangeView,
@@ -23,9 +26,9 @@ export function TimelineScreen({
   return (
     <div className="timeline-screen">
       <h1 className="timeline-screen__title">Logbook</h1>
-      <div className="timeline-screen__sync">
+      <div className="timeline-screen__sync" role="status">
         <span className="timeline-screen__sync-dot" />
-        <span>Saved locally · not synced</span>
+        <span>{syncStatus}</span>
       </div>
 
       <div className="timeline-screen__tabs" role="tablist">

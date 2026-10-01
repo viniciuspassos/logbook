@@ -103,7 +103,7 @@ everything else is delegated to a single-concern hook:
 | `useEntries` | The persisted entry list: load-on-mount, seed-if-empty, write-through on add/replace |
 | `useNewEntryFlow` | The capture → listening → processing → review state machine, speech, AI orchestration |
 | `useExportActions` | Markdown/PDF export, JSON backup export/restore, a `busy` guard and status message |
-| `useSyncOutbox` | Registers the reconnect trigger and does a mount-time drain against the backend outbox; exposes `queueEntryCreate` |
+| `useSyncOutbox` | Registers the reconnect trigger and does a mount-time drain against the backend outbox; exposes `queueEntryCreate` and the timeline's `syncStatus`, read from every finished drain via `subscribeToDrains` |
 | `useEntryAttachments` | The attachment gallery (server-confirmed + locally-queued photos) for whichever entry is open, and the upload flow |
 
 **Why this shape instead of one hook, or a global store (Redux/Zustand):** the app has several

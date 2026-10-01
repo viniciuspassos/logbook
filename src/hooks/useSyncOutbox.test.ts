@@ -1,12 +1,13 @@
 import { act, renderHook } from '@testing-library/react'
 import { useSyncOutbox } from './useSyncOutbox.ts'
-import { drainOutbox, startAutoSync } from '../lib/sync/outboxRunner.ts'
+import { drainOutbox, startAutoSync, subscribeToDrains } from '../lib/sync/outboxRunner.ts'
 import { queueEntryCreate } from '../lib/sync/outboxQueue.ts'
 import type { Entry } from '../types/entry.ts'
 
 jest.mock('../lib/sync/outboxRunner.ts', () => ({
   drainOutbox: jest.fn().mockResolvedValue({ processed: 0, stoppedReason: 'empty' }),
   startAutoSync: jest.fn().mockReturnValue(jest.fn()),
+  subscribeToDrains: jest.fn().mockReturnValue(jest.fn()),
 }))
 jest.mock('../lib/sync/outboxQueue.ts', () => ({
   queueEntryCreate: jest.fn().mockResolvedValue(undefined),
@@ -14,6 +15,7 @@ jest.mock('../lib/sync/outboxQueue.ts', () => ({
 
 const drainMock = drainOutbox as jest.Mock
 const startAutoSyncMock = startAutoSync as jest.Mock
+const subscribeMock = subscribeToDrains as jest.Mock
 const queueEntryCreateMock = queueEntryCreate as jest.Mock
 
 function makeEntry(id: number): Entry {
@@ -43,10 +45,40 @@ beforeEach(() => {
   jest.clearAllMocks()
   drainMock.mockResolvedValue({ processed: 0, stoppedReason: 'empty' })
   startAutoSyncMock.mockReturnValue(jest.fn())
+  subscribeMock.mockReturnValue(jest.fn())
   queueEntryCreateMock.mockResolvedValue(undefined)
 })
 
 describe('useSyncOutbox', () => {
+  it('reports "Saved locally" until a drain says otherwise, then follows each outcome', () => {
+    const { result } = renderHook(() => useSyncOutbox())
+    expect(result.current.syncStatus).toBe('Saved locally')
+    const listener = subscribeMock.mock.calls[0][0]
+
+    act(() => listener({ processed: 1, stoppedReason: 'empty' }))
+    expect(result.current.syncStatus).toBe('Saved locally · synced')
+
+    act(() => listener({ processed: 0, stoppedReason: 'auth' }))
+    expect(result.current.syncStatus).toBe('Saved locally · sign in to sync')
+  })
+
+  it('keeps the last real outcome when a drain is aborted', () => {
+    const { result } = renderHook(() => useSyncOutbox())
+    const listener = subscribeMock.mock.calls[0][0]
+
+    act(() => listener({ processed: 0, stoppedReason: 'empty' }))
+    act(() => listener({ processed: 0, stoppedReason: 'aborted' }))
+    expect(result.current.syncStatus).toBe('Saved locally · synced')
+  })
+
+  it('unsubscribes from drain outcomes on unmount', () => {
+    const unsubscribe = jest.fn()
+    subscribeMock.mockReturnValue(unsubscribe)
+    const { unmount } = renderHook(() => useSyncOutbox())
+    unmount()
+    expect(unsubscribe).toHaveBeenCalledTimes(1)
+  })
+
   it('registers the online-reconnect listener and does an initial drain on mount', () => {
     renderHook(() => useSyncOutbox())
     expect(startAutoSyncMock).toHaveBeenCalledTimes(1)
@@ -83,51 +115,34 @@ describe('useSyncOutbox', () => {
   })
 
   describe('auth reporting', () => {
-    it('calls onAuthRequired when the mount-time drain finds the session is gone', async () => {
-      drainMock.mockResolvedValue({ processed: 0, stoppedReason: 'auth', error: 'Authentication required.' })
+    function renderWithAuth() {
       const onAuthRequired = jest.fn()
+      const onAuthConfirmed = jest.fn()
+      renderHook(() => useSyncOutbox({ onAuthRequired, onAuthConfirmed }))
+      const listener = subscribeMock.mock.calls[0][0]
+      return { onAuthRequired, onAuthConfirmed, listener }
+    }
 
-      await act(async () => {
-        renderHook(() => useSyncOutbox({ onAuthRequired }))
-      })
-
+    it('calls onAuthRequired when any drain finds the session is gone, wherever it started', () => {
+      const { onAuthRequired, onAuthConfirmed, listener } = renderWithAuth()
+      act(() => listener({ processed: 0, stoppedReason: 'auth', error: 'Authentication required.' }))
       expect(onAuthRequired).toHaveBeenCalledTimes(1)
-    })
-
-    it('calls onAuthConfirmed when the mount-time drain actually processed something', async () => {
-      drainMock.mockResolvedValue({ processed: 2, stoppedReason: 'empty' })
-      const onAuthConfirmed = jest.fn()
-
-      await act(async () => {
-        renderHook(() => useSyncOutbox({ onAuthConfirmed }))
-      })
-
-      expect(onAuthConfirmed).toHaveBeenCalledTimes(1)
-    })
-
-    it('does not call either auth callback when the drain simply found nothing to do', async () => {
-      drainMock.mockResolvedValue({ processed: 0, stoppedReason: 'empty' })
-      const onAuthRequired = jest.fn()
-      const onAuthConfirmed = jest.fn()
-
-      await act(async () => {
-        renderHook(() => useSyncOutbox({ onAuthRequired, onAuthConfirmed }))
-      })
-
-      expect(onAuthRequired).not.toHaveBeenCalled()
       expect(onAuthConfirmed).not.toHaveBeenCalled()
     })
 
-    it('reports an auth failure discovered by queueEntryCreate\'s own drain', async () => {
-      const onAuthRequired = jest.fn()
-      const { result } = renderHook(() => useSyncOutbox({ onAuthRequired }))
-      drainMock.mockResolvedValue({ processed: 0, stoppedReason: 'auth', error: 'Authentication required.' })
+    it('calls onAuthConfirmed when a drain actually processed something', () => {
+      const { onAuthRequired, onAuthConfirmed, listener } = renderWithAuth()
+      act(() => listener({ processed: 2, stoppedReason: 'empty' }))
+      expect(onAuthConfirmed).toHaveBeenCalledTimes(1)
+      expect(onAuthRequired).not.toHaveBeenCalled()
+    })
 
-      await act(async () => {
-        result.current.queueEntryCreate(makeEntry(1))
-      })
-
-      expect(onAuthRequired).toHaveBeenCalledTimes(1)
+    it('does not call either auth callback when a drain found nothing to do or was aborted', () => {
+      const { onAuthRequired, onAuthConfirmed, listener } = renderWithAuth()
+      act(() => listener({ processed: 0, stoppedReason: 'empty' }))
+      act(() => listener({ processed: 0, stoppedReason: 'aborted' }))
+      expect(onAuthRequired).not.toHaveBeenCalled()
+      expect(onAuthConfirmed).not.toHaveBeenCalled()
     })
   })
 })

@@ -3,11 +3,20 @@ import { useLogbookApp } from './useLogbookApp.ts'
 import { extractEntry } from '../lib/ai/extractEntry.ts'
 import { rewriteStory } from '../lib/ai/rewriteStory.ts'
 import { importBackup } from '../lib/backup/exportBackup.ts'
+import { subscribeToDrains } from '../lib/sync/outboxRunner.ts'
 import type { Entry } from '../types/entry.ts'
 
 const extractMock = extractEntry as jest.Mock
 const rewriteMock = rewriteStory as jest.Mock
 const importBackupMock = importBackup as jest.Mock
+const subscribeToDrainsMock = subscribeToDrains as jest.Mock
+
+// The real runner, with subscribeToDrains wrapped so a test can hand a drain
+// outcome straight to whoever subscribed.
+jest.mock('../lib/sync/outboxRunner.ts', () => {
+  const actual = jest.requireActual('../lib/sync/outboxRunner.ts')
+  return { ...actual, subscribeToDrains: jest.fn(actual.subscribeToDrains) }
+})
 
 jest.mock('../lib/backup/exportBackup.ts', () => {
   const actual = jest.requireActual('../lib/backup/exportBackup.ts')
@@ -84,6 +93,15 @@ describe('useLogbookApp', () => {
     expect(result.current.tab).toBe('timeline')
     expect(result.current.overlay).toBeNull()
     expect(result.current.timelineView).toBe('list')
+  })
+
+  it('exposes the sync status for the timeline, following the latest drain', () => {
+    const { result } = renderHook(() => useLogbookApp())
+    expect(result.current.syncStatus).toBe('Saved locally')
+
+    const listener = subscribeToDrainsMock.mock.calls.at(-1)?.[0]
+    act(() => listener({ processed: 1, stoppedReason: 'empty' }))
+    expect(result.current.syncStatus).toBe('Saved locally · synced')
   })
 
   it('goTab switches tabs and closes any open overlay', async () => {

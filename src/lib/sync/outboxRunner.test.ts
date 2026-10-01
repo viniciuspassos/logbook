@@ -1,4 +1,4 @@
-import { drainOutbox, startAutoSync } from './outboxRunner.ts'
+import { drainOutbox, startAutoSync, subscribeToDrains } from './outboxRunner.ts'
 import { getAllRecords, recordAttemptFailure, removeRecord } from '../db/outboxStore.ts'
 import { deleteSyncState, getSyncState, putSyncState } from '../db/syncStateStore.ts'
 import { isPersistenceSupported } from '../db/database.ts'
@@ -315,4 +315,93 @@ describe('startAutoSync', () => {
   // jsdom's `window` global is non-configurable, so it can't be deleted or
   // stubbed from within a jsdom test. See outboxRunner.ssr.test.ts, which runs
   // under Jest's `node` environment where `window` is genuinely absent.
+})
+
+describe('drainOutbox called while a drain is already running', () => {
+  function deferred<T>() {
+    let resolve!: (value: T) => void
+    let reject!: (error: Error) => void
+    const promise = new Promise<T>((res, rej) => {
+      resolve = res
+      reject = rej
+    })
+    return { promise, resolve, reject }
+  }
+
+  it('runs one more pass so work queued mid-drain is not reported as synced', async () => {
+    const created: ServerEntry = { ...(payload as unknown as ServerEntry), id: 42, version: 1 }
+    const firstCreate = deferred<ServerEntry>()
+    createEntryMock.mockReturnValueOnce(firstCreate.promise).mockResolvedValue(created)
+    getAllRecordsMock
+      .mockResolvedValueOnce([createRecord({ queueId: 1 })])
+      .mockResolvedValueOnce([
+        createRecord({ queueId: 2, operation: { kind: 'create-entry', localEntryId: 2, payload } }),
+      ])
+      .mockResolvedValue([])
+    const listener = jest.fn()
+    const unsubscribe = subscribeToDrains(listener)
+
+    const first = drainOutbox()
+    await new Promise((r) => setTimeout(r, 0)) // let the first pass read the queue
+    const joined = drainOutbox() // e.g. a save that queued entry 2 mid-pass
+    firstCreate.resolve(created)
+
+    const [summary, joinedSummary] = await Promise.all([first, joined])
+    expect(summary).toEqual({ processed: 2, stoppedReason: 'empty' })
+    expect(joinedSummary).toBe(summary)
+    expect(removeRecordMock).toHaveBeenCalledWith(2)
+    expect(listener).toHaveBeenCalledTimes(1)
+    unsubscribe()
+  })
+
+  it('does not run another pass when the first one stopped on a failure', async () => {
+    const firstCreate = deferred<ServerEntry>()
+    createEntryMock.mockReturnValueOnce(firstCreate.promise)
+    getAllRecordsMock.mockResolvedValue([createRecord()])
+
+    const first = drainOutbox()
+    await new Promise((r) => setTimeout(r, 0))
+    void drainOutbox()
+    firstCreate.reject(new Error('boom'))
+
+    expect(await first).toEqual({ processed: 0, stoppedReason: 'error', error: 'boom' })
+    expect(getAllRecordsMock).toHaveBeenCalledTimes(1)
+  })
+})
+
+describe('subscribeToDrains', () => {
+  it('tells each subscriber how every finished drain ended', async () => {
+    reachableMock.mockResolvedValue(false)
+    const listener = jest.fn()
+    const unsubscribe = subscribeToDrains(listener)
+
+    const summary = await drainOutbox()
+
+    expect(listener).toHaveBeenCalledWith(summary)
+    expect(summary).toEqual({ processed: 0, stoppedReason: 'unreachable' })
+    unsubscribe()
+  })
+
+  it('stops notifying a subscriber once it unsubscribes', async () => {
+    const listener = jest.fn()
+    subscribeToDrains(listener)()
+
+    await drainOutbox()
+
+    expect(listener).not.toHaveBeenCalled()
+  })
+
+  it('never lets a throwing subscriber fail the drain or starve the others', async () => {
+    const broken = jest.fn(() => {
+      throw new Error('subscriber bug')
+    })
+    const healthy = jest.fn()
+    const unsubscribeBroken = subscribeToDrains(broken)
+    const unsubscribeHealthy = subscribeToDrains(healthy)
+
+    await expect(drainOutbox()).resolves.toEqual({ processed: 0, stoppedReason: 'empty' })
+    expect(healthy).toHaveBeenCalledTimes(1)
+    unsubscribeBroken()
+    unsubscribeHealthy()
+  })
 })

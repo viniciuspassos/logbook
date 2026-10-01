@@ -1,6 +1,12 @@
-import { useCallback, useEffect } from 'react'
-import { drainOutbox, startAutoSync, type DrainSummary } from '../lib/sync/outboxRunner.ts'
+import { useCallback, useEffect, useState } from 'react'
+import {
+  drainOutbox,
+  startAutoSync,
+  subscribeToDrains,
+  type DrainSummary,
+} from '../lib/sync/outboxRunner.ts'
 import { queueEntryCreate as queueEntryCreateOp } from '../lib/sync/outboxQueue.ts'
+import { syncStatusLabel } from '../lib/sync/syncStatus.ts'
 import type { Entry } from '../types/entry.ts'
 
 export interface UseSyncOutboxOptions {
@@ -15,7 +21,9 @@ export interface UseSyncOutboxOptions {
  * outboxRunner.ts's startAutoSync, so this hook never touches `window`
  * itself) and does one drain attempt on mount in case the backend was
  * already reachable when the app opened. Exposes `queueEntryCreate` for
- * useLogbookApp.saveEntry to call once a new entry is saved locally.
+ * useLogbookApp.saveEntry to call once a new entry is saved locally, and
+ * `syncStatus`, the timeline's sync line, from the last drain that finished
+ * anywhere in the app (outboxRunner.ts's subscribeToDrains).
  *
  * Deliberately its own hook rather than folded into useEntries: useEntries
  * owns the local IndexedDB-backed list (#26 keeps that unchanged and
@@ -31,39 +39,45 @@ export interface UseSyncOutboxOptions {
  */
 export function useSyncOutbox(options: UseSyncOutboxOptions = {}) {
   const { onAuthRequired, onAuthConfirmed } = options
+  const [lastDrain, setLastDrain] = useState<DrainSummary | null>(null)
 
-  const reportAuthOutcome = useCallback(
-    (summary: DrainSummary) => {
-      if (summary.stoppedReason === 'auth') onAuthRequired?.()
-      else if (summary.processed > 0) onAuthConfirmed?.()
-    },
+  // Every drain, wherever it started (mount, save, photo upload, sign-in, the
+  // `online` event), updates the status line and says something about the
+  // session, so both are read from the runner's subscription rather than
+  // only from the drains this hook kicks itself.
+  useEffect(
+    () =>
+      subscribeToDrains((summary) => {
+        // An aborted pass says nothing new about the queue or the session.
+        if (summary.stoppedReason === 'aborted') return
+        setLastDrain(summary)
+        if (summary.stoppedReason === 'auth') onAuthRequired?.()
+        else if (summary.processed > 0) onAuthConfirmed?.()
+      }),
     [onAuthRequired, onAuthConfirmed],
   )
 
   useEffect(() => {
-    void drainOutbox().then(reportAuthOutcome)
+    void drainOutbox()
     return startAutoSync()
-  }, [reportAuthOutcome])
+  }, [])
 
-  const queueEntryCreate = useCallback(
-    (entry: Entry) => {
-      void (async () => {
-        try {
-          await queueEntryCreateOp(entry)
-        } catch {
-          // outboxQueue.queueEntryCreate already swallows its own failures;
-          // this catch is defence-in-depth so a future change there can never
-          // turn into an unhandled rejection here.
-        } finally {
-          // Kick a drain regardless: queueing may have no-op'd (unsupported
-          // storage) but a drain is always safe to attempt and harmless if
-          // there's nothing to send.
-          reportAuthOutcome(await drainOutbox())
-        }
-      })()
-    },
-    [reportAuthOutcome],
-  )
+  const queueEntryCreate = useCallback((entry: Entry) => {
+    void (async () => {
+      try {
+        await queueEntryCreateOp(entry)
+      } catch {
+        // outboxQueue.queueEntryCreate already swallows its own failures;
+        // this catch is defence-in-depth so a future change there can never
+        // turn into an unhandled rejection here.
+      } finally {
+        // Kick a drain regardless: queueing may have no-op'd (unsupported
+        // storage) but a drain is always safe to attempt and harmless if
+        // there's nothing to send.
+        await drainOutbox()
+      }
+    })()
+  }, [])
 
-  return { queueEntryCreate }
+  return { queueEntryCreate, syncStatus: syncStatusLabel(lastDrain) }
 }

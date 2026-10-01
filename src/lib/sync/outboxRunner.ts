@@ -123,17 +123,60 @@ async function runDrain(signal?: AbortSignal): Promise<DrainSummary> {
   }
 }
 
+// Drains start from several places (mount, save, photo upload, sign-in, the
+// `online` event), so whoever shows sync state subscribes here rather than
+// tracking only the drains it happened to start itself.
+const drainListeners = new Set<(summary: DrainSummary) => void>()
+
+/** Calls `listener` with the summary of every drain that finishes; returns the unsubscribe. */
+export function subscribeToDrains(listener: (summary: DrainSummary) => void): () => void {
+  drainListeners.add(listener)
+  return () => {
+    drainListeners.delete(listener)
+  }
+}
+
+function notifyDrainListeners(summary: DrainSummary): DrainSummary {
+  for (const listener of drainListeners) {
+    try {
+      listener(summary)
+    } catch {
+      // A broken subscriber must never fail the drain or starve the others.
+    }
+  }
+  return summary
+}
+
 // Concurrent callers (e.g. the mount-time drain and an 'online' event firing
-// at nearly the same moment) share one in-flight pass instead of racing two
-// drains against the same queue.
+// at nearly the same moment) share one in-flight drain instead of racing two
+// against the same queue. A pass reads the queue once, so a caller that joins
+// mid-pass (typically a save that just queued its entry) asks for one more
+// pass; otherwise the drain would end 'empty' — "synced" — with that op still
+// waiting.
 let inFlight: Promise<DrainSummary> | null = null
+let rerunRequested = false
+
+async function drainUntilSettled(signal?: AbortSignal): Promise<DrainSummary> {
+  let processed = 0
+  let summary: DrainSummary
+  do {
+    rerunRequested = false
+    summary = await runDrain(signal)
+    processed += summary.processed
+  } while (rerunRequested && summary.stoppedReason === 'empty')
+  return { ...summary, processed }
+}
 
 export function drainOutbox(signal?: AbortSignal): Promise<DrainSummary> {
-  if (!inFlight) {
-    inFlight = runDrain(signal).finally(() => {
+  if (inFlight) {
+    rerunRequested = true
+    return inFlight
+  }
+  inFlight = drainUntilSettled(signal)
+    .then(notifyDrainListeners)
+    .finally(() => {
       inFlight = null
     })
-  }
   return inFlight
 }
 
