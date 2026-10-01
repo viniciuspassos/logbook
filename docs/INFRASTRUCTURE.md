@@ -245,6 +245,7 @@ mirror `.githooks/pre-commit`; the backend jobs run from `server/`:
 | `frontend-lint` | `server-lint` | `npm run lint` (ESLint, no complexity rules) |
 | `frontend-complexity` | `server-complexity` | `npm run lint:complexity` (see below) |
 | `frontend-test-coverage` | `server-test-coverage` | `npm test -- --coverage` (100% function gate) |
+| `frontend-diff-coverage` | `server-diff-coverage` | every function the PR modified must be executed by a test (see below) |
 | `frontend-build` | `server-build` | `npm run build` |
 
 - The backend jobs run unconditionally (not path-filtered), unlike the pre-commit hook's
@@ -260,6 +261,44 @@ mirror `.githooks/pre-commit`; the backend jobs run from `server/`:
 All jobs run unconditionally on every PR — none needs a comment or manual trigger. Which of them
 are *required* is a GitHub branch-protection setting, not tracked in workflow YAML — see
 "Branch protection expectation" below.
+
+### Diff-aware coverage gate
+
+`frontend-diff-coverage` / `server-diff-coverage` answer "did this PR leave a function it touched
+without a test?" with an annotation on the exact function, instead of a global percentage. The
+script (`scripts/ci/diffCoverage.ts`, run via `runDiffCoverage.ts`) does three steps:
+
+1. `git diff --merge-base origin/<base> -U0` → the changed lines per file (`changedLines.ts`).
+   In CI this equals `base...HEAD`; locally it also includes uncommitted edits to tracked files,
+   so brand-new files need `git add -N <path>` to be seen. Git's `GIT_*` environment is stripped
+   first, because hooks export `GIT_DIR`/`GIT_INDEX_FILE` and would otherwise redirect the call. A
+   diff header it cannot parse is an error, never a silently skipped file;
+2. the TypeScript AST → every function whose span contains a changed line, including enclosing
+   functions of a changed nested callback and decorator-line edits (`functionSpans.ts`);
+3. Jest's `coverage-final.json` → each such function must have a hit count > 0
+   (`coverageMatch.ts`, the pure half; `diffCoverage.ts` does the git and file I/O). A modified
+   function with *no* entry in the report also fails (fail closed). Modified functions in a file
+   absent from the report (types, seed data, `*.module.ts`, migrations: excluded from
+   `collectCoverageFrom`) only produce a `::warning`, and the run ends with an "N modified
+   function(s) in M file(s) checked" line. If no coverage path is under the repo root the gate
+   errors instead of silently checking nothing.
+
+Matching an AST function to istanbul's entry needs the same start line (istanbul's `decl`, the
+name line) and an end line at most 2 short (istanbul's `loc` is the function *body*, so a
+parenthesised JSX arrow ends one line before the AST's); functions starting on one line are told
+apart by start column. This was validated against every function in both packages' real coverage
+reports (572/572). The `*-diff-coverage` jobs run Jest with `--coverageThreshold='{}'` — the
+global threshold is enforced by `*-test-coverage`; leaving it on here would fail Jest first and
+skip the step that names the function. They need full history (`fetch-depth: 0`) and the root
+`npm ci` (for the `typescript` package), even in the server job. Run it locally after a coverage
+run: `node scripts/ci/runDiffCoverage.ts --coverage coverage/coverage-final.json --prefix src/
+--prefix scripts/ --base origin/main` (server: `--coverage server/coverage/coverage-final.json
+--prefix server/src/`).
+
+It overlaps with the global 100%-function threshold in both Jest configs (an untested new function
+already trips that). Its value is the per-function annotation, and that it keeps gating the
+changed code if a global threshold is ever relaxed. "Executed by a test" is a hit count, not an
+assertion-quality check.
 
 ### Complexity gate
 
@@ -313,8 +352,9 @@ PR check-run attached to it.
 Per `README.md` → "Contributing / git workflow": every check is expected to be green before
 merge. These are the required status checks on `main` (strict mode, so a PR must be up to date):
 `frontend-typecheck`, `frontend-lint`, `frontend-complexity`, `frontend-test-coverage`,
-`frontend-build`, `server-typecheck`, `server-lint`, `server-complexity`, `server-test-coverage`,
-`server-build`, `server-migrations-drift` and `pr-hygiene`. This is a repo setting outside the
+`frontend-diff-coverage`, `frontend-build`, `server-typecheck`, `server-lint`,
+`server-complexity`, `server-test-coverage`, `server-diff-coverage`, `server-build`,
+`server-migrations-drift` and `pr-hygiene`. This is a repo setting outside the
 version-controlled config: **renaming or adding a job means updating that list too**, or `main`
 will wait forever on a check that no longer exists (or silently not gate on a new one).
 

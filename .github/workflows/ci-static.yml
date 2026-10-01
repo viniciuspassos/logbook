@@ -216,6 +216,77 @@ jobs:
       - name: Build
         run: npm run build
 
+  # Diff-aware coverage: every function the PR touched must be executed by a test.
+  # (scripts/ci/diffCoverage.ts: git diff -> changed functions via the TS AST -> Jest's
+  # coverage-final.json.) Needs full history so `origin/<base>...HEAD` resolves, and the
+  # root `npm ci` for the `typescript` package the script parses with.
+  frontend-diff-coverage:
+    name: frontend-diff-coverage
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v5
+        with:
+          ref: ${{ github.event.pull_request.head.sha }}
+          fetch-depth: 0
+
+      - uses: actions/setup-node@v5
+        with:
+          node-version: 24
+          cache: npm
+
+      - run: npm ci
+
+      # The global coverageThreshold is enforced by frontend-test-coverage; disabling it here
+      # lets the next step run and name the exact untested function instead of being skipped.
+      - name: Jest with coverage report
+        run: npm test -- --coverage --coverageThreshold='{}'
+
+      - name: Every modified function must be covered
+        env:
+          BASE_REF: ${{ github.base_ref }}
+        run: >-
+          node scripts/ci/runDiffCoverage.ts
+          --coverage coverage/coverage-final.json
+          --prefix src/ --prefix scripts/
+          --base "origin/$BASE_REF"
+
+  server-diff-coverage:
+    name: server-diff-coverage
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v5
+        with:
+          ref: ${{ github.event.pull_request.head.sha }}
+          fetch-depth: 0
+
+      - uses: actions/setup-node@v5
+        with:
+          node-version: 24
+          cache: npm
+          cache-dependency-path: |
+            package-lock.json
+            server/package-lock.json
+
+      - run: npm ci
+
+      - name: Install server dependencies
+        run: npm ci
+        working-directory: server
+
+      # Threshold enforced by server-test-coverage; see the frontend job for why it is off here.
+      - name: Jest with coverage report
+        run: npm test -- --coverage --coverageThreshold='{}'
+        working-directory: server
+
+      - name: Every modified function must be covered
+        env:
+          BASE_REF: ${{ github.base_ref }}
+        run: >-
+          node scripts/ci/runDiffCoverage.ts
+          --coverage server/coverage/coverage-final.json
+          --prefix server/src/
+          --base "origin/$BASE_REF"
+
   server-migrations-drift:
     name: server-migrations-drift
     runs-on: ubuntu-latest
