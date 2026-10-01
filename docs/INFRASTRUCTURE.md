@@ -367,6 +367,25 @@ server image builds successfully. This catches regressions in the Dockerfile or 
 dependencies before deployment. The job does not push to any registry; it only verifies the build
 succeeds locally on ubuntu-latest.
 
+### `ci-secrets.yml` — secret scanning
+
+One job, **`secret-scan`**, on PR open/sync/reopen. It scans every commit in the PR (via gitleaks)
+for accidentally-committed secrets — API keys, tokens, credentials, etc. Fails if any match known
+secret patterns. CLAUDE.md forbids committing secrets; this gate enforces it.
+
+**If a false positive occurs** (e.g. a placeholder string in `.env.example` or a test fixture
+that looks like a secret), add a minimal allowlist entry to `.gitleaks.toml` in the repo root with
+a comment explaining why. Do not add allowlist entries speculatively; only for real false positives.
+
+**Scanning scope**: gitleaks scans only the PR's commits (the range `origin/<base-branch>..HEAD`),
+not the entire repository history.
+
+**What to do if a secret leaks**: If a real secret is committed and the gate catches it, the
+secret must be rotated / revoked immediately — committing the secret to a version-control system,
+even temporarily, is a compromise. Removing it from the repo in a follow-up commit does not secure
+it. Any service account, API key, or token that appears in the Git history must be invalidated and
+replaced.
+
 ### Branch protection expectation
 
 Per `README.md` → "Contributing / git workflow": every check is expected to be green before
@@ -374,7 +393,7 @@ merge. These are the required status checks on `main` (strict mode, so a PR must
 `frontend-typecheck`, `frontend-lint`, `frontend-complexity`, `frontend-test-coverage`,
 `frontend-diff-coverage`, `frontend-build`, `server-typecheck`, `server-lint`,
 `server-complexity`, `server-test-coverage`, `server-diff-coverage`, `server-build`,
-`server-migrations-drift`, `server-docker-build` and `pr-hygiene`. This is a repo setting outside
+`server-migrations-drift`, `server-docker-build`, `secret-scan` and `pr-hygiene`. This is a repo setting outside
 the version-controlled config: **renaming or adding a job means updating that list too**, or
 `main` will wait forever on a check that no longer exists (or silently not gate on a new one).
 
