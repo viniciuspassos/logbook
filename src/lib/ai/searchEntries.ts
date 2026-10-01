@@ -1,4 +1,5 @@
 import { getLanguageModelAvailability, isCapabilityUsable } from './availability.ts'
+import { containsTerm, stem } from '../stemMatch.ts'
 import type { Entry } from '../../types/entry.ts'
 
 export interface SearchCriteria {
@@ -25,7 +26,25 @@ const SEARCH_SCHEMA = {
 const SYSTEM_PROMPT =
   'Turn a natural-language search over an adventure logbook into structured ' +
   'criteria. `monthOfYear` should be a full month name if the query mentions a ' +
-  'time of year. Only include fields the query actually implies.'
+  'time of year. Only include fields the query actually implies: omit the rest, ' +
+  'never a placeholder such as "unknown" or "any".'
+
+/** Stand-ins the model still sometimes returns for a field the query never implied. */
+const PLACEHOLDER_VALUES = new Set(['unknown', 'any', 'none', 'n/a'])
+
+/** Words people add to a query ("windy climbing trips") that no entry would contain. */
+const GENERIC_TERMS = new Set(['trip', 'adventure', 'outing', 'entry'].map(stem))
+
+function isRecord(value: unknown): value is Record<string, unknown> {
+  return typeof value === 'object' && value !== null && !Array.isArray(value)
+}
+
+/** A trimmed, non-placeholder string, or undefined for anything else the model sent. */
+function meaningful(value: unknown): string | undefined {
+  if (typeof value !== 'string') return undefined
+  const trimmed = value.trim()
+  return trimmed && !PLACEHOLDER_VALUES.has(trimmed.toLowerCase()) ? trimmed : undefined
+}
 
 function keywordFallback(query: string): SearchCriteria {
   return { keywords: query.split(/\s+/).map((w) => w.trim()).filter(Boolean) }
@@ -53,26 +72,23 @@ export async function parseSearchQuery(
       signal: opts?.signal,
       responseConstraint: SEARCH_SCHEMA,
     })
-    const parsed = JSON.parse(response) as Partial<SearchCriteria>
+    const parsed: unknown = JSON.parse(response)
+    if (!isRecord(parsed)) return keywordFallback(query)
     const keywords = Array.isArray(parsed.keywords)
-      ? parsed.keywords.filter((k): k is string => typeof k === 'string')
+      ? parsed.keywords.map(meaningful).filter((k): k is string => k !== undefined)
       : []
     return {
       keywords: keywords.length > 0 ? keywords : keywordFallback(query).keywords,
-      activityType: parsed.activityType,
-      location: parsed.location,
-      monthOfYear: parsed.monthOfYear,
-      weatherKeyword: parsed.weatherKeyword,
+      activityType: meaningful(parsed.activityType),
+      location: meaningful(parsed.location),
+      monthOfYear: meaningful(parsed.monthOfYear),
+      weatherKeyword: meaningful(parsed.weatherKeyword),
     }
   } catch {
     return keywordFallback(query)
   } finally {
     session?.destroy()
   }
-}
-
-function matchesText(haystack: string, needle: string): boolean {
-  return haystack.toLowerCase().includes(needle.toLowerCase())
 }
 
 function entryText(entry: Entry): string {
@@ -86,18 +102,32 @@ function entryText(entry: Entry): string {
   ].join(' ')
 }
 
-/** Pure, synchronous filter applying parsed criteria to the in-memory entries. */
+/**
+ * Pure, synchronous filter applying parsed criteria to the in-memory entries.
+ * Matching is by whole word and stem (see stemMatch.ts), so a query's "climbs" finds an
+ * entry's "Climbing" — every model keyword must match, and the model rarely
+ * repeats the entry's exact word form.
+ */
 export function applySearchCriteria(entries: Entry[], criteria: SearchCriteria): Entry[] {
-  const { keywords, activityType, location, monthOfYear, weatherKeyword } = criteria
+  const { activityType, location, monthOfYear, weatherKeyword } = criteria
+  const specific = criteria.keywords.filter((kw) => !GENERIC_TERMS.has(stem(kw)))
+  // A query that is only "trip" still means "trip".
+  const keywords = specific.length > 0 ? specific : criteria.keywords
+  // "hiking/climbing" means either one.
+  const activities = activityType?.split('/').map((a) => a.trim()).filter(Boolean) ?? []
   return entries.filter((entry) => {
     const text = entryText(entry)
-    if (keywords.length > 0 && !keywords.every((kw) => matchesText(text, kw))) {
+    if (!keywords.every((kw) => containsTerm(text, kw))) return false
+    if (
+      activities.length > 0 &&
+      !activities.some((activity) => containsTerm(entry.activityType ?? '', activity))
+    ) {
       return false
     }
-    if (activityType && !matchesText(entry.activityType ?? '', activityType)) return false
-    if (location && !matchesText(entry.location, location)) return false
-    if (monthOfYear && !matchesText(entry.date, monthOfYear.slice(0, 3))) return false
-    if (weatherKeyword && !matchesText(entry.weather, weatherKeyword)) return false
+    // Places are often named in the story rather than the location field ("over the Alps").
+    if (location && !containsTerm(text, location)) return false
+    if (monthOfYear && !containsTerm(entry.date, monthOfYear.slice(0, 3))) return false
+    if (weatherKeyword && !containsTerm(entry.weather, weatherKeyword)) return false
     return true
   })
 }
