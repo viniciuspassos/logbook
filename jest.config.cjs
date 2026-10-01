@@ -19,11 +19,12 @@ module.exports = {
     '!src/main.tsx',
     '!src/types/**',
     '!src/data/**',
-    // CI scripts are held to the same 100%-function bar; the runner is a
-    // function-less entry wrapper, so it is excluded.
+    // CI scripts are held to the same 100%-function bar; the thin runners are
+    // function-less entry wrappers, so they are excluded.
     'scripts/**/*.ts',
     '!scripts/**/*.test.ts',
     '!scripts/ci/runCheckPrMetadata.ts',
+    '!scripts/ci/runDiffCoverage.ts',
   ],
   coverageThreshold: {
     global: {

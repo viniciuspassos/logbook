@@ -40,6 +40,8 @@ Sync local `main` (`git fetch origin && git log origin/main`) and search the cod
 
 Follow Test-Driven Development: write the failing Jest test for the behavior first, then write the minimum code to make it pass, then refactor. Every function, both backend and frontend, must have a unit test written with Jest. When adding a function, add or update its corresponding Jest test in the same change.
 
+CI enforces this per change too: `frontend-diff-coverage` / `server-diff-coverage` fail a PR when a function it modified is never executed by a test (see `docs/INFRASTRUCTURE.md` → "Diff-aware coverage gate").
+
 Tests must never be deleted to make a change land. If a test's behavior is genuinely no longer applicable (e.g. the function it covers was intentionally removed), the removal must be called out explicitly and justified in the change — never delete or silently weaken a test because it's inconvenient or failing.
 
 ## Architecture
