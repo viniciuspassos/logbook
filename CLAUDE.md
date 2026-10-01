@@ -59,7 +59,7 @@ Tests must never be deleted to make a change land. If a test's behavior is genui
 - `useEntries` — the persisted list; loads from IndexedDB on mount, seeds from `src/data/entries.ts` only when the store is empty, and write-throughs on save. `data/entries.ts` is seed data, **not** the live source of truth.
 - `useNewEntryFlow` — the capture → listening → processing → review state machine, speech, and AI orchestration.
 - `useExportActions` — Markdown/PDF/backup/restore, with a `busy` guard and a status message.
-- `useSyncOutbox` — registers the reconnect trigger and does a mount-time drain against the backend outbox (`src/lib/sync/`); exposes `queueEntryCreate` for `saveEntry` to call.
+- `useSyncOutbox` — registers the reconnect trigger and does a mount-time drain against the backend outbox (`src/lib/sync/`); exposes `queueEntryCreate` for `saveEntry` to call, and `syncStatus` (the timeline's sync line). It reads every finished drain, wherever it started, through `outboxRunner`'s `subscribeToDrains`, and forwards what each one learns about the session to `useAuth`.
 - `useEntryAttachments` — the attachment gallery (server-confirmed + locally-queued photos) for whichever entry is open, and the upload flow.
 
 Keep these concerns separate: put new state in the hook that owns that concern (or a new one) rather than growing `useLogbookApp` back into a god hook.

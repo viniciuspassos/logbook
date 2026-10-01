@@ -8,6 +8,7 @@ describe('TimelineScreen', () => {
   it('renders every entry as a card in list view', () => {
     render(
       <TimelineScreen
+        syncStatus="Saved locally"
         entries={entries}
         timelineView="list"
         onChangeView={() => {}}
@@ -19,11 +20,25 @@ describe('TimelineScreen', () => {
     }
   })
 
+  it('announces the sync status it is given', () => {
+    render(
+      <TimelineScreen
+        syncStatus="Saved locally · synced"
+        entries={entries}
+        timelineView="list"
+        onChangeView={() => {}}
+        onOpenEntry={() => {}}
+      />,
+    )
+    expect(screen.getByRole('status')).toHaveTextContent('Saved locally · synced')
+  })
+
   it('opens an entry when its card is clicked', async () => {
     const onOpenEntry = jest.fn()
     const user = userEvent.setup()
     render(
       <TimelineScreen
+        syncStatus="Saved locally"
         entries={entries}
         timelineView="list"
         onChangeView={() => {}}
@@ -37,6 +52,7 @@ describe('TimelineScreen', () => {
   it('switches to map view and renders a pin + strip card per entry', () => {
     render(
       <TimelineScreen
+        syncStatus="Saved locally"
         entries={entries}
         timelineView="map"
         onChangeView={() => {}}
@@ -52,6 +68,7 @@ describe('TimelineScreen', () => {
     const user = userEvent.setup()
     render(
       <TimelineScreen
+        syncStatus="Saved locally"
         entries={entries}
         timelineView="list"
         onChangeView={onChangeView}
@@ -67,6 +84,7 @@ describe('TimelineScreen', () => {
     const user = userEvent.setup()
     render(
       <TimelineScreen
+        syncStatus="Saved locally"
         entries={entries}
         timelineView="map"
         onChangeView={onChangeView}
@@ -82,6 +100,7 @@ describe('TimelineScreen', () => {
     const user = userEvent.setup()
     render(
       <TimelineScreen
+        syncStatus="Saved locally"
         entries={entries}
         timelineView="map"
         onChangeView={() => {}}
@@ -95,6 +114,7 @@ describe('TimelineScreen', () => {
   it('renders a date header per group in list view', () => {
     const { container } = render(
       <TimelineScreen
+        syncStatus="Saved locally"
         entries={entries}
         timelineView="list"
         onChangeView={() => {}}
@@ -114,6 +134,7 @@ describe('TimelineScreen', () => {
     const user = userEvent.setup()
     const { container } = render(
       <TimelineScreen
+        syncStatus="Saved locally"
         entries={entries}
         timelineView="map"
         onChangeView={() => {}}

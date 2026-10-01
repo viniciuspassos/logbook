@@ -1,7 +1,15 @@
-import { render, screen } from '@testing-library/react'
+import { act, render, screen } from '@testing-library/react'
 import userEvent from '@testing-library/user-event'
 import App from './App.tsx'
 import { entries } from './data/entries.ts'
+import { subscribeToDrains } from './lib/sync/outboxRunner.ts'
+
+// The real runner, with subscribeToDrains wrapped so a test can hand a drain
+// outcome straight to whoever subscribed.
+jest.mock('./lib/sync/outboxRunner.ts', () => {
+  const actual = jest.requireActual('./lib/sync/outboxRunner.ts')
+  return { ...actual, subscribeToDrains: jest.fn(actual.subscribeToDrains) }
+})
 
 // This suite exercises the real App -> useLogbookApp -> useEntries path and
 // asserts against the sample entries' titles/ids, so it needs the same
@@ -24,6 +32,15 @@ describe('App', () => {
     }
   })
 
+  it('shows how the latest sync went in the timeline header', () => {
+    render(<App />)
+    expect(screen.getByRole('status')).toHaveTextContent('Saved locally')
+
+    const listener = (subscribeToDrains as jest.Mock).mock.calls.at(-1)?.[0]
+    act(() => listener({ processed: 0, stoppedReason: 'auth' }))
+    expect(screen.getByRole('status')).toHaveTextContent('Saved locally · sign in to sync')
+  })
+
   it('navigates between tabs and hides the tab bar behind an overlay', async () => {
     const user = userEvent.setup()
     render(<App />)
@@ -38,7 +55,7 @@ describe('App', () => {
     expect(screen.getByRole('searchbox')).toBeInTheDocument()
 
     await user.click(screen.getByRole('button', { name: /timeline/i }))
-    expect(screen.getByText('Saved locally · not synced')).toBeInTheDocument()
+    expect(screen.getByText('Saved locally')).toBeInTheDocument()
   })
 
   it('opens an entry from the timeline and can navigate back', async () => {
@@ -73,7 +90,7 @@ describe('App', () => {
     expect(await screen.findByText('Manual entry')).toBeInTheDocument()
 
     await user.click(screen.getByRole('button', { name: 'Save entry' }))
-    expect(await screen.findByText('Saved locally · not synced')).toBeInTheDocument()
+    expect(await screen.findByText('Saved locally')).toBeInTheDocument()
     // Appears as both the new card's title and its derived excerpt.
     expect(screen.getAllByText('Sunset trail run today').length).toBeGreaterThan(0)
   })

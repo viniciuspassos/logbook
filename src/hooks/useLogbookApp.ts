@@ -108,5 +108,7 @@ export function useLogbookApp() {
     attachments,
     // sign-in state (#57) for the sync backend
     auth,
+    // the timeline's sync line, from the last outbox drain
+    syncStatus: syncOutbox.syncStatus,
   }
 }

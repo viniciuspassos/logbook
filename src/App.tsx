@@ -39,6 +39,7 @@ function App() {
     exportActions,
     attachments,
     auth,
+    syncStatus,
   } = useLogbookApp()
   const isDesktop = useIsDesktop()
   // Below the desktop breakpoint an overlay is a full-screen cover, so the
@@ -56,6 +57,7 @@ function App() {
       <div className="app-screen">
         {tab === 'timeline' && (
           <TimelineScreen
+            syncStatus={syncStatus}
             entries={entries}
             timelineView={timelineView}
             onChangeView={setTimelineView}
