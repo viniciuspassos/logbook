@@ -1,0 +1,28 @@
+name: CI - Docker Build
+
+# Ensures the server Docker image builds successfully, catching regressions in
+# the Dockerfile or missing dependencies before deployment. Does not push to any
+# registry — it only verifies the build succeeds locally.
+
+on:
+  pull_request:
+    types: [opened, synchronize, reopened]
+
+permissions:
+  contents: read
+
+concurrency:
+  group: ci-docker-${{ github.event.pull_request.number }}
+  cancel-in-progress: true
+
+jobs:
+  server-docker-build:
+    name: server-docker-build
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v5
+        with:
+          ref: ${{ github.event.pull_request.head.sha }}
+
+      - name: Build server Docker image
+        run: docker build --pull -f server/Dockerfile server/
