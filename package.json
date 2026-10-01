@@ -4,6 +4,9 @@
   "version": "0.0.0",
   "description": "an offline-first Progressive Web App (PWA) for mountaineers and skydivers to record their adventures, even in places with little or no internet connectivity",
   "type": "module",
+  "engines": {
+    "node": ">=22.18"
+  },
   "scripts": {
     "dev": "vite",
     "dev:mocked": "vite --mode mocked",
