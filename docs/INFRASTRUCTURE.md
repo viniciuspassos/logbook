@@ -6,7 +6,8 @@ hooks, CI, and how the production build is produced. For the app's own architect
 
 ## Local dev environment
 
-- **Node 20+** (developed on Node 22, CI runs Node 24), **npm 10+**.
+- **Node 22.18+** (CI runs Node 24; the `scripts/ci` TypeScript runs natively via Node's type
+  stripping, and the `pre-push` hook checks for it), **npm 10+**.
 - No backend, no database service, no environment variables/secrets are needed to run the
   frontend or persist entry text locally — it's a static Vite app that persists entries to the
   browser's own IndexedDB. Photo attachments are the exception: they have no local durable store
@@ -205,6 +206,18 @@ wired up via `core.hooksPath`:
   commit is a strong signal the matching per-rule CI jobs will also pass. It then checks whether any staged
   file is under `server/`; if so, it additionally runs `server/`'s own typecheck → lint → complexity → test
   (with `--coverage`) sequence (see below for why this is scoped rather than unconditional).
+- **`pre-push`** — branch-wide checks that need `origin/main`: `tsc -b` → `eslint` →
+  `npm run lint:complexity` → a Jest run for the coverage report (threshold off; `pre-commit` and
+  CI enforce it) → the diff-aware coverage gate (every function the branch modified must be
+  executed by a test; see "Diff-aware coverage gate"). If the branch touches `server/`
+  (`git diff origin/main...HEAD`) the same sequence runs there, and the push is refused when
+  `server/node_modules` is missing. Pure branch deletions and empty pushes are skipped; a missing `origin/main`
+  fails with a "git fetch origin" hint. The gates check the checked-out `HEAD` and working tree,
+  so the hook refuses a push of any commit that is not `HEAD` and warns about uncommitted changes
+  (it does not fetch `origin/main` itself — a stale tracking ref widens the diff). It also needs
+  Node 22.18+. Never bypass it with `--no-verify` — CI runs the same gates per rule. It is tested
+  by running the real script (`scripts/ci/prePush.test.ts`) against stub `npm`/`node` binaries,
+  including through a real `git push` and `core.hooksPath`; `PRE_PUSH_BASE` exists only for that.
 - **`commit-msg`** — rejects a commit whose subject line doesn't match Conventional Commits
   (`feat|fix|docs|style|refactor|perf|test|build|ci|chore|revert(scope)?: description`).
 
@@ -225,7 +238,7 @@ imposing the backend toolchain on everyone else's commit path. If `server/node_m
 when a `server/` change *is* staged, the hook fails fast with an explicit "run `npm install` in
 `server/` first" message rather than a confusing module-resolution error.
 
-Neither hook can be bypassed by CI — see below, the same checks run again server-side — so
+None of these hooks can be bypassed by CI — see below, the same checks run again server-side — so
 `--no-verify` locally only defers the failure to the PR, it doesn't avoid it.
 
 ## CI pipeline (`.github/workflows/`)

@@ -26,7 +26,7 @@ feature from request to merged PR, see `docs/AGENTIC_WORKFLOW.md`.
 - `npm test` — run the Jest suite (jsdom + Testing Library)
 - `npm run preview` — serve the production build locally (needed to exercise the real PWA/offline behaviour)
 
-`.githooks/pre-commit` gates every commit on typecheck → lint → complexity → tests, and `.githooks/commit-msg` enforces Conventional Commits. `npm install` wires the hooks up via the `prepare` script.
+`.githooks/pre-commit` gates every commit on typecheck → lint → complexity → tests, `.githooks/pre-push` re-checks typecheck → lint → complexity → diff-aware coverage against `origin/main` before every push, and `.githooks/commit-msg` enforces Conventional Commits. `npm install` wires the hooks up via the `prepare` script.
 
 `server/` is a separate NestJS + Postgres backend package with its own `package.json`/`npm install`/scripts — not wired into the root project references, and not required to run, build, or test the frontend. See `docs/INFRASTRUCTURE.md` for its commands, Docker Compose setup, and how CI gates it.
 

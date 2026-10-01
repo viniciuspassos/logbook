@@ -1,0 +1,101 @@
+#!/usr/bin/env bash
+# Gate every push on: typecheck, lint, complexity, diff-aware coverage (the same per-rule checks CI runs).
+# pre-commit already ran the full test suite per commit; this adds the branch-wide checks that
+# need origin/main: every function the branch modified must be executed by a test.
+# Installed via `git config core.hooksPath .githooks` (see package.json "prepare" script).
+#
+# The checks run against the checked-out HEAD and working tree, so the hook refuses a push whose
+# commit is not HEAD (it could not vouch for it) and warns when the tree has uncommitted changes.
+set -e
+
+# git feeds one line per ref on stdin: <local ref> <local sha> <remote ref> <remote sha>.
+# A deletion has an all-zero local sha (40 or 64 zeros). `|| [ -n ... ]` keeps a last line that
+# lacks its trailing newline (manual `git hook run`).
+pushed_shas=""
+while read -r _ local_sha _ _ || [ -n "$local_sha" ]; do
+  case "$local_sha" in
+    *[!0]*) pushed_shas="$pushed_shas $local_sha" ;;
+  esac
+  local_sha=""
+done
+if [ -z "$pushed_shas" ]; then
+  echo "[pre-push] nothing to check (no commits being pushed)"
+  exit 0
+fi
+
+head_sha=$(git rev-parse HEAD)
+for sha in $pushed_shas; do
+  if [ "$sha" != "$head_sha" ]; then
+    echo "[pre-push] pushing $sha, but HEAD is $head_sha." >&2
+    echo "[pre-push] the gates check the checked-out branch; check out what you are pushing and push again." >&2
+    exit 1
+  fi
+done
+
+if [ -n "$(git status --porcelain)" ]; then
+  echo "[pre-push] warning: uncommitted changes in the working tree; the checks below include them." >&2
+fi
+
+# runDiffCoverage.ts runs as TypeScript directly, which needs Node's native type stripping.
+node_version=$(node -p "process.versions.node")
+if [ "$(printf '%s\n%s\n' 22.18.0 "$node_version" | sort -V | head -n1)" != "22.18.0" ]; then
+  echo "[pre-push] Node $node_version is too old: 22.18 or newer is required (CI uses 24)." >&2
+  exit 1
+fi
+
+# PRE_PUSH_BASE only exists so the hook can be tested against a throwaway repo.
+base="${PRE_PUSH_BASE:-origin/main}"
+if ! git rev-parse --verify -q "$base" >/dev/null; then
+  echo "[pre-push] cannot find $base; run \"git fetch origin\" and push again." >&2
+  exit 1
+fi
+
+echo "[pre-push] type-checking (tsc -b)"
+npm run typecheck --silent
+
+echo "[pre-push] linting (eslint)"
+npm run lint --silent
+
+echo "[pre-push] complexity (eslint, strict limits)"
+npm run lint:complexity --silent
+
+# The coverage *threshold* is enforced by pre-commit and CI's *-test-coverage jobs; here we only
+# need the report so the diff gate can name the exact untested function.
+echo "[pre-push] running tests for the coverage report"
+npm test --silent -- --coverage --coverageThreshold='{}'
+
+echo "[pre-push] diff coverage (every modified function must be executed by a test)"
+node scripts/ci/runDiffCoverage.ts \
+  --coverage coverage/coverage-final.json --prefix src/ --prefix scripts/ --base "$base"
+
+# Same scoping as pre-commit: only when this branch touches server/ (see docs/INFRASTRUCTURE.md).
+# Captured first so a git failure (no merge base, bad ref) aborts under `set -e` instead of
+# reading as "no server changes".
+changed_files=$(git diff --name-only "$base...HEAD")
+if printf '%s\n' "$changed_files" | grep -q '^server/'; then
+  if [ ! -d server/node_modules ]; then
+    echo "[pre-push] this branch changes server/ but server/node_modules is missing." >&2
+    echo "[pre-push] run \"npm install\" inside server/ first, then push again." >&2
+    exit 1
+  fi
+
+  echo "[pre-push] server/: type-checking"
+  (cd server && npm run typecheck --silent)
+
+  echo "[pre-push] server/: linting"
+  (cd server && npm run lint --silent)
+
+  echo "[pre-push] server/: complexity"
+  (cd server && npm run lint:complexity --silent)
+
+  echo "[pre-push] server/: running tests for the coverage report"
+  (cd server && npm test --silent -- --coverage --coverageThreshold='{}')
+
+  echo "[pre-push] server/: diff coverage"
+  node scripts/ci/runDiffCoverage.ts \
+    --coverage server/coverage/coverage-final.json --prefix server/src/ --base "$base"
+else
+  echo "[pre-push] no server/ changes on this branch, skipping backend gates"
+fi
+
+echo "[pre-push] all checks passed"
