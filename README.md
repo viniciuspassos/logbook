@@ -39,7 +39,7 @@ npm install
 ```
 
 This also runs the `prepare` script, which points git at the repo's hooks
-(`git config core.hooksPath .githooks`) so the pre-commit gate is active locally.
+(`git config core.hooksPath .githooks`) so the pre-commit and pre-push gates are active locally.
 
 ### Run, build, and verify
 
@@ -50,6 +50,8 @@ This also runs the `prepare` script, which points git at the repo's hooks
 | `npm run preview` | Serve the built `dist/` locally to sanity-check the production bundle.          |
 | `npm test`        | Run the Jest test suite (jsdom + Testing Library).                              |
 | `npm run lint`    | Run ESLint over the whole repo.                                                 |
+| `npm run lint:complexity` | Run the strict complexity limits (nested ifs, cyclomatic, length).      |
+| `npm run typecheck` | Type-check the app (`tsc -b`).                                                |
 
 For a typical loop: `npm run dev` to work, then `npm test && npm run build` before committing.
 
@@ -213,7 +215,8 @@ npm test -- --watch   # watch mode while developing
 
 - Work on a feature branch (`feat/…`, `fix/…`, `chore/…`), never directly on `main`.
 - Commits must follow **Conventional Commits**; the `.githooks/commit-msg` hook enforces the
-  subject format, and `.githooks/pre-commit` gates every commit on **typecheck → lint → tests**.
+  subject format, `.githooks/pre-commit` gates every commit on **typecheck → lint → complexity → tests**, and
+  `.githooks/pre-push` re-checks them plus diff-aware coverage against `origin/main`.
 - Open a PR against `main`. CI runs the static gates automatically; they must be green before
   merge.
 

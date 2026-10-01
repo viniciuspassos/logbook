@@ -20,11 +20,13 @@ feature from request to merged PR, see `docs/AGENTIC_WORKFLOW.md`.
 
 - `npm run dev` — start the Vite dev server with HMR (the service worker is enabled in dev too)
 - `npm run build` — type-check via `tsc -b` (project references: `tsconfig.app.json` + `tsconfig.node.json`), then production build via `vite build` (also emits the manifest + service worker)
+- `npm run typecheck` — `tsc -b` on its own
 - `npm run lint` — run ESLint over the whole repo
+- `npm run lint:complexity` — the strict complexity limits (nested ifs, cyclomatic, length), run separately
 - `npm test` — run the Jest suite (jsdom + Testing Library)
 - `npm run preview` — serve the production build locally (needed to exercise the real PWA/offline behaviour)
 
-`.githooks/pre-commit` gates every commit on typecheck → lint → tests, and `.githooks/commit-msg` enforces Conventional Commits. `npm install` wires the hooks up via the `prepare` script.
+`.githooks/pre-commit` gates every commit on typecheck → lint → complexity → tests, `.githooks/pre-push` re-checks typecheck → lint → complexity → diff-aware coverage against `origin/main` before every push, and `.githooks/commit-msg` enforces Conventional Commits. `npm install` wires the hooks up via the `prepare` script.
 
 `server/` is a separate NestJS + Postgres backend package with its own `package.json`/`npm install`/scripts — not wired into the root project references, and not required to run, build, or test the frontend. See `docs/INFRASTRUCTURE.md` for its commands, Docker Compose setup, and how CI gates it.
 
@@ -38,6 +40,8 @@ Sync local `main` (`git fetch origin && git log origin/main`) and search the cod
 
 Follow Test-Driven Development: write the failing Jest test for the behavior first, then write the minimum code to make it pass, then refactor. Every function, both backend and frontend, must have a unit test written with Jest. When adding a function, add or update its corresponding Jest test in the same change.
 
+CI enforces this per change too: `frontend-diff-coverage` / `server-diff-coverage` fail a PR when a function it modified is never executed by a test (see `docs/INFRASTRUCTURE.md` → "Diff-aware coverage gate").
+
 Tests must never be deleted to make a change land. If a test's behavior is genuinely no longer applicable (e.g. the function it covers was intentionally removed), the removal must be called out explicitly and justified in the change — never delete or silently weaken a test because it's inconvenient or failing.
 
 ## Architecture
@@ -46,7 +50,7 @@ Tests must never be deleted to make a change land. If a test's behavior is genui
 - TypeScript is split via project references from the root `tsconfig.json` into:
   - `tsconfig.app.json` — app code under `src/`, bundler module resolution, `noEmit`, strict unused-locals/params checks.
   - `tsconfig.node.json` — Node-side config (`vite.config.ts` itself).
-- Linting: flat ESLint config (`eslint.config.js`) combining `@eslint/js` recommended, `typescript-eslint` recommended, `eslint-plugin-react-hooks`, and `eslint-plugin-react-refresh` (Vite variant). `dist` is ignored. Keep `any` out of new code — prefer `unknown` + narrowing, or the ambient interfaces in `src/types/`.
+- Linting: flat ESLint config (`eslint.config.js`) combining `@eslint/js` recommended, `typescript-eslint` recommended, `eslint-plugin-react-hooks`, and `eslint-plugin-react-refresh` (Vite variant). `dist` is ignored. Strict complexity rules, run as their own check (`npm run lint:complexity`, config in `eslint.complexity.config.js`) (`complexity` 10, `max-depth` 3, `max-params` 4, `max-nested-callbacks` 3, `max-lines-per-function` 80; the last two are off for tests) apply to new code in the root and `server/src` — existing violations are recorded in `eslint-complexity-suppressions.json` (burn-down tracked in #71; never add entries, refactor instead). Keep `any` out of new code — prefer `unknown` + narrowing, or the ambient interfaces in `src/types/`.
 - Entry point: `index.html` → `src/main.tsx` mounts `<App />` from `src/App.tsx` into `#root` under `React.StrictMode`.
 - App icons and the PWA icon set live in `public/` (`icon.svg` is the source of truth; the PNGs are rendered from it). Component-local assets live in `src/assets/`.
 - Theme tokens (`--lb-*`) are defined once in `src/index.css`, with a `prefers-color-scheme: dark` block. Add new colours there rather than hardcoding hex in a component's CSS; the manifest/`theme-color` values in `vite.config.ts` and `index.html` mirror them.

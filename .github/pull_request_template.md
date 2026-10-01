@@ -1,6 +1,10 @@
 ## Summary
 <!-- 1-3 bullets: what changed and why -->
 
+## Linked issue
+<!-- Required by the pr-hygiene check. Use Closes/Fixes/Resolves/Refs #N — it must be a real issue, not a PR. -->
+Closes #
+
 ## Test plan
 - [ ] `git hook run pre-commit` passes (typecheck, lint, test)
 - [ ] `npm run build` succeeds
@@ -9,7 +13,7 @@
 <!--
 The `qa-release-gate` agent runs a real Playwright + Claude session — it
 costs money and time, is invoked locally (not in CI), and is not required
-to merge (only `static-gates` blocks merge).
+to merge (only the required status checks block merge).
 
 Skip it for routine changes: docs, config, small fixes, refactors,
 anything low-risk.

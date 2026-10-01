@@ -26,6 +26,7 @@ module.exports = [
         'error',
         { argsIgnorePattern: '^_', varsIgnorePattern: '^_' },
       ],
+      // Complexity limits live in eslint.complexity.config.js (its own CI check).
     },
   },
 ]

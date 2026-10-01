@@ -4,7 +4,7 @@ module.exports = {
   moduleNameMapper: {
     '\\.(css|less|scss)$': 'identity-obj-proxy',
   },
-  testMatch: ['<rootDir>/src/**/*.test.{ts,tsx}'],
+  testMatch: ['<rootDir>/src/**/*.test.{ts,tsx}', '<rootDir>/scripts/**/*.test.ts'],
   transform: {
     '^.+\\.(t|j)sx?$': 'babel-jest',
   },
@@ -19,6 +19,13 @@ module.exports = {
     '!src/main.tsx',
     '!src/types/**',
     '!src/data/**',
+    // CI scripts are held to the same 100%-function bar; the thin runners are
+    // function-less entry wrappers, so they are excluded.
+    'scripts/**/*.ts',
+    '!scripts/**/*.test.ts',
+    '!scripts/ci/runCheckPrMetadata.ts',
+    '!scripts/ci/runDiffCoverage.ts',
+    '!scripts/ci/runBundleSize.ts',
   ],
   coverageThreshold: {
     global: {

@@ -20,6 +20,9 @@ module.exports = {
     '!**/*.module.ts',
     '!database/migrations/**',
   ],
+  // rootDir is src/, which would put the report in src/coverage; the CI diff-coverage
+  // job (scripts/ci/diffCoverage.ts) reads server/coverage/coverage-final.json.
+  coverageDirectory: '<rootDir>/../coverage',
   coverageThreshold: {
     global: {
       statements: 88,

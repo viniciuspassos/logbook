@@ -48,7 +48,7 @@ Also check `git status` and current branch at the start, and mention them in you
 
 Run the project's real gates, not a reimplementation of them:
 
-1. `git hook run pre-commit` if `.githooks/pre-commit` exists (it runs typecheck, lint, and tests) — otherwise run `tsc -b`, `npm run lint`, and `npm test` individually.
+1. `git hook run pre-commit` if `.githooks/pre-commit` exists (it runs typecheck, lint, complexity, and tests) — otherwise run `tsc -b`, `npm run lint`, `npm run lint:complexity`, and `npm test` individually.
 2. `npm run build` to confirm the production build actually succeeds (catches issues `tsc -b` alone or dev-mode misses).
 
 Record pass/fail and full failure output for anything that fails. A failing gate here is an automatic no-go — still continue to Phase 2 so the report is complete, unless the build itself fails (in which case there's no app to smoke-test).
@@ -73,7 +73,7 @@ End with a structured report:
 
 1. **Verdict**: GO / NO-GO / GO WITH CAVEATS, one line, bolded, with a one-sentence reason.
 2. **Context**: branch, git status summary, what commit/state was tested.
-3. **Static gates**: pass/fail table for typecheck, lint, test, build.
+3. **Static gates**: pass/fail table for typecheck, lint, complexity, test, build.
 4. **App flows exercised**: what you walked through, pass/fail per flow.
 5. **Findings**: concrete issues found, each with what you did, what you observed, and (if applicable) a `file:line` pointer if you traced it to source. Ordered most-severe first. Empty section if nothing found — don't pad it.
 6. **Not covered**: anything you skipped and why (e.g., no test data for a flow, feature not yet implemented, time-boxed out) — this matters as much as what you did cover, since a silent gap looks like a pass otherwise.

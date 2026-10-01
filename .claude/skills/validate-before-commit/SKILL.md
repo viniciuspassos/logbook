@@ -11,7 +11,7 @@ if any fail. The hooks are the harness; this skill documents them.
 
 ## How it's wired
 
-- `.githooks/pre-commit` — runs typecheck, lint, and tests (if a
+- `.githooks/pre-commit` — runs typecheck, lint, complexity, and tests (if a
   `test` script exists in `package.json`).
 - `.githooks/commit-msg` — rejects any commit whose subject line isn't
   Conventional Commits (`type(scope)?: description`).

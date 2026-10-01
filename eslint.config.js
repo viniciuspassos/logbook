@@ -26,5 +26,6 @@ export default defineConfig([
     languageOptions: {
       globals: globals.browser,
     },
+    // Complexity limits live in eslint.complexity.config.js so they run as their own CI check.
   },
 ])
