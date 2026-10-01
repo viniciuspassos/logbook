@@ -1,0 +1,89 @@
+# Issue form for defects. The headings below are the contract: issues filed from
+# the CLI (`gh issue create`, which bypasses forms) must reuse the same `### <label>`
+# sections in the same order — see docs/INFRASTRUCTURE.md → "Issue templates".
+name: Bug report
+description: Something is broken or behaves differently from what the code or docs promise.
+title: "fix: "
+labels: ["bug"]
+body:
+  - type: markdown
+    attributes:
+      value: |
+        Use a Conventional Commits title (`fix: …`, or `fix(server): …` for the backend) — the fixing PR usually reuses it.
+        Search the open issues first so the same root cause isn't filed twice.
+
+  - type: textarea
+    id: summary
+    attributes:
+      label: Summary
+      description: What is broken, in one or two sentences.
+    validations:
+      required: true
+
+  - type: dropdown
+    id: area
+    attributes:
+      label: Area
+      options:
+        - Frontend (PWA)
+        - Backend (server/)
+        - Infra (Docker / CI)
+        - Multiple
+    validations:
+      required: true
+
+  - type: dropdown
+    id: severity
+    attributes:
+      label: Severity
+      description: Triage applies the matching `severity:` label.
+      options:
+        - critical — data loss, security hole, or app unusable
+        - high — core flow broken or silently failing, no workaround
+        - medium — reproducible bug with limited reach or a workaround
+        - low — cosmetic, warning, or minor correctness issue
+    validations:
+      required: true
+
+  - type: textarea
+    id: steps
+    attributes:
+      label: Steps to reproduce
+      description: Numbered UI steps or a copy-pasteable command (curl, npm script).
+      placeholder: |
+        1. npm run dev, sign in from Settings
+        2. ...
+    validations:
+      required: true
+
+  - type: textarea
+    id: expected
+    attributes:
+      label: Expected behavior
+    validations:
+      required: true
+
+  - type: textarea
+    id: actual
+    attributes:
+      label: Actual behavior
+      description: Include the evidence — status codes, console or server log lines, screenshots.
+    validations:
+      required: true
+
+  - type: textarea
+    id: root-cause
+    attributes:
+      label: Root cause
+      description: Suspected cause with `file:line` references, if known.
+
+  - type: textarea
+    id: suggested-fix
+    attributes:
+      label: Suggested fix
+
+  - type: textarea
+    id: environment
+    attributes:
+      label: Environment
+      description: Commit SHA, how the app was run (npm run dev, docker compose, preview build), browser.
