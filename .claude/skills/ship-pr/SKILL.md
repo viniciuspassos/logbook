@@ -92,9 +92,9 @@ what `git commit` itself enforces via `.githooks/`.
    (`gh issue create`) and fill the "Linked issue" section.
 
 8. **Wait for `static-gates` and `pr-hygiene`, then merge — no confirmation needed.**
-   `static-gates` is the required status check on `main`
-   (`enforce_admins` is off); `pr-hygiene` is expected green too, so
-   don't merge over a red one. Once both report success,
+   `static-gates` and `pr-hygiene` are the required status checks on
+   `main` (`enforce_admins` is off, so don't merge over a red one).
+   Once both report success,
    merge and clean up the branch:
    ```
    gh pr checks <pr-number> --watch

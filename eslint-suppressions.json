@@ -1,0 +1,77 @@
+{
+  "src/App.tsx": {
+    "complexity": {
+      "count": 1
+    },
+    "max-lines-per-function": {
+      "count": 1
+    }
+  },
+  "src/hooks/useEntries.ts": {
+    "max-depth": {
+      "count": 1
+    }
+  },
+  "src/hooks/useEntryAttachments.ts": {
+    "complexity": {
+      "count": 1
+    },
+    "max-lines-per-function": {
+      "count": 1
+    }
+  },
+  "src/hooks/useExportActions.ts": {
+    "max-lines-per-function": {
+      "count": 1
+    }
+  },
+  "src/hooks/useNewEntryFlow.ts": {
+    "complexity": {
+      "count": 1
+    },
+    "max-lines-per-function": {
+      "count": 1
+    }
+  },
+  "src/hooks/useSpeechCapture.ts": {
+    "max-lines-per-function": {
+      "count": 1
+    }
+  },
+  "src/lib/ai/rewriteStory.ts": {
+    "complexity": {
+      "count": 1
+    }
+  },
+  "src/lib/buildEntry.ts": {
+    "complexity": {
+      "count": 1
+    }
+  },
+  "src/lib/stemMatch.ts": {
+    "complexity": {
+      "count": 1
+    }
+  },
+  "src/screens/EntryDetailOverlay.tsx": {
+    "complexity": {
+      "count": 1
+    },
+    "max-lines-per-function": {
+      "count": 1
+    }
+  },
+  "src/screens/NewEntryOverlay.tsx": {
+    "complexity": {
+      "count": 1
+    },
+    "max-lines-per-function": {
+      "count": 1
+    }
+  },
+  "src/screens/TimelineScreen.tsx": {
+    "max-lines-per-function": {
+      "count": 1
+    }
+  }
+}
