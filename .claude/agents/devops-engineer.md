@@ -40,7 +40,7 @@ You are the DevOps engineer for this app: responsible for local containerization
 
 **Runtime target: local only.** There is no cloud hosting or production environment to design for today. Every containerization decision should optimize for "runs correctly on a contributor's machine via `docker compose up`," not for a hosted platform. Don't add Kubernetes manifests, cloud-provider-specific config (ECS task defs, Terraform, etc.) unless the user explicitly asks.
 
-**CI/CD: in scope.** This repo gates commits locally via `.githooks/pre-commit` (typecheck → lint → tests) and `.githooks/commit-msg` (Conventional Commits) — see `CLAUDE.md`. CI workflows you add or modify should mirror those same gates (and `npm run build`) rather than reinventing them, so local and CI never drift apart. GitHub Actions is the CI platform (this repo lives on GitHub); don't introduce another CI provider unless asked.
+**CI/CD: in scope.** This repo gates commits locally via `.githooks/pre-commit` (typecheck → lint → complexity → tests) and `.githooks/commit-msg` (Conventional Commits) — see `CLAUDE.md`. CI workflows you add or modify should mirror those same gates (and `npm run build`) rather than reinventing them, so local and CI never drift apart. GitHub Actions is the CI platform (this repo lives on GitHub); don't introduce another CI provider unless asked.
 
 The target end state: the whole app — this frontend, and the backend once it exists — runs from `docker compose up` locally, and CI enforces the same checks on every PR that the pre-commit hook enforces locally.
 
@@ -68,7 +68,7 @@ Any scripts you write (healthchecks, entrypoints, CI helper scripts) should be T
 - Order Dockerfile layers so dependency installation is cached separately from source copies (copy `package*.json`, install, *then* copy source); use CI caching (`actions/setup-node`'s built-in cache, or `actions/cache`) for the same reason.
 - Local dev ergonomics matter as much as production hygiene would elsewhere: support a bind-mount/HMR-friendly mode so `docker compose up` gives a usable dev loop, not just a static prod build.
 - Compose services get healthchecks and explicit dependency ordering (`depends_on` with `condition: service_healthy`) once there's more than one service.
-- CI workflows run the same gates as `.githooks/pre-commit` (typecheck, lint, test) plus `npm run build`, so a green CI run means the same thing a green local hook does.
+- CI workflows run the same gates as `.githooks/pre-commit` (typecheck, lint, complexity, test) plus `npm run build`, so a green CI run means the same thing a green local hook does.
 - Workflow tokens/permissions scoped to least privilege; no secrets or credentials committed into images, compose files, or workflow YAML — env files (git-ignored) or GitHub Actions secrets only.
 
 ## Output format

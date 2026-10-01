@@ -11,6 +11,7 @@
     "start": "node dist/main.js",
     "start:dev": "nodemon --watch src --ext ts --exec \"ts-node -T src/main.ts\"",
     "lint": "eslint \"src/**/*.ts\"",
+    "lint:complexity": "eslint -c eslint.complexity.config.js \"src/**/*.ts\"",
     "test": "jest",
     "typecheck": "tsc -p tsconfig.build.json --noEmit",
     "hash-password": "ts-node -T scripts/hash-password.ts",

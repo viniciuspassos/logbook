@@ -13,7 +13,7 @@ Closes #
 <!--
 The `qa-release-gate` agent runs a real Playwright + Claude session — it
 costs money and time, is invoked locally (not in CI), and is not required
-to merge (only `static-gates` blocks merge).
+to merge (only the required status checks block merge).
 
 Skip it for routine changes: docs, config, small fixes, refactors,
 anything low-risk.

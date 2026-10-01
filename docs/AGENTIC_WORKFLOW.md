@@ -36,7 +36,7 @@ not part of the standard per-feature loop.
 Three repo-local skills carry the mechanical parts of shipping a change, so each agent's prompt
 states policy ("run the quality gate") rather than reimplementing the steps:
 
-- **`validate-before-commit`** — runs the real `.githooks/pre-commit` (typecheck → lint → test) and
+- **`validate-before-commit`** — runs the real `.githooks/pre-commit` (typecheck → lint → complexity → test) and
   `.githooks/commit-msg` (Conventional Commits) via `git hook run`, rather than a hand-rolled
   reimplementation of those checks.
 - **`code-reviewer`** — the single quality gate before a commit. Dispatches a dedicated **Opus**
@@ -49,7 +49,7 @@ states policy ("run the quality gate") rather than reimplementing the steps:
   run `code-reviewer` (skipped only for docs-only diffs — Markdown has no test coverage or SOLID
   surface to check), commit, push with upstream tracking, open the PR (using
   `.github/pull_request_template.md`), then merge with `--squash --delete-branch` as soon as
-  `static-gates` is green — no per-PR confirmation needed in this repo.
+  the required checks are green — no per-PR confirmation needed in this repo.
 
 All four implementing agents (`product-engineer` excluded) call these in the same order: **write
 code test-first → `code-reviewer` → `ship-pr`** (which itself calls `validate-before-commit` and
@@ -98,7 +98,7 @@ human driving Claude Code directly might reach for it ad hoc, but no agent defin
 4. **`code-reviewer` gate.** One Opus-reviewed pass against `main`; `CONFIRMED` findings are fixed
    before proceeding.
 5. **`ship-pr`.** Validates (hooks), commits (Conventional Commits), pushes, opens the PR, waits
-   for `static-gates`, squash-merges, deletes the branch — no extra confirmation for this repo.
+   for the required checks, squash-merges, deletes the branch — no extra confirmation for this repo.
 6. **Periodically, not per-feature: `qa-release-gate`.** Before cutting a release candidate (or
    "make sure nothing's broken" after a longer stretch of work), a separate on-demand pass drives
    the real app with Playwright and reports GO/NO-GO with concrete evidence, layered on top of the
@@ -111,7 +111,7 @@ them separate:
 
 - **Unit tests (Jest), enforced per commit.** `CLAUDE.md`'s TDD rule — one test per function,
   written before the implementation — is enforced twice: mechanically by `.githooks/pre-commit`
-  (blocks the commit itself) and again by CI's `static-gates`/`server-static-gates` jobs
+  (blocks the commit itself) and again by CI's per-rule `frontend-*`/`server-*` jobs
   (`docs/INFRASTRUCTURE.md`). `code-reviewer` adds a *judgment* layer on top of that mechanical
   check: a function can have a test and still fail review if that test is a tautology
   (`expect(result).toBeDefined()`) rather than asserting real behavior — a missing or hollow test
@@ -133,5 +133,5 @@ suite committed to the repo — Playwright shows up exclusively as the `playwrig
 tools (`mcp__plugin_playwright_playwright__*`), wired into `qa-release-gate`'s tool list alone. It
 drives a real, ephemeral browser against `npm run dev` for an on-demand smoke test before a release
 or a "make sure nothing broke" check — none of `.github/workflows/ci-static.yml`'s jobs
-(`static-gates`, `server-static-gates`, `server-migrations-drift`) touch a browser or Playwright,
+(the `frontend-*`, `server-*` jobs and `server-migrations-drift`) touch a browser or Playwright,
 and no other agent has Playwright in its tool list.
