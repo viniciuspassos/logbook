@@ -243,7 +243,7 @@ None of these hooks can be bypassed by CI — see below, the same checks run aga
 
 ## CI pipeline (`.github/workflows/`)
 
-Two workflows, both PR-triggered, neither of which deploys anywhere (there is currently no hosted
+Three workflows, all PR-triggered, none of which deploys anywhere (there is currently no hosted
 deployment target — see [Build output](#build-output-and-hosting) below).
 
 ### `ci-static.yml` — per-rule gates
@@ -360,6 +360,13 @@ invokable locally as a subagent (see the `qa-release-gate` entry in this repo's 
 for an on-demand "QA this before I ship" pass; it just no longer has a GitHub Actions workflow or
 PR check-run attached to it.
 
+### `ci-docker.yml` — server Docker build
+
+One job, **`server-docker-build`**, runs `docker build` against `server/Dockerfile` to verify the
+server image builds successfully. This catches regressions in the Dockerfile or missing
+dependencies before deployment. The job does not push to any registry; it only verifies the build
+succeeds locally on ubuntu-latest.
+
 ### Branch protection expectation
 
 Per `README.md` → "Contributing / git workflow": every check is expected to be green before
@@ -367,9 +374,9 @@ merge. These are the required status checks on `main` (strict mode, so a PR must
 `frontend-typecheck`, `frontend-lint`, `frontend-complexity`, `frontend-test-coverage`,
 `frontend-diff-coverage`, `frontend-build`, `server-typecheck`, `server-lint`,
 `server-complexity`, `server-test-coverage`, `server-diff-coverage`, `server-build`,
-`server-migrations-drift` and `pr-hygiene`. This is a repo setting outside the
-version-controlled config: **renaming or adding a job means updating that list too**, or `main`
-will wait forever on a check that no longer exists (or silently not gate on a new one).
+`server-migrations-drift`, `server-docker-build` and `pr-hygiene`. This is a repo setting outside
+the version-controlled config: **renaming or adding a job means updating that list too**, or
+`main` will wait forever on a check that no longer exists (or silently not gate on a new one).
 
 ## Build output and hosting
 
