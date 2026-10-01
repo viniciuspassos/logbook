@@ -1,0 +1,51 @@
+# Issue form for non-bug work. Every PR must link an issue (pr-hygiene gate), so
+# this is what refactor/ci/docs/chore/feature PRs close. CLI-filed issues reuse the
+# same `### <label>` sections — see docs/INFRASTRUCTURE.md → "Issue templates".
+name: Task
+description: Feature, refactor, CI, docs, or chore work — anything that isn't a bug.
+body:
+  - type: markdown
+    attributes:
+      value: |
+        Use a Conventional Commits title with the type of change: `feat:`, `refactor:`, `ci:`, `docs:`, `chore:`, `perf:`, `test:` or `build:`.
+
+  - type: textarea
+    id: summary
+    attributes:
+      label: Summary
+      description: What should change and why.
+    validations:
+      required: true
+
+  - type: dropdown
+    id: area
+    attributes:
+      label: Area
+      options:
+        - Frontend (PWA)
+        - Backend (server/)
+        - Infra (Docker / CI)
+        - Multiple
+    validations:
+      required: true
+
+  - type: textarea
+    id: context
+    attributes:
+      label: Context
+      description: Background, related issues or PRs, links.
+
+  - type: textarea
+    id: approach
+    attributes:
+      label: Proposed approach
+
+  - type: textarea
+    id: acceptance
+    attributes:
+      label: Acceptance criteria
+      description: A checklist that says when this is done.
+      placeholder: |
+        - [ ] ...
+    validations:
+      required: true

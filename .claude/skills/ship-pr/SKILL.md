@@ -89,7 +89,10 @@ what `git commit` itself enforces via `.githooks/`.
    otherwise. The `pr-hygiene` check requires a `## Summary` with real
    content and a `Closes #N` line pointing at an existing **issue**
    (not a PR) — every PR needs one, so find or create the issue first
-   (`gh issue create`) and fill the "Linked issue" section.
+   (`gh issue create`) and fill the "Linked issue" section. A new issue's
+   body must follow the matching form in `.github/ISSUE_TEMPLATE/` (bug
+   report or task): same `### <label>` headings, same order. The CLI
+   doesn't enforce forms (see docs/INFRASTRUCTURE.md → "Issue templates").
 
 8. **Wait for the required checks, then merge — no confirmation needed.**
    The required status checks on `main` are the per-rule CI jobs

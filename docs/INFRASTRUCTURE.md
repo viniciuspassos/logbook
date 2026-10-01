@@ -360,6 +360,24 @@ invokable locally as a subagent (see the `qa-release-gate` entry in this repo's 
 for an on-demand "QA this before I ship" pass; it just no longer has a GitHub Actions workflow or
 PR check-run attached to it.
 
+### Issue templates
+
+Because `pr-hygiene` makes every PR link an issue, issues are filed constantly, so they share one
+shape that triage and the fixing PR can rely on. `.github/ISSUE_TEMPLATE/` holds two issue forms:
+
+- **Bug report** (`bug_report.yml`, labelled `bug`): Summary, Area, Severity, Steps to reproduce,
+  Expected behavior, Actual behavior, plus optional Root cause, Suggested fix and Environment.
+  The Severity choice maps to the `severity: critical|high|medium|low` labels, which triage
+  applies; a form can't set a label from a dropdown.
+- **Task** (`task.yml`): Summary, Area, optional Context and Proposed approach, plus
+  Acceptance criteria. Use it for feature, refactor, CI, docs and chore work.
+
+`config.yml` disables blank issues, so the web UI always goes through a form. `gh issue create`
+bypasses forms entirely. Issues filed from the CLI, which is how agents file them (e.g. the
+`ship-pr` skill), must therefore reuse the form's `### <label>` headings in the same order,
+writing `_No response_` under an optional section with nothing to say, exactly as a submitted
+form renders it.
+
 ### `ci-docker.yml` — server Docker build
 
 One job, **`server-docker-build`**, runs `docker build` against `server/Dockerfile` to verify the
