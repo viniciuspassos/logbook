@@ -386,6 +386,17 @@ even temporarily, is a compromise. Removing it from the repo in a follow-up comm
 it. Any service account, API key, or token that appears in the Git history must be invalidated and
 replaced.
 
+### `ci-deps.yml` — dependency audit
+
+One job, **`dependency-audit`**, that runs on every PR (opened/synchronize/reopened) plus a weekly
+schedule (Monday 6am UTC) so newly published security advisories surface without waiting for a PR.
+The job audits production dependencies (`--omit=dev`) for high and critical known vulnerabilities
+in both the root package and `server/`, failing the PR if any are found. The gate does not ignore
+findings — if a high/critical vulnerability is discovered, it must be fixed (upstream version bump
+or a code change mitigating it), documented, and discussed in review before merge. Dependabot is
+intentionally **not** configured to auto-open PRs, since its PRs would fail the `pr-hygiene` gate
+(every PR needs a linked issue) and would require manual issue creation anyway.
+
 ### Branch protection expectation
 
 Per `README.md` → "Contributing / git workflow": every check is expected to be green before
@@ -393,8 +404,8 @@ merge. These are the required status checks on `main` (strict mode, so a PR must
 `frontend-typecheck`, `frontend-lint`, `frontend-complexity`, `frontend-test-coverage`,
 `frontend-diff-coverage`, `frontend-build`, `server-typecheck`, `server-lint`,
 `server-complexity`, `server-test-coverage`, `server-diff-coverage`, `server-build`,
-`server-migrations-drift`, `server-docker-build`, `secret-scan` and `pr-hygiene`. This is a repo setting outside
-the version-controlled config: **renaming or adding a job means updating that list too**, or
+`server-migrations-drift`, `server-docker-build`, `secret-scan`, `dependency-audit` and `pr-hygiene`. This is a repo setting outside the
+version-controlled config: **renaming or adding a job means updating that list too**, or
 `main` will wait forever on a check that no longer exists (or silently not gate on a new one).
 
 ## Build output and hosting
