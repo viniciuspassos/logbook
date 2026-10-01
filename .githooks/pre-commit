@@ -1,5 +1,5 @@
 #!/usr/bin/env bash
-# Gate every commit on: typecheck, lint, tests.
+# Gate every commit on: typecheck, lint, complexity, tests.
 # Installed via `git config core.hooksPath .githooks` (see package.json "prepare" script).
 set -e
 
@@ -8,6 +8,9 @@ npx tsc -b
 
 echo "[pre-commit] linting (eslint)"
 npm run lint --silent
+
+echo "[pre-commit] complexity (eslint, strict limits)"
+npm run lint:complexity --silent
 
 echo "[pre-commit] running tests (with coverage gate)"
 npm test --silent -- --coverage
@@ -36,6 +39,9 @@ if git diff --cached --name-only --diff-filter=ACMR | grep -q '^server/'; then
 
   echo "[pre-commit] server/: linting (eslint)"
   (cd server && npm run lint --silent)
+
+  echo "[pre-commit] server/: complexity (eslint, strict limits)"
+  (cd server && npm run lint:complexity --silent)
 
   echo "[pre-commit] server/: running tests (with coverage gate)"
   (cd server && npm test --silent -- --coverage)

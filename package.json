@@ -8,7 +8,9 @@
     "dev": "vite",
     "dev:mocked": "vite --mode mocked",
     "build": "tsc -b && vite build",
+    "typecheck": "tsc -b",
     "lint": "eslint .",
+    "lint:complexity": "eslint -c eslint.complexity.config.js --suppressions-location eslint-complexity-suppressions.json .",
     "preview": "vite preview",
     "test": "jest",
     "prepare": "git config core.hooksPath .githooks"

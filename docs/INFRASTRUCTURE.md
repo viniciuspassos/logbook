@@ -199,11 +199,11 @@ rationale lives in the auth PR description; this section is the operational summ
 Hooks are plain shell scripts, versioned in the repo (not `.git/hooks`, which isn't checked in),
 wired up via `core.hooksPath`:
 
-- **`pre-commit`** — runs, in order: `tsc -b` (typecheck) → `eslint` (lint) → `npm test --
+- **`pre-commit`** — runs, in order: `tsc -b` (typecheck) → `eslint` (lint) → `npm run lint:complexity` (strict complexity limits) → `npm test --
   --coverage` (full Jest suite, with coverage collected and enforced), all for the frontend. Any
   failure aborts the commit. This is intentionally the *same* sequence CI runs, so a passing local
-  commit is a strong signal the CI static gate will also pass. It then checks whether any staged
-  file is under `server/`; if so, it additionally runs `server/`'s own typecheck → lint → test
+  commit is a strong signal the matching per-rule CI jobs will also pass. It then checks whether any staged
+  file is under `server/`; if so, it additionally runs `server/`'s own typecheck → lint → complexity → test
   (with `--coverage`) sequence (see below for why this is scoped rather than unconditional).
 - **`commit-msg`** — rejects a commit whose subject line doesn't match Conventional Commits
   (`feat|fix|docs|style|refactor|perf|test|build|ci|chore|revert(scope)?: description`).
@@ -233,46 +233,55 @@ Neither hook can be bypassed by CI — see below, the same checks run again serv
 Two workflows, both PR-triggered, neither of which deploys anywhere (there is currently no hosted
 deployment target — see [Build output](#build-output-and-hosting) below).
 
-### `ci-static.yml` — static gates
+### `ci-static.yml` — per-rule gates
 
-Triggers on every PR open/sync/reopen and now runs three independent jobs:
+Triggers on every PR open/sync/reopen. Each gate is its **own job**, so a red check names the
+rule that failed instead of hiding inside one generic "static-gates" result. The frontend jobs
+mirror `.githooks/pre-commit`; the backend jobs run from `server/`:
 
-- **`static-gates`** — frontend. Runs `npm ci`, then re-runs the **exact same
-  `.githooks/pre-commit` script** (typecheck → lint → test) plus a production `npm run build`.
-- **`server-static-gates`** — backend. Runs unconditionally on every PR (not path-filtered),
-  unlike the pre-commit hook's staged-file scoping — a CI job doesn't have the "contributor
-  hasn't installed this toolchain yet" problem the hook is scoped to avoid, and an always-on
-  required check is simpler to reason about than a path-conditional one. From `server/`: `npm ci`
-  → `npm run typecheck` → `npm run lint` → `npm test` → `npm run build`. `server/`'s Jest suite
-  runs against an in-memory `sql.js` SQLite build rather than a live Postgres, so this job needs
-  no database service container to pass.
+| Frontend job | Backend job | Runs |
+| --- | --- | --- |
+| `frontend-typecheck` | `server-typecheck` | `npm run typecheck` (`tsc -b` / `tsc --noEmit`) |
+| `frontend-lint` | `server-lint` | `npm run lint` (ESLint, no complexity rules) |
+| `frontend-complexity` | `server-complexity` | `npm run lint:complexity` (see below) |
+| `frontend-test-coverage` | `server-test-coverage` | `npm test -- --coverage` (100% function gate) |
+| `frontend-build` | `server-build` | `npm run build` |
+
+- The backend jobs run unconditionally (not path-filtered), unlike the pre-commit hook's
+  staged-file scoping — a CI job doesn't have the "contributor hasn't installed this toolchain
+  yet" problem the hook is scoped to avoid, and an always-on required check is simpler to reason
+  about than a path-conditional one. `server/`'s Jest suite runs against an in-memory `sql.js`
+  SQLite build rather than a live Postgres, so those jobs need no database service container.
 - **`server-migrations-drift`** — backend, and the one job here that *does* need a real database:
   a `postgres:16.4-bookworm` service container. Runs the committed migrations against it, then
   fails if `migration:generate` would produce a new one — see "Database migrations" above for the
   full mechanics and why the exit code alone isn't the signal to check.
 
-All three jobs run unconditionally on every PR — none needs a comment or manual trigger. Whether
-`server-static-gates` and `server-migrations-drift` are additionally configured as *required*
-status checks in this repository's branch-protection settings (alongside `static-gates`) is a
-GitHub repo setting, not something tracked in this file or in workflow YAML.
+All jobs run unconditionally on every PR — none needs a comment or manual trigger. Which of them
+are *required* is a GitHub branch-protection setting, not tracked in workflow YAML — see
+"Branch protection expectation" below.
 
-### Complexity gate (ESLint, no separate job)
+### Complexity gate
 
-Code complexity is enforced by the lint step that `static-gates` and `server-static-gates`
-already run (and the pre-commit hook), so there is no extra job: `complexity` ≤ 10,
-`max-depth` ≤ 3 (nested ifs/loops), `max-params` ≤ 4, `max-nested-callbacks` ≤ 3 and
-`max-lines-per-function` ≤ 80 (blank lines and comments excluded). The last two are off for
-`*.test.*` files, where `describe`/`it` nesting and long suites are normal. The two configs
-(`eslint.config.js`, `server/eslint.config.js`) repeat the numbers because `server/` is kept a
-standalone package; update both together. `server/scripts/` is not linted (pre-existing gap).
+Its own job (`frontend-complexity` / `server-complexity`) and its own ESLint config
+(`eslint.complexity.config.js`, `server/eslint.complexity.config.js`), kept out of the normal lint
+config so a failure is unambiguous: `complexity` ≤ 10, `max-depth` ≤ 3 (nested ifs/loops),
+`max-params` ≤ 4, `max-nested-callbacks` ≤ 3 and `max-lines-per-function` ≤ 80 (blank lines and
+comments excluded). The last two are off for `*.test.*` files, where `describe`/`it` nesting and
+long suites are normal. The two configs repeat the numbers because `server/` is kept a standalone
+package; update both together. `server/scripts/` is not linted (pre-existing gap).
 
-Violations that predate the gate are recorded in `eslint-suppressions.json` (ESLint bulk
-suppressions) rather than loosening the limits. This blocks *new* violations and fails when a
-suppressed violation is fixed but its entry remains (run `npx eslint . --prune-suppressions`).
-It does **not** stop an already-suppressed function from getting worse, nor someone adding
-entries by hand or with `--suppress-all` — so never add or raise entries; refactor instead, and
-treat changes to that file in review as red flags. Suppressions apply on the CLI only, so editors
-may still underline the suppressed spots. Burn-down is tracked in #71.
+Violations that predate the gate are recorded in `eslint-complexity-suppressions.json` (ESLint bulk
+suppressions, wired in through `--suppressions-location` in `npm run lint:complexity`) rather than
+loosening the limits. This blocks *new* violations and fails when a suppressed violation is fixed
+but its entry remains (run `npm run lint:complexity -- --prune-suppressions`). It does **not** stop
+an already-suppressed function from getting worse, nor someone adding entries by hand or with
+`--suppress-all` — so never add or raise entries; refactor instead, and treat changes to that file
+in review as red flags. Suppressions apply on the CLI only, so editors may still underline the
+suppressed spots. Burn-down is tracked in #71. Keep the file even when empty (`{}`): the explicit
+`--suppressions-location` errors if it is missing. Inline `eslint-disable complexity` comments are
+not an escape hatch either — `npm run lint` flags them as unused directives, so `--fix` would
+delete them and `lint:complexity` would then fail.
 
 ### `ci-pr-hygiene.yml` — PR metadata gate
 
@@ -301,11 +310,13 @@ PR check-run attached to it.
 
 ### Branch protection expectation
 
-Per `README.md` → "Contributing / git workflow": `ci-static` is expected to be green before merge.
-It runs unconditionally (as its `static-gates`, `server-static-gates`, and
-`server-migrations-drift` jobs), and `pr-hygiene` is a required status check on `main` alongside `static-gates` (strict mode). Whether
-`server-static-gates` and `server-migrations-drift` are required too is a manual GitHub
-branch-protection setting outside this repo's version-controlled config.
+Per `README.md` → "Contributing / git workflow": every check is expected to be green before
+merge. These are the required status checks on `main` (strict mode, so a PR must be up to date):
+`frontend-typecheck`, `frontend-lint`, `frontend-complexity`, `frontend-test-coverage`,
+`frontend-build`, `server-typecheck`, `server-lint`, `server-complexity`, `server-test-coverage`,
+`server-build`, `server-migrations-drift` and `pr-hygiene`. This is a repo setting outside the
+version-controlled config: **renaming or adding a job means updating that list too**, or `main`
+will wait forever on a check that no longer exists (or silently not gate on a new one).
 
 ## Build output and hosting
 

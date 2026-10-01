@@ -17,7 +17,7 @@ what `git commit` itself enforces via `.githooks/`.
    git rebase origin/main
    ```
    Required checks use `strict: true`, so a branch cut from a stale
-   local `main` re-queues `static-gates` on merge anyway — rebasing
+   local `main` re-queues the required checks on merge anyway — rebasing
    up front avoids finding that out after already pushing/opening the
    PR. Resolve any conflicts and re-run validation (step 3) before
    continuing. If the branch already has commits pushed and rebasing
@@ -91,10 +91,11 @@ what `git commit` itself enforces via `.githooks/`.
    (not a PR) — every PR needs one, so find or create the issue first
    (`gh issue create`) and fill the "Linked issue" section.
 
-8. **Wait for `static-gates` and `pr-hygiene`, then merge — no confirmation needed.**
-   `static-gates` and `pr-hygiene` are the required status checks on
-   `main` (`enforce_admins` is off, so don't merge over a red one).
-   Once both report success,
+8. **Wait for the required checks, then merge — no confirmation needed.**
+   The required status checks on `main` are the per-rule CI jobs
+   (`frontend-*`, `server-*`) and `pr-hygiene`; see `gh pr checks`
+   (`enforce_admins` is off, so don't merge over a red one).
+   Once all report success,
    merge and clean up the branch:
    ```
    gh pr checks <pr-number> --watch
@@ -114,7 +115,7 @@ what `git commit` itself enforces via `.githooks/`.
 
    This repo's convention is squash merge — recent history is one
    commit per PR with the PR number in the subject, no merge commits.
-   Merge as soon as `static-gates` is green — don't ask the user
+   Merge as soon as the required checks are green — don't ask the user
    first for this repo.
 
 9. **Report back** the PR URL and the merge result.
@@ -123,9 +124,9 @@ what `git commit` itself enforces via `.githooks/`.
 
 - Required checks use `strict: true` — if `main` moves after you've
   already pushed and opened the PR, rebasing/merging it in re-queues
-  `static-gates`, requiring it to go green again before merge.
+  the required checks, requiring it to go green again before merge.
 - Before merging, double check `gh pr checks` isn't showing a pending
-  or failing `static-gates` — `--watch` blocks until it resolves, but
+  or failing a required check — `--watch` blocks until it resolves, but
   re-verify if you invoked it any other way.
 - If `git push` fails because the branch already has a differently-
   named upstream or diverged, do not force-push without asking —
