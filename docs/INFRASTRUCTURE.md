@@ -230,7 +230,7 @@ Neither hook can be bypassed by CI — see below, the same checks run again serv
 
 ## CI pipeline (`.github/workflows/`)
 
-One workflow, PR-triggered, which does not deploy anywhere (there is currently no hosted
+Two workflows, both PR-triggered, neither of which deploys anywhere (there is currently no hosted
 deployment target — see [Build output](#build-output-and-hosting) below).
 
 ### `ci-static.yml` — static gates
@@ -256,6 +256,25 @@ All three jobs run unconditionally on every PR — none needs a comment or manua
 status checks in this repository's branch-protection settings (alongside `static-gates`) is a
 GitHub repo setting, not something tracked in this file or in workflow YAML.
 
+### `ci-pr-hygiene.yml` — PR metadata gate
+
+One job, **`pr-hygiene`**, on PR open/**edit**/sync/reopen (so fixing the description turns it
+green without a new push). It fails a PR unless it has:
+
+- a Conventional Commits title (the squash-merge subject comes from the PR title and bypasses
+  `.githooks/commit-msg`; a Jest test keeps the two patterns identical),
+- a `## Summary` section with real content (untouched template placeholders and sub-headings
+  don't count),
+- a `Closes/Fixes/Resolves/Refs #N` link (outside HTML comments) to an *existing issue* — a PR
+  number is rejected. There is deliberately no opt-out label: every PR needs an issue.
+
+Rules are pure functions in `scripts/ci/prMetadata.ts`; the GitHub API lookups are in
+`scripts/ci/checkPrMetadata.ts`. Node 24 runs the `.ts` files directly (type stripping), so
+there is no build step. `scripts/` is part of the Jest suite *and* the 100%-function coverage
+gate. Known limit: on `pull_request` events the checker runs from the PR's own merge commit, so a
+PR could edit the checker to pass itself — review changes under `scripts/ci/` accordingly
+(checking out the base branch instead would delay checker changes until after merge).
+
 The AI-driven QA release gate (`qa-release-gate`) no longer runs in CI — it was dropped as
 unhelpful. The underlying agent still exists at `.claude/agents/qa-release-gate.md` and is
 invokable locally as a subagent (see the `qa-release-gate` entry in this repo's available agents)
@@ -266,10 +285,10 @@ PR check-run attached to it.
 
 Per `README.md` → "Contributing / git workflow": `ci-static` is expected to be green before merge.
 It runs unconditionally (as its `static-gates`, `server-static-gates`, and
-`server-migrations-drift` jobs). Whether `server-static-gates` and `server-migrations-drift` are
-marked as required checks alongside `static-gates` in this repository's branch-protection rules is
-a manual GitHub setting outside this
-repo's version-controlled config.
+`server-migrations-drift` jobs), and `pr-hygiene` is expected green too. Whether
+`server-static-gates`, `server-migrations-drift` and `pr-hygiene` are marked as required checks
+alongside `static-gates` in this repository's branch-protection rules is a manual GitHub setting
+outside this repo's version-controlled config — until `pr-hygiene` is required it is advisory.
 
 ## Build output and hosting
 

@@ -1,6 +1,10 @@
 ## Summary
 <!-- 1-3 bullets: what changed and why -->
 
+## Linked issue
+<!-- Required by the pr-hygiene check. Use Closes/Fixes/Resolves/Refs #N — it must be a real issue, not a PR. -->
+Closes #
+
 ## Test plan
 - [ ] `git hook run pre-commit` passes (typecheck, lint, test)
 - [ ] `npm run build` succeeds

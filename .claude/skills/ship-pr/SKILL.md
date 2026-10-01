@@ -86,11 +86,15 @@ what `git commit` itself enforces via `.githooks/`.
    `gh pr create` picks up `.github/pull_request_template.md`
    automatically as the starting body — fill in its sections rather
    than inventing new structure. Base branch is `main` unless told
-   otherwise.
+   otherwise. The `pr-hygiene` check requires a `## Summary` with real
+   content and a `Closes #N` line pointing at an existing **issue**
+   (not a PR) — every PR needs one, so find or create the issue first
+   (`gh issue create`) and fill the "Linked issue" section.
 
-8. **Wait for `static-gates`, then merge — no confirmation needed.**
-   The only required status check on `main` is `static-gates`
-   (`enforce_admins` is off). Once `static-gates` reports success,
+8. **Wait for `static-gates` and `pr-hygiene`, then merge — no confirmation needed.**
+   `static-gates` is the required status check on `main`
+   (`enforce_admins` is off); `pr-hygiene` is expected green too, so
+   don't merge over a red one. Once both report success,
    merge and clean up the branch:
    ```
    gh pr checks <pr-number> --watch

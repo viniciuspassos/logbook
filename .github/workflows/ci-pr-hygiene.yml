@@ -1,0 +1,38 @@
+name: CI - PR Hygiene
+
+# Fails PRs without a Conventional Commits title, a filled-in "## Summary",
+# and a link to an existing issue (Closes/Fixes/Resolves/Refs #N). Re-runs on
+# `edited` so fixing the description turns the check green without a new push.
+# Rules live in scripts/ci/prMetadata.ts; the GitHub lookups in checkPrMetadata.ts.
+
+on:
+  pull_request:
+    types: [opened, edited, synchronize, reopened]
+
+permissions:
+  contents: read
+  issues: read
+
+concurrency:
+  group: ci-pr-hygiene-${{ github.event.pull_request.number }}
+  cancel-in-progress: true
+
+jobs:
+  pr-hygiene:
+    name: pr-hygiene
+    runs-on: ubuntu-latest
+    steps:
+      # Only scripts/ci is needed — no `npm ci`, so no PR-supplied dependencies
+      # run. The token is read-only (contents/issues: read).
+      - uses: actions/checkout@v5
+        with:
+          sparse-checkout: scripts/ci
+
+      - uses: actions/setup-node@v5
+        with:
+          node-version: 24
+
+      - name: Validate PR title, description and linked issue
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        run: node scripts/ci/runCheckPrMetadata.ts
