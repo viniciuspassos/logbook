@@ -77,4 +77,38 @@ describe('extractEntry', () => {
     await expect(extractEntry('note')).rejects.toThrow(/valid JSON/)
     expect(destroy).toHaveBeenCalledTimes(1)
   })
+
+  it('tells the model that activityType is plain words, not an icon bucket', async () => {
+    const { create } = mockLanguageModel(async () =>
+      JSON.stringify({ title: 'Trek', activityType: 'Trekking', shape: 'diamond' }),
+    )
+    await extractEntry('Went on a trek.')
+    const [{ initialPrompts }] = create.mock.calls[0]
+    const systemPrompt: string = initialPrompts[0].content
+    expect(systemPrompt).toMatch(/`activityType` is the activity in plain words/)
+    expect(systemPrompt).toMatch(/never use a `shape` value as the `activityType`/)
+  })
+
+  it.each([
+    ['triangle', 'triangle', 'Climbing', 'triangle'],
+    ['Circle', 'circle', 'Skydiving', 'circle'],
+    ['diamond', 'blob', 'Trekking', 'diamond'], // no valid shape: the echoed bucket decides it
+    ['circle', 'triangle', 'Climbing', 'triangle'], // conflict: a valid shape wins, tag follows the icon
+  ])(
+    'replaces an echoed icon bucket (%s, shape %s) with %s and shape %s',
+    async (activityType, shape, expectedActivity, expectedShape) => {
+      mockLanguageModel(async () => JSON.stringify({ title: 'Summit', activityType, shape }))
+      const result = await extractEntry('Got down from Kilimanjaro.')
+      expect(result.activityType).toBe(expectedActivity)
+      expect(result.shape).toBe(expectedShape)
+    },
+  )
+
+  it('keeps a real activity type as-is', async () => {
+    mockLanguageModel(async () =>
+      JSON.stringify({ title: 'Summit', activityType: 'Mountaineering', shape: 'triangle' }),
+    )
+    const result = await extractEntry('Got down from Kilimanjaro.')
+    expect(result.activityType).toBe('Mountaineering')
+  })
 })
