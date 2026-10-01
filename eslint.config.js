@@ -26,5 +26,23 @@ export default defineConfig([
     languageOptions: {
       globals: globals.browser,
     },
+    // Strict complexity limits (see docs/INFRASTRUCTURE.md → "Complexity gate").
+    // Keep in sync with server/eslint.config.js (server/ is deliberately a standalone
+    // package, so the numbers are repeated rather than shared).
+    rules: {
+      complexity: ['error', 10],
+      'max-depth': ['error', 3], // nested ifs/loops
+      'max-params': ['error', 4],
+      'max-nested-callbacks': ['error', 3],
+      'max-lines-per-function': ['error', { max: 80, skipBlankLines: true, skipComments: true }],
+    },
+  },
+  {
+    // describe/it nesting and long suites are the shape of a test file, not a smell.
+    files: ['**/*.test.{ts,tsx}'],
+    rules: {
+      'max-nested-callbacks': 'off',
+      'max-lines-per-function': 'off',
+    },
   },
 ])

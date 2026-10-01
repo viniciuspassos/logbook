@@ -256,6 +256,24 @@ All three jobs run unconditionally on every PR — none needs a comment or manua
 status checks in this repository's branch-protection settings (alongside `static-gates`) is a
 GitHub repo setting, not something tracked in this file or in workflow YAML.
 
+### Complexity gate (ESLint, no separate job)
+
+Code complexity is enforced by the lint step that `static-gates` and `server-static-gates`
+already run (and the pre-commit hook), so there is no extra job: `complexity` ≤ 10,
+`max-depth` ≤ 3 (nested ifs/loops), `max-params` ≤ 4, `max-nested-callbacks` ≤ 3 and
+`max-lines-per-function` ≤ 80 (blank lines and comments excluded). The last two are off for
+`*.test.*` files, where `describe`/`it` nesting and long suites are normal. The two configs
+(`eslint.config.js`, `server/eslint.config.js`) repeat the numbers because `server/` is kept a
+standalone package; update both together. `server/scripts/` is not linted (pre-existing gap).
+
+Violations that predate the gate are recorded in `eslint-suppressions.json` (ESLint bulk
+suppressions) rather than loosening the limits. This blocks *new* violations and fails when a
+suppressed violation is fixed but its entry remains (run `npx eslint . --prune-suppressions`).
+It does **not** stop an already-suppressed function from getting worse, nor someone adding
+entries by hand or with `--suppress-all` — so never add or raise entries; refactor instead, and
+treat changes to that file in review as red flags. Suppressions apply on the CLI only, so editors
+may still underline the suppressed spots. Burn-down is tracked in #71.
+
 ### `ci-pr-hygiene.yml` — PR metadata gate
 
 One job, **`pr-hygiene`**, on PR open/**edit**/sync/reopen (so fixing the description turns it
@@ -285,10 +303,9 @@ PR check-run attached to it.
 
 Per `README.md` → "Contributing / git workflow": `ci-static` is expected to be green before merge.
 It runs unconditionally (as its `static-gates`, `server-static-gates`, and
-`server-migrations-drift` jobs), and `pr-hygiene` is expected green too. Whether
-`server-static-gates`, `server-migrations-drift` and `pr-hygiene` are marked as required checks
-alongside `static-gates` in this repository's branch-protection rules is a manual GitHub setting
-outside this repo's version-controlled config — until `pr-hygiene` is required it is advisory.
+`server-migrations-drift` jobs), and `pr-hygiene` is a required status check on `main` alongside `static-gates` (strict mode). Whether
+`server-static-gates` and `server-migrations-drift` are required too is a manual GitHub
+branch-protection setting outside this repo's version-controlled config.
 
 ## Build output and hosting
 
