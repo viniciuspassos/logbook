@@ -72,6 +72,11 @@ agent's prompt states policy ("run the quality gate") rather than reimplementing
     control the plan names against a live accessibility snapshot and does one dry pass per flow.
     The plan supplies each control's role and accessible name from the JSX. A locator miss is a
     script bug, never a finding.
+  - **Auth check (backend only).** Before the timed run, the tester proves its harness can make one
+    authenticated mutating request, CSRF included, and reuses that helper for every burst. That
+    night's backend run dropped its concurrent-PATCH test when its CSRF setup failed partway
+    through. It had also stopped at about 43 of ~100 requests, which is why the floor applies to
+    both agents.
 
 All four implementing agents (`product-engineer` excluded) call these in the same order: **write
 code test-first → `code-reviewer` → `ship-pr`** (which itself calls `validate-before-commit` and

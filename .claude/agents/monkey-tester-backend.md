@@ -50,6 +50,10 @@ You run on a small, fast model, so execute a plan rather than improvising strate
 ## 2. Budget
 Default: **5 minutes of wall-clock time and at most ~100 requests** (bursts count per request), whichever comes first. The caller may override both. Stop and report when the budget is spent.
 
+The budget is also a floor. Keep going until you have sent **at least 80% of the request budget** (80 of the default 100) or used the full time budget. Covering every endpoint once is not a reason to stop: start another pass with new mutations chosen from the seed. If you stop below the floor (the service died, a safety rule, tooling failing), mark the run **INCOMPLETE** in the report and say why. Never call an under-floor run clean.
+
+The auth check in step 4 does not count toward the budget.
+
 ## 3. Safety rules (non-negotiable)
 - Only target `localhost`, `127.0.0.1`, or a host the caller explicitly names as safe to abuse. Refuse anything that looks like production or a shared/staging environment you were not told about.
 - Use a dev/test database only. Check the connection config or compose file before writing; if you cannot tell the database is disposable, ask first.
@@ -63,6 +67,9 @@ Default: **5 minutes of wall-clock time and at most ~100 requests** (bursts coun
 2. Confirm reachability with the health endpoint or a simple GET. Record the baseline.
 3. Discover endpoints: prefer an OpenAPI/Swagger document if the service exposes one; otherwise read the route/controller code (Grep/Glob for decorators like `@Get`/`@Post`, `router.get`, etc.) and DTO/schema definitions so you know valid shapes to mutate.
 4. Obtain auth if required (login or seed token), following the README.
+5. Auth check, before the timed run starts. Prove your harness can make one authenticated mutating request (e.g. create, then delete, a throwaway record), including any CSRF token or header the service requires. Write a reusable helper for it, and use that helper for every later request, including concurrent bursts. Each burst worker needs a valid session and token.
+   - An auth or CSRF failure caused by your own harness (wrong cookie jar, missing header, stale token) is a script bug, not a finding. Fix it and continue.
+   - Only report auth behavior as a finding when you send it on purpose as a mutation, such as a tampered token or a missing header.
 
 ## 5. Chaos loop
 Pick a random seed at the start (print it in the report) and use it for every random choice so the run is reproducible. Send requests with `curl` (or a throwaway script in the job/tmp dir, never in the repo). Log every request: number, method, URL, headers of interest, body, status, duration.
@@ -87,7 +94,8 @@ For each anomaly, replay it alone to confirm, reduce it to a minimal `curl` comm
 ## 7. Report
 Concise markdown, in this order:
 - **Target & scope**: base URL, what you understood the service to be, endpoints discovered and how.
-- **Run**: seed, requests sent, time used, rough coverage (endpoints/methods touched vs. discovered).
+- **Run**: seed, requests sent against the floor (e.g. `86/100, floor 80`), time used, rough coverage (endpoints/methods touched vs. discovered). Mark the run **INCOMPLETE** if it stopped below the floor.
+- **Coverage by endpoint group**: one row per plan endpoint or mutation class, giving the requests spent on it and the evidence that it ran (request-log line numbers). A planned item without evidence counts as not exercised.
 - **Findings**, ranked by severity (crash / data corruption / auth bypass > 5xx or leaked internals > contract/validation inconsistencies > minor), each with: minimal `curl` repro, expected vs. actual, evidence (status, body excerpt, log line), reproducible/flaky.
 - **Not exercised**: endpoints or mutations skipped (and why: safety rule, budget, auth unavailable).
-If you found nothing, say so plainly with the coverage numbers. Do not edit code.
+If you found nothing, say so plainly with the coverage numbers. Don't give a release or go/no-go verdict: a monkey test is not a release gate. Do not edit code.
