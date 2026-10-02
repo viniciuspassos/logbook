@@ -1,7 +1,7 @@
 import { detailFields, type DetailField } from '../lib/export/entryFields.ts'
 import type { Entry } from '../types/entry.ts'
 
-/** Labels shown in the desktop-only "instrument panel" stat strip above the
+/** Labels shown in the desktop-only stat chips above the
  *  story; everything else stays in the field grid below it (see
  *  EntryDetailOverlay.tsx). Weather/duration/difficulty/participants read as
  *  scannable, numeric-ish data; equipment is free text and stays below. */
@@ -18,7 +18,7 @@ export interface EntryDetailFieldGroups {
  * strip and the field grid below it — a field appears in exactly one group,
  * never both. If fewer than 2 fields would land in the strip, it's skipped
  * entirely (nothing is lost: every populated field still lands in
- * `gridFields`) rather than rendering a mostly-empty instrument panel.
+ * `gridFields`) rather than rendering a near-empty row of chips.
  */
 export function splitDetailFields(entry: Entry): EntryDetailFieldGroups {
   const fields = detailFields(entry)

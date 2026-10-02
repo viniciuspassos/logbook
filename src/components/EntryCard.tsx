@@ -1,6 +1,7 @@
 import type { KeyboardEvent } from 'react'
 import { AdventureBadge } from './AdventureBadge.tsx'
 import { PhotoPlaceholder } from './PhotoPlaceholder.tsx'
+import { cx } from '../lib/cx.ts'
 import type { Entry } from '../types/entry.ts'
 import './EntryCard.css'
 
@@ -8,9 +9,11 @@ interface EntryCardProps {
   entry: Entry
   onOpen: () => void
   showExcerpt?: boolean
+  /** This is the entry the desktop reading panel is showing. */
+  selected?: boolean
 }
 
-export function EntryCard({ entry, onOpen, showExcerpt = true }: EntryCardProps) {
+export function EntryCard({ entry, onOpen, showExcerpt = true, selected = false }: EntryCardProps) {
   function handleKeyDown(event: KeyboardEvent<HTMLDivElement>) {
     if (event.key === 'Enter' || event.key === ' ') {
       event.preventDefault()
@@ -20,9 +23,10 @@ export function EntryCard({ entry, onOpen, showExcerpt = true }: EntryCardProps)
 
   return (
     <div
-      className="entry-card"
+      className={cx('entry-card', selected && 'is-selected')}
       role="button"
       tabIndex={0}
+      aria-current={selected ? 'true' : undefined}
       onClick={onOpen}
       onKeyDown={handleKeyDown}
     >

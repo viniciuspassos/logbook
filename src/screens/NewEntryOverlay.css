@@ -53,8 +53,9 @@
 
 @media (min-width: 960px) {
   .new-entry__heading {
-    font-family: var(--serif);
-    font-weight: 600;
+    font-family: var(--display);
+    font-stretch: 125%;
+    font-weight: 800;
   }
 
   .new-entry__review {
@@ -78,7 +79,7 @@
   align-items: center;
   justify-content: center;
   cursor: pointer;
-  box-shadow: 0 8px 20px oklch(58% 0.15 40 / 0.4);
+  box-shadow: 0 8px 20px var(--lb-accent-glow);
 }
 .new-entry__record--pulsing {
   animation: lb-pulse 1.1s ease-in-out infinite;
@@ -102,13 +103,13 @@
   cursor: pointer;
   font-family: inherit;
   font-size: 13px;
-  color: var(--lb-accent);
+  color: var(--lb-accent-ink);
   padding: 0;
 }
 
 .new-entry__error {
   font-size: 13px;
-  color: var(--lb-danger, oklch(55% 0.18 25));
+  color: var(--lb-danger);
   max-width: 260px;
   line-height: 1.5;
 }
@@ -292,8 +293,8 @@
   border-radius: 12px;
   font-size: 13.5px;
   font-weight: 600;
-  color: #fff;
-  background: var(--lb-accent);
+  color: var(--lb-on-accent);
+  background: var(--lb-accent-fill);
   cursor: pointer;
   font-family: inherit;
 }

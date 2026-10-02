@@ -8,8 +8,9 @@
 
 @media (min-width: 960px) {
   .settings-screen__title {
-    font-family: var(--serif);
-    font-weight: 600;
+    font-family: var(--display);
+    font-stretch: 125%;
+    font-weight: 800;
     letter-spacing: -0.3px;
   }
 }
@@ -52,16 +53,21 @@
   gap: 8px;
 }
 
-/* Desktop-only polish: right-align/mono-align the value column (matching the
-   entry-detail instrument-panel numerals) and give rows a touch more room,
-   using the shared spacing scale. Purely cosmetic — no structural change. */
+/* Desktop-only polish: groups become white blocks on the sky, the value
+   column right-aligns with tabular numerals, and rows get a touch more room.
+   Purely cosmetic — no structural change. */
 @media (min-width: 960px) {
+  .settings-screen__group {
+    border: none;
+    background: var(--lb-bg);
+  }
+
   .settings-screen__row {
     padding: var(--lb-space-3) var(--lb-space-4);
   }
 
   .settings-screen__row-value {
-    font-family: var(--mono);
+    font-variant-numeric: tabular-nums;
     justify-content: flex-end;
     text-align: right;
   }

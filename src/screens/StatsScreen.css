@@ -8,8 +8,9 @@
 
 @media (min-width: 960px) {
   .stats-screen__title {
-    font-family: var(--serif);
-    font-weight: 600;
+    font-family: var(--display);
+    font-stretch: 125%;
+    font-weight: 800;
     letter-spacing: -0.3px;
   }
 }
@@ -39,9 +40,9 @@
   margin-top: 2px;
 }
 
-/* Desktop "instrument panel" tiles: a 3-up row (matching the entry-detail
-   stat strip from the prior slice) with mono/tabular-nums values instead of
-   the mobile 2-col stretched grid. */
+/* Desktop tiles: a 3-up row of white blocks on the sky, values in the
+   expanded display cut with tabular numerals, instead of the mobile 2-col
+   stretched grid. */
 @media (min-width: 960px) {
   .stats-screen__grid {
     grid-template-columns: repeat(3, 1fr);
@@ -50,21 +51,29 @@
   }
 
   .stats-screen__tile {
+    border: none;
     border-radius: var(--lb-radius-md);
-    padding: var(--lb-space-4);
+    padding: var(--lb-space-3);
+    background: var(--lb-bg);
   }
 
   .stats-screen__tile-value {
-    font-family: var(--mono);
+    font-family: var(--display);
+    font-stretch: 125%;
+    font-weight: 800;
     font-variant-numeric: tabular-nums;
     font-size: 26px;
   }
 
   .stats-screen__tile-label {
-    font-family: var(--mono);
-    font-size: 11px;
-    letter-spacing: 0.06em;
-    text-transform: uppercase;
+    font-size: 12px;
+  }
+
+  .stats-screen__section-label {
+    font-size: 13px;
+    font-weight: 600;
+    text-transform: none;
+    letter-spacing: 0;
   }
 }
 

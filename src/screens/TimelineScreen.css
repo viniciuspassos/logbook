@@ -8,8 +8,9 @@
 
 @media (min-width: 960px) {
   .timeline-screen__title {
-    font-family: var(--serif);
-    font-weight: 600;
+    font-family: var(--display);
+    font-stretch: 125%;
+    font-weight: 800;
     letter-spacing: -0.3px;
   }
 }
@@ -84,10 +85,30 @@
     gap: 0;
   }
 
-  /* Desktop rows are flush "ledger" rows separated by EntryCard's own
-     hairline border-bottom, not by gap — so no gap between groups either. */
+  /* Desktop rows sit flush on the sky (EntryCard.css); the day header above
+     each group carries the date, so the row's own date is dropped here. */
   .timeline-screen__date-group {
-    gap: 0;
+    gap: 2px;
+  }
+
+  .timeline-screen__date-group .entry-card__date {
+    display: none;
+  }
+
+  /* Pills on the sky instead of a segmented control on a grey track. */
+  .timeline-screen__tabs {
+    background: none;
+    padding: 0;
+  }
+
+  .timeline-screen__tab {
+    border-radius: 999px;
+    padding: 5px 14px;
+  }
+
+  .timeline-screen__tab.is-active {
+    background: var(--lb-ink);
+    color: var(--lb-bg);
   }
 
   .timeline-screen__date-group:first-child .timeline-screen__date-header {
@@ -96,13 +117,10 @@
 
   .timeline-screen__date-header {
     display: block;
-    font-family: var(--mono);
-    font-size: 11px;
+    font-size: 13px;
     font-weight: 600;
-    letter-spacing: 0.12em;
-    text-transform: uppercase;
     color: var(--lb-muted);
-    margin: var(--lb-space-5) 0 var(--lb-space-1);
+    margin: var(--lb-space-4) 0 var(--lb-space-1) 12px;
   }
 }
 
@@ -135,7 +153,7 @@
   background: var(--lb-accent);
   transform: rotate(-45deg);
   border: 2px solid var(--lb-bg);
-  box-shadow: 0 3px 8px oklch(19% 0.025 50 / 0.3);
+  box-shadow: var(--lb-card-shadow);
   align-items: center;
   justify-content: center;
   color: #fff;

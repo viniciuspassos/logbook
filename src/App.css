@@ -16,101 +16,58 @@
   padding: 20px 20px 24px;
 }
 
-.book-right-page {
+.reading-empty {
   display: none;
 }
 
-/* Above --lb-desktop, the app stops being a single phone card and becomes an
-   open logbook lying flat: a spine rail (TabBar) and two cream pages with a
-   shadowed crease between them. The overlays (EntryDetailOverlay,
-   NewEntryOverlay) already sit as plain siblings of .app-screen inside .app,
-   so reflowing them from a full-screen cover to the right-hand page is a
-   position/order change only — no markup or component logic moves. */
+/* Above --lb-desktop the app stops being a single phone card and fills the
+   window as three columns on the sky: the navy nav rail (TabBar), the list,
+   and a white reading panel. The selected list row (EntryCard .is-selected)
+   is the same white as the panel and runs flush into it, so the open entry
+   reads as pulled out of the list. The overlays (EntryDetailOverlay,
+   NewEntryOverlay) are plain siblings of .app-screen inside .app, so turning
+   them from a full-screen cover into the panel is a position/order change
+   only — no markup or component logic moves. */
 @media (min-width: 960px) {
   .app {
-    position: relative;
     flex-direction: row;
     align-items: stretch;
     max-width: none;
-    width: min(1760px, 96vw);
-    height: calc(100dvh - 96px);
-    margin: 48px auto;
-    border-radius: 24px;
-    background: transparent;
-    box-shadow:
-      0 30px 60px -20px oklch(19% 0.025 50 / 0.35),
-      0 1px 0 var(--lb-border);
-    overflow: visible;
-  }
-
-  .app::before {
-    /* The rail (flex 0 0 84px) sits left of the two equal-width pages, so
-       the true seam between them is 42px (half the rail's width) right of
-       .app's own horizontal center, not at a flat 50%. That offset is a
-       function of the rail's own fixed width, not .app's total width — both
-       pages are flex 1 1 0, so widening .app (1200px -> 1760px) grows them
-       equally and the seam stays exactly 42px off center either way. */
-    content: '';
-    position: absolute;
-    left: calc(50% + 42px);
-    top: 20px;
-    bottom: 20px;
-    width: 44px;
-    margin-left: -22px;
-    background: linear-gradient(
-      to right,
-      transparent,
-      var(--lb-spine-shadow) 45%,
-      var(--lb-spine-shadow) 55%,
-      transparent
-    );
-    pointer-events: none;
-    z-index: 1;
+    height: 100dvh;
+    background: var(--lb-page-bg);
   }
 
   .app-screen {
     order: 2;
-    flex: 1 1 0;
-    background: var(--lb-bg);
-    padding: 40px 44px;
+    flex: 0 0 400px;
+    padding: var(--lb-space-5) var(--lb-space-4) var(--lb-space-5) var(--lb-space-4);
   }
 
   .entry-detail,
   .new-entry,
-  .book-right-page {
+  .reading-empty {
     position: static;
     inset: auto;
     order: 3;
     flex: 1 1 0;
-    border-radius: 0 24px 24px 0;
+    min-width: 0;
+    margin: var(--lb-space-3) var(--lb-space-3) var(--lb-space-3) 0;
+    border-radius: 0 var(--lb-radius-lg) var(--lb-radius-lg) var(--lb-radius-lg);
+    background: var(--lb-bg);
+    overflow: hidden;
   }
 
-  .book-right-page {
+  .reading-empty {
     display: flex;
-    flex-direction: column;
     align-items: center;
     justify-content: center;
-    gap: 18px;
-    background: var(--lb-bg);
     color: var(--lb-muted);
   }
 
-  .book-right-page__rings {
-    width: 130px;
-    height: 130px;
-    border-radius: 50%;
-    background: repeating-radial-gradient(
-      circle,
-      var(--lb-border) 0 1.5px,
-      transparent 1.5px 20px
-    );
-    opacity: 0.8;
-  }
-
-  .book-right-page__hint {
-    font: italic 15px/1.5 var(--serif);
-    max-width: 220px;
-    text-align: center;
+  .reading-empty__hint {
+    font-family: var(--display);
+    font-stretch: 125%;
+    font-size: 17px;
     margin: 0;
   }
 }

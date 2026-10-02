@@ -11,6 +11,8 @@ interface TimelineScreenProps {
   /** From useSyncOutbox: "Saved locally", optionally with how the last sync went. */
   syncStatus: string
   entries: Entry[]
+  /** The entry the desktop reading panel is showing; its card is marked. */
+  selectedId?: number
   timelineView: TimelineView
   onChangeView: (view: TimelineView) => void
   onOpenEntry: (id: number) => void
@@ -19,6 +21,7 @@ interface TimelineScreenProps {
 export function TimelineScreen({
   syncStatus,
   entries,
+  selectedId,
   timelineView,
   onChangeView,
   onOpenEntry,
@@ -62,7 +65,12 @@ export function TimelineScreen({
             <div key={`${group.date}-${index}`} className="timeline-screen__date-group">
               <div className="timeline-screen__date-header">{group.date}</div>
               {group.entries.map((entry) => (
-                <EntryCard key={entry.id} entry={entry} onOpen={() => onOpenEntry(entry.id)} />
+                <EntryCard
+                  key={entry.id}
+                  entry={entry}
+                  selected={entry.id === selectedId}
+                  onOpen={() => onOpenEntry(entry.id)}
+                />
               ))}
             </div>
           ))}

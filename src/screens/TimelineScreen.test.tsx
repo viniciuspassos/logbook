@@ -49,6 +49,22 @@ describe('TimelineScreen', () => {
     expect(onOpenEntry).toHaveBeenCalledWith(entries[0].id)
   })
 
+  it('marks the card for selectedId as the entry being read', () => {
+    render(
+      <TimelineScreen
+        syncStatus="Saved locally"
+        entries={entries}
+        selectedId={entries[2].id}
+        timelineView="list"
+        onChangeView={() => {}}
+        onOpenEntry={() => {}}
+      />,
+    )
+    const current = screen.getAllByRole('button', { current: true })
+    expect(current).toHaveLength(1)
+    expect(current[0]).toHaveTextContent(entries[2].title)
+  })
+
   it('switches to map view and renders a pin + strip card per entry', () => {
     render(
       <TimelineScreen

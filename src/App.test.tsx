@@ -108,7 +108,7 @@ describe('App', () => {
     expect(screen.getAllByText('Sunset trail run today').length).toBeGreaterThan(0)
   })
 
-  describe('desktop right-hand page', () => {
+  describe('desktop reading panel', () => {
     const originalMatchMedia = window.matchMedia
 
     beforeEach(() => {
@@ -136,6 +136,23 @@ describe('App', () => {
       // Read-only: no back button, since it isn't a modal over anything.
       expect(screen.queryByText('‹')).not.toBeInTheDocument()
       expect(screen.queryByText('Open an entry to read it here')).not.toBeInTheDocument()
+    })
+
+    it('marks the list row of whichever entry the reading panel shows', async () => {
+      const user = userEvent.setup()
+      render(<App />)
+      const [mostRecent, , older] = [...entries].sort((a, b) => b.id - a.id)
+      expect(screen.getByRole('button', { current: true })).toHaveTextContent(mostRecent.title)
+
+      await user.click(screen.getByRole('button', { name: new RegExp(older.title) }))
+      expect(screen.getByRole('button', { current: true })).toHaveTextContent(older.title)
+    })
+
+    it('marks no list row while the panel shows the new-entry form', async () => {
+      const user = userEvent.setup()
+      render(<App />)
+      await user.click(screen.getByRole('button', { name: 'New entry' }))
+      expect(screen.queryByRole('button', { current: true })).not.toBeInTheDocument()
     })
   })
 })

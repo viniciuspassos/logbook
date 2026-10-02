@@ -38,75 +38,6 @@
   color: var(--lb-ink);
 }
 
-@media (min-width: 960px) {
-  .entry-detail__title {
-    font-family: var(--serif);
-    font-size: 22px;
-    font-weight: 600;
-  }
-
-  .entry-detail__body {
-    padding: 0 44px 40px;
-  }
-
-  /* embedded's right-hand page has no OverlayHeader to supply top spacing. */
-  .entry-detail--embedded .entry-detail__body {
-    padding-top: var(--lb-space-4);
-  }
-
-  /* The "instrument panel" look: one bordered/radiused strip with hairline
-     dividers between cells, instead of four separate boxes. Only ever
-     rendered at this breakpoint (EntryDetailOverlay.tsx's showStatStrip),
-     so these rules own the whole look — there's no mobile counterpart. */
-  .entry-detail__stat-strip {
-    display: grid;
-    grid-template-columns: repeat(4, 1fr);
-    gap: 0;
-    border: 1px solid var(--lb-border);
-    border-radius: var(--lb-radius-md);
-    overflow: hidden;
-    margin-bottom: var(--lb-space-4);
-  }
-
-  .entry-detail__stat-cell {
-    border: none;
-    border-right: 1px solid var(--lb-border);
-    border-radius: 0;
-    padding: var(--lb-space-3) var(--lb-space-3);
-  }
-  .entry-detail__stat-cell:last-child {
-    border-right: none;
-  }
-
-  .entry-detail__stat-label {
-    font-family: var(--mono);
-    font-size: 10px;
-    letter-spacing: 0.04em;
-    text-transform: uppercase;
-    color: var(--lb-muted);
-  }
-
-  .entry-detail__stat-value {
-    font-family: var(--mono);
-    font-variant-numeric: tabular-nums;
-    font-weight: 600;
-    font-size: 16px;
-    margin-top: 4px;
-    color: var(--lb-ink);
-  }
-
-  /* Drop cap on the story's first paragraph only. */
-  .entry-detail__story::first-letter {
-    font-family: var(--display);
-    font-weight: 600;
-    font-size: 2.6em;
-    line-height: 0.85;
-    float: left;
-    margin: 0.04em 0.08em 0 0;
-    color: var(--lb-accent);
-  }
-}
-
 .entry-detail__subtitle {
   font-size: 12.5px;
   color: var(--lb-muted);
@@ -174,7 +105,7 @@
   border: none;
   background: none;
   font-size: 12.5px;
-  color: var(--lb-accent);
+  color: var(--lb-accent-ink);
   cursor: pointer;
   padding: 0;
   margin-bottom: 8px;
@@ -246,4 +177,162 @@
 .entry-detail__delete .confirm-button__cancel {
   padding: 11px;
   border-radius: 12px;
+}
+
+/* Desktop reading panel. The title area becomes a sky-gradient hero with the
+   title in Archivo's expanded cut; the stat fields (only split out at this
+   width, see EntryDetailOverlay.tsx's showStatStrip) become chips, and the
+   remaining fields drop their boxes. */
+@media (min-width: 960px) {
+  .entry-detail .overlay-header {
+    padding: var(--lb-space-4) 44px 0;
+    background: var(--lb-hero-top);
+  }
+
+  .entry-detail__body {
+    padding: 0 44px 40px;
+  }
+
+  .entry-detail__intro {
+    align-items: flex-end;
+    gap: var(--lb-space-3);
+    margin: 0 -44px var(--lb-space-4);
+    padding: 72px 44px var(--lb-space-4);
+    background: linear-gradient(
+      180deg,
+      var(--lb-hero-top) 0%,
+      var(--lb-hero-mid) 60%,
+      var(--lb-hero-bottom) 100%
+    );
+  }
+
+  /* Embedded mode has no OverlayHeader above it, so the hero is the top. */
+  .entry-detail--embedded .entry-detail__intro {
+    padding-top: 112px;
+  }
+
+  .entry-detail__icon {
+    background: var(--lb-bg);
+  }
+
+  .entry-detail__title {
+    font-family: var(--display);
+    font-stretch: 125%;
+    font-weight: 800;
+    font-size: 36px;
+    line-height: 1.05;
+    letter-spacing: -0.01em;
+    text-wrap: balance;
+  }
+
+  .entry-detail__subtitle {
+    font-size: 14px;
+    color: var(--lb-ink);
+    margin-top: 6px;
+  }
+
+  .entry-detail__stat-strip {
+    display: flex;
+    flex-wrap: wrap;
+    gap: var(--lb-space-2);
+    margin-bottom: var(--lb-space-4);
+  }
+
+  .entry-detail__stat-cell {
+    display: flex;
+    align-items: baseline;
+    gap: 6px;
+    padding: 5px 12px;
+    border: 1.5px solid var(--lb-border);
+    border-radius: 999px;
+    font-size: 13px;
+  }
+
+  .entry-detail__stat-cell:first-child {
+    border-color: var(--lb-accent);
+  }
+
+  .entry-detail__stat-label {
+    font-size: 12px;
+    color: var(--lb-muted);
+  }
+
+  .entry-detail__stat-value {
+    font-weight: 600;
+    font-variant-numeric: tabular-nums;
+    color: var(--lb-ink);
+  }
+
+  .entry-detail__stat-cell:first-child .entry-detail__stat-value {
+    color: var(--lb-accent-ink);
+  }
+
+  .entry-detail__story {
+    font-size: 17px;
+    line-height: 1.6;
+    max-width: 62ch;
+    margin-bottom: var(--lb-space-5);
+  }
+
+  .entry-detail__grid {
+    grid-template-columns: repeat(3, minmax(0, 1fr));
+    gap: var(--lb-space-3) var(--lb-space-5);
+    margin-bottom: var(--lb-space-5);
+  }
+
+  .entry-detail__field {
+    border: none;
+    padding: 0;
+  }
+
+  /* Keep the decorative media tiles thumbnail-sized on a wide panel. */
+  .entry-detail__media {
+    grid-template-columns: repeat(3, minmax(0, 200px));
+  }
+
+  .entry-detail__field-label {
+    font-size: 12px;
+    text-transform: none;
+  }
+
+  .entry-detail__field-value {
+    font-size: 15px;
+    font-weight: 600;
+  }
+
+  .entry-detail__section-label {
+    font-size: 13px;
+    font-weight: 600;
+    text-transform: none;
+    letter-spacing: 0;
+  }
+
+  .entry-detail__actions {
+    flex-wrap: wrap;
+  }
+
+  .entry-detail__action {
+    flex: 0 0 auto;
+    padding: 9px 16px;
+    border-width: 1.5px;
+    border-radius: 999px;
+    font-weight: 600;
+  }
+
+  .entry-detail__action:first-child {
+    border-color: var(--lb-ink);
+    background: var(--lb-ink);
+    color: var(--lb-bg);
+  }
+
+  .entry-detail__action:disabled {
+    opacity: 0.5;
+    cursor: default;
+  }
+
+  .entry-detail__delete {
+    width: auto;
+    border-radius: 999px;
+    padding: 9px 16px;
+  }
 }

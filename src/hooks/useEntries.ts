@@ -20,7 +20,7 @@ function byNewest(entries: Entry[]): Entry[] {
  * is minted strictly increasing when an entry is saved (`nextEntryId` in
  * `lib/buildEntry.ts`), so the highest id is always the newest entry
  * regardless of the list's own order. Used to default-open the desktop
- * right-hand page to the latest entry instead of a static hint (App.tsx).
+ * reading panel to the latest entry instead of a static hint (App.tsx).
  */
 export function mostRecentEntry(entries: Entry[]): Entry | undefined {
   return byNewest(entries)[0]
