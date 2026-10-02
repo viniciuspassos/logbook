@@ -45,6 +45,22 @@ export const DEFAULT_MEDIA_HINTS: [string, string, string] = [
 ]
 
 /**
+ * The id for a newly saved entry: `now` (a millisecond timestamp), bumped
+ * above every existing id if the clock is behind. Ids are the local key the
+ * outbox and sync-state map use, so they must never be reused — a plain
+ * `max + 1` would hand a deleted newest entry's id to the next entry, which
+ * would then inherit the deleted entry's server mapping and photos (relies on
+ * the clock moving between two saves, which it always does for two human
+ * actions). Still
+ * strictly increasing, so "highest id = newest" (see useEntries'
+ * mostRecentEntry) keeps holding.
+ */
+export function nextEntryId(entries: ReadonlyArray<Pick<Entry, 'id'>>, now: number): number {
+  const maxId = entries.reduce((max, entry) => Math.max(max, entry.id), 0)
+  return Math.max(maxId + 1, now)
+}
+
+/**
  * Build a persistable {@link Entry} from a captured {@link Draft}. Pure: the
  * caller supplies the id and clock so this stays deterministic and testable.
  * Missing AI fields fall back to sensible placeholders so an entry can always

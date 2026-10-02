@@ -278,7 +278,8 @@ The application must:
 Timeline of adventures · full-text and **AI-powered natural-language** search · statistics
 dashboard · export to Markdown · export to PDF (via the browser's own print-to-PDF, no PDF
 library) · local backup export/restore via the File System Access API · photo attachments
-(queued locally, uploaded to the backend via the offline outbox).
+(queued locally, uploaded to the backend via the offline outbox) · deleting an entry, or removing
+just one of its photos, with an inline confirmation (also synced through the outbox).
 
 ### Tech stack
 

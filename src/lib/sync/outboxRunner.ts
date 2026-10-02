@@ -1,12 +1,13 @@
 import { isPersistenceSupported } from '../db/database.ts'
-import { getAllRecords, markRejected, recordAttemptFailure, removeRecord } from '../db/outboxStore.ts'
+import { getAllRecords, hasRecord, markRejected, recordAttemptFailure, removeRecord } from '../db/outboxStore.ts'
 import { deleteSyncState, getSyncState, putSyncState } from '../db/syncStateStore.ts'
-import { uploadAttachment } from './attachmentsApi.ts'
+import { deleteAttachment, uploadAttachment } from './attachmentsApi.ts'
 import { createEntry, deleteEntry, updateEntry } from './entriesApi.ts'
-import { SyncAuthError, isPermanentRejection } from './errors.ts'
+import { SyncAuthError, SyncHttpError, isPermanentRejection } from './errors.ts'
 import { isBackendReachable } from './health.ts'
 import type {
   CreateEntryOperation,
+  DeleteAttachmentOperation,
   DeleteEntryOperation,
   OutboxRecord,
   UpdateEntryOperation,
@@ -80,21 +81,42 @@ async function processUpdate(op: UpdateEntryOperation, signal?: AbortSignal): Pr
   await putSyncState({ localEntryId: op.localEntryId, serverId: updated.id, serverVersion: updated.version })
 }
 
+/**
+ * Runs a server-side DELETE, treating a 404 as success: the thing is already
+ * gone (an earlier drain crashed before dequeuing, or another device deleted
+ * it), and a delete that can never succeed must not stall every op behind it.
+ */
+async function deleteIgnoringNotFound(request: () => Promise<void>): Promise<void> {
+  try {
+    await request()
+  } catch (error) {
+    if (!(error instanceof SyncHttpError && error.status === 404)) throw error
+  }
+}
+
 async function processDelete(op: DeleteEntryOperation, signal?: AbortSignal): Promise<void> {
   const state = await getSyncState(op.localEntryId)
   if (!state?.serverId) return // Never synced — nothing server-side to delete.
-  await deleteEntry(state.serverId, signal)
+  const serverId = state.serverId
+  await deleteIgnoringNotFound(() => deleteEntry(serverId, signal))
   await deleteSyncState(op.localEntryId)
 }
 
-async function processUpload(op: UploadAttachmentOperation, signal?: AbortSignal): Promise<void> {
+async function processDeleteAttachment(op: DeleteAttachmentOperation, signal?: AbortSignal): Promise<void> {
+  await deleteIgnoringNotFound(() => deleteAttachment(op.serverAttachmentId, signal))
+}
+
+async function processUpload(op: UploadAttachmentOperation, queueId: number, signal?: AbortSignal): Promise<void> {
   const state = await getSyncState(op.localEntryId)
   if (!state?.serverId) {
     throw new Error(
       `Entry ${op.localEntryId} has not synced yet; its create-entry op should still be queued ahead of this upload.`,
     )
   }
-  await uploadAttachment(state.serverId, op.file, op.filename, signal)
+  const uploaded = await uploadAttachment(state.serverId, op.file, op.filename, signal)
+  // The user removed this photo while it was uploading (its queued op is
+  // gone): undo the upload rather than leave a photo they asked to drop.
+  if (!(await hasRecord(queueId))) await deleteIgnoringNotFound(() => deleteAttachment(uploaded.id, signal))
 }
 
 async function processRecord(record: OutboxRecord, signal?: AbortSignal): Promise<void> {
@@ -106,7 +128,9 @@ async function processRecord(record: OutboxRecord, signal?: AbortSignal): Promis
     case 'delete-entry':
       return processDelete(record.operation, signal)
     case 'upload-attachment':
-      return processUpload(record.operation, signal)
+      return processUpload(record.operation, record.queueId, signal)
+    case 'delete-attachment':
+      return processDeleteAttachment(record.operation, signal)
   }
 }
 
@@ -173,6 +197,9 @@ async function processQueue(records: OutboxRecord[], signal?: AbortSignal): Prom
   const state: PassState = { processed: 0, blockedEntries: new Map() }
   for (const record of records) {
     if (signal?.aborted) return { processed: state.processed, stoppedReason: 'aborted' }
+    // The pass works from one snapshot; the user may have removed this op
+    // since (deleted its entry or photo), so never run one that's gone.
+    if (!(await hasRecord(record.queueId))) continue
     if (isHeldBack(record, state)) {
       await holdBack(record, state)
       continue

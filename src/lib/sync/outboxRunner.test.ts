@@ -1,10 +1,10 @@
 import { drainOutbox, startAutoSync, subscribeToDrains } from './outboxRunner.ts'
-import { getAllRecords, markRejected, recordAttemptFailure, removeRecord } from '../db/outboxStore.ts'
+import { getAllRecords, hasRecord, markRejected, recordAttemptFailure, removeRecord } from '../db/outboxStore.ts'
 import { deleteSyncState, getSyncState, putSyncState } from '../db/syncStateStore.ts'
 import { isPersistenceSupported } from '../db/database.ts'
 import { isBackendReachable } from './health.ts'
 import { createEntry, deleteEntry, updateEntry } from './entriesApi.ts'
-import { uploadAttachment } from './attachmentsApi.ts'
+import { deleteAttachment, uploadAttachment } from './attachmentsApi.ts'
 import { SyncAuthError, SyncHttpError } from './errors.ts'
 import type { OutboxRecord } from '../../types/outbox.ts'
 import type { CreateEntryPayload, ServerEntry } from '../../types/sync.ts'
@@ -12,6 +12,7 @@ import type { CreateEntryPayload, ServerEntry } from '../../types/sync.ts'
 jest.mock('../db/database.ts', () => ({ isPersistenceSupported: jest.fn().mockReturnValue(true) }))
 jest.mock('../db/outboxStore.ts', () => ({
   getAllRecords: jest.fn(),
+  hasRecord: jest.fn(),
   removeRecord: jest.fn(),
   recordAttemptFailure: jest.fn(),
   markRejected: jest.fn(),
@@ -27,12 +28,13 @@ jest.mock('./entriesApi.ts', () => ({
   updateEntry: jest.fn(),
   deleteEntry: jest.fn(),
 }))
-jest.mock('./attachmentsApi.ts', () => ({ uploadAttachment: jest.fn() }))
+jest.mock('./attachmentsApi.ts', () => ({ uploadAttachment: jest.fn(), deleteAttachment: jest.fn() }))
 
 const supportedMock = isPersistenceSupported as jest.Mock
 const reachableMock = isBackendReachable as jest.Mock
 const getAllRecordsMock = getAllRecords as jest.Mock
 const removeRecordMock = removeRecord as jest.Mock
+const hasRecordMock = hasRecord as jest.Mock
 const recordFailureMock = recordAttemptFailure as jest.Mock
 const markRejectedMock = markRejected as jest.Mock
 const getSyncStateMock = getSyncState as jest.Mock
@@ -42,6 +44,7 @@ const createEntryMock = createEntry as jest.Mock
 const updateEntryMock = updateEntry as jest.Mock
 const deleteEntryMock = deleteEntry as jest.Mock
 const uploadAttachmentMock = uploadAttachment as jest.Mock
+const deleteAttachmentMock = deleteAttachment as jest.Mock
 
 const payload = {} as CreateEntryPayload
 
@@ -60,6 +63,7 @@ beforeEach(() => {
   supportedMock.mockReturnValue(true)
   reachableMock.mockResolvedValue(true)
   getAllRecordsMock.mockResolvedValue([])
+  hasRecordMock.mockResolvedValue(true)
   removeRecordMock.mockResolvedValue(undefined)
   recordFailureMock.mockResolvedValue(undefined)
   markRejectedMock.mockResolvedValue(undefined)
@@ -87,6 +91,17 @@ describe('drainOutbox', () => {
     const summary = await drainOutbox()
     expect(summary.stoppedReason).toBe('unsupported')
     expect(reachableMock).not.toHaveBeenCalled()
+  })
+
+  it('skips a record removed from the queue since the pass read it (e.g. its entry was deleted)', async () => {
+    hasRecordMock.mockResolvedValue(false)
+    getAllRecordsMock.mockResolvedValue([createRecord()])
+
+    const summary = await drainOutbox()
+
+    expect(createEntryMock).not.toHaveBeenCalled()
+    expect(removeRecordMock).not.toHaveBeenCalled()
+    expect(summary).toEqual({ processed: 0, stoppedReason: 'empty' })
   })
 
   describe('create-entry', () => {
@@ -166,6 +181,58 @@ describe('drainOutbox', () => {
       expect(deleteSyncStateMock).toHaveBeenCalledWith(1)
       expect(removeRecordMock).toHaveBeenCalledWith(1)
     })
+
+    it('treats a 404 as already deleted rather than stalling the queue', async () => {
+      getSyncStateMock.mockResolvedValue({ localEntryId: 1, serverId: 42, serverVersion: 1 })
+      deleteEntryMock.mockRejectedValue(new SyncHttpError(404, null, 'Not found'))
+      getAllRecordsMock.mockResolvedValue([
+        createRecord({ operation: { kind: 'delete-entry', localEntryId: 1 } }),
+      ])
+
+      const summary = await drainOutbox()
+
+      expect(deleteSyncStateMock).toHaveBeenCalledWith(1)
+      expect(removeRecordMock).toHaveBeenCalledWith(1)
+      expect(summary).toEqual({ processed: 1, stoppedReason: 'empty' })
+    })
+
+    it('still stops the drain on any other HTTP error', async () => {
+      getSyncStateMock.mockResolvedValue({ localEntryId: 1, serverId: 42, serverVersion: 1 })
+      deleteEntryMock.mockRejectedValue(new SyncHttpError(500, null, 'Boom'))
+      getAllRecordsMock.mockResolvedValue([
+        createRecord({ operation: { kind: 'delete-entry', localEntryId: 1 } }),
+      ])
+
+      const summary = await drainOutbox()
+
+      expect(removeRecordMock).not.toHaveBeenCalled()
+      expect(summary).toEqual({ processed: 0, stoppedReason: 'error', error: 'Boom' })
+    })
+  })
+
+  describe('delete-attachment', () => {
+    const op = { kind: 'delete-attachment' as const, localEntryId: 1, serverAttachmentId: 7 }
+
+    it('DELETEs the attachment by its server id', async () => {
+      deleteAttachmentMock.mockResolvedValue(undefined)
+      getAllRecordsMock.mockResolvedValue([createRecord({ operation: op })])
+
+      const summary = await drainOutbox()
+
+      expect(deleteAttachmentMock).toHaveBeenCalledWith(7, undefined)
+      expect(removeRecordMock).toHaveBeenCalledWith(1)
+      expect(summary).toEqual({ processed: 1, stoppedReason: 'empty' })
+    })
+
+    it('treats a 404 as already deleted', async () => {
+      deleteAttachmentMock.mockRejectedValue(new SyncHttpError(404, null, 'Not found'))
+      getAllRecordsMock.mockResolvedValue([createRecord({ operation: op })])
+
+      const summary = await drainOutbox()
+
+      expect(removeRecordMock).toHaveBeenCalledWith(1)
+      expect(summary.stoppedReason).toBe('empty')
+    })
   })
 
   describe('upload-attachment', () => {
@@ -192,6 +259,23 @@ describe('drainOutbox', () => {
 
       expect(uploadAttachmentMock).toHaveBeenCalledWith(42, blob, 'a.jpg', undefined)
       expect(removeRecordMock).toHaveBeenCalledWith(1)
+      expect(deleteAttachmentMock).not.toHaveBeenCalled()
+    })
+
+    it('deletes the upload again when the user removed the photo while it was uploading', async () => {
+      getSyncStateMock.mockResolvedValue({ localEntryId: 1, serverId: 42, serverVersion: 1 })
+      uploadAttachmentMock.mockResolvedValue({ id: 77 })
+      deleteAttachmentMock.mockResolvedValue(undefined)
+      // Still queued when the pass reaches it, gone once the upload returns.
+      hasRecordMock.mockResolvedValueOnce(true).mockResolvedValueOnce(false)
+      getAllRecordsMock.mockResolvedValue([
+        createRecord({ operation: { kind: 'upload-attachment', localEntryId: 1, file: blob, filename: 'a.jpg' } }),
+      ])
+
+      const summary = await drainOutbox()
+
+      expect(deleteAttachmentMock).toHaveBeenCalledWith(77, undefined)
+      expect(summary.stoppedReason).toBe('empty')
     })
   })
 

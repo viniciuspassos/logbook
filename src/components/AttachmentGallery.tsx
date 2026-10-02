@@ -1,5 +1,6 @@
 import { useId, type ChangeEvent } from 'react'
 import { cx } from '../lib/cx.ts'
+import { ConfirmButton } from './ConfirmButton.tsx'
 import type { AttachmentPreview, AttachmentStatus } from '../hooks/useEntryAttachments.ts'
 import './AttachmentGallery.css'
 
@@ -10,6 +11,8 @@ interface AttachmentGalleryProps {
   onAddPhoto: (file: File) => void
   /** Discards a photo the server permanently rejected, by its outbox queueId. */
   onDiscardPhoto?: (queueId: number) => void
+  /** Removes just this photo (the entry stays); no remove buttons without it. */
+  onRemovePhoto?: (attachment: AttachmentPreview) => void
 }
 
 function altText(attachment: AttachmentPreview): string {
@@ -17,7 +20,16 @@ function altText(attachment: AttachmentPreview): string {
   return attachment.pending ? 'Photo attachment, uploading' : 'Photo attachment'
 }
 
-function AttachmentTile({ attachment, onDiscard }: { attachment: AttachmentPreview; onDiscard?: (queueId: number) => void }) {
+interface AttachmentTileProps {
+  attachment: AttachmentPreview
+  /** 1-based position, so each remove button has its own accessible name. */
+  position: number
+  busy: boolean
+  onDiscard?: (queueId: number) => void
+  onRemove?: (attachment: AttachmentPreview) => void
+}
+
+function AttachmentTile({ attachment, position, busy, onDiscard, onRemove }: AttachmentTileProps) {
   const { rejectedReason, queueId } = attachment
   return (
     <div className="attachment-gallery__item">
@@ -38,6 +50,19 @@ function AttachmentTile({ attachment, onDiscard }: { attachment: AttachmentPrevi
           )}
         </div>
       )}
+      {/* A rejected photo already offers its own Remove above. */}
+      {rejectedReason === undefined && onRemove && (
+        <ConfirmButton
+          label={`Remove photo ${position}`}
+          confirmLabel="Remove"
+          cancelLabel="Keep"
+          disabled={busy}
+          className="attachment-gallery__delete"
+          onConfirm={() => onRemove(attachment)}
+        >
+          <span aria-hidden="true">×</span>
+        </ConfirmButton>
+      )}
     </div>
   )
 }
@@ -46,7 +71,7 @@ function AttachmentTile({ attachment, onDiscard }: { attachment: AttachmentPrevi
  * Real, uploaded photo attachments (#26) — distinct from `entry.media`'s
  * decorative AI/seed hint strings (see PhotoPlaceholder, still used
  * elsewhere in EntryDetailOverlay for those). Presentational: all loading/
- * upload/validation state lives in useEntryAttachments.ts.
+ * upload/removal/validation state lives in useEntryAttachments.ts.
  */
 export function AttachmentGallery({
   attachments,
@@ -54,6 +79,7 @@ export function AttachmentGallery({
   status,
   onAddPhoto,
   onDiscardPhoto,
+  onRemovePhoto,
 }: AttachmentGalleryProps) {
   const inputId = useId()
 
@@ -67,8 +93,15 @@ export function AttachmentGallery({
     <div className="attachment-gallery">
       {attachments.length > 0 && (
         <div className="attachment-gallery__grid">
-          {attachments.map((attachment) => (
-            <AttachmentTile key={attachment.key} attachment={attachment} onDiscard={onDiscardPhoto} />
+          {attachments.map((attachment, index) => (
+            <AttachmentTile
+              key={attachment.key}
+              attachment={attachment}
+              position={index + 1}
+              busy={busy}
+              onDiscard={onDiscardPhoto}
+              onRemove={onRemovePhoto}
+            />
           ))}
         </div>
       )}

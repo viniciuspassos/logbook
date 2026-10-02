@@ -104,11 +104,30 @@ Two properties of this flow are load-bearing and easy to break by accident:
   triggers) never blocks the save or the UI. A restore does the same with `queueEntryCreates`, but
   only *after* the awaited `replaceEntries` succeeds, so entries that didn't persist locally never
   sync; re-queuing is safe because the runner no-ops a create whose local id already has a server id.
+- **Deletes follow the same local-first shape.** `deleteEntry` (`useLogbookApp.ts`) closes the
+  overlay, drops the entry from state and IndexedDB (`useEntries.removeEntry`, fire-and-forget), then
+  calls `useSyncOutbox.queueEntryDeletion`. That removes every op still queued for the entry (its
+  create, edits, photo uploads) and queues a `delete-entry` — even if the entry never synced, since
+  a drain already in flight may still be creating it; the delete then runs after that create, and
+  no-ops if there's nothing on the server. The server tombstones the entry and purges its photos.
+  Removing a single photo (`useEntryAttachments.removePhoto`) drops its queued upload if it never
+  reached the server (`discardRejectedOperation`), or queues a `delete-attachment` op.
+  `getEntryAttachmentSources` hides photos with a pending (not rejected) delete, so the gallery
+  updates straight away even offline.
+- **The runner re-checks each op before running it.** A pass reads the queue once, so it skips any
+  op removed since (the user deleted its entry or photo), and an upload that finishes after its op
+  was removed is deleted from the server again. Both deletes treat a 404 as already done instead of
+  parking it as a permanent rejection. A photo the server rejected keeps its own Remove button
+  (`discardPhoto`), so no tile shows two.
+- **Local entry ids are never reused.** `nextEntryId` (`lib/buildEntry.ts`) mints
+  `max(highest id + 1, Date.now())` rather than plain `max + 1`. The id is the outbox's and the
+  sync-state map's key, so reusing a deleted newest entry's id would hand the new entry the deleted
+  one's server mapping and photos.
 
 ## State composition
 
 `useLogbookApp` (`src/hooks/useLogbookApp.ts`) is the composition root. It owns **no state of its
-own** beyond a couple of coordinating functions (`openNewEntry`, `closeOverlay`, `saveEntry`) —
+own** beyond a couple of coordinating functions (`openNewEntry`, `closeOverlay`, `saveEntry`, `deleteEntry`) —
 everything else is delegated to a single-concern hook:
 
 | Hook | Owns |
@@ -117,8 +136,8 @@ everything else is delegated to a single-concern hook:
 | `useEntries` | The persisted entry list: load-on-mount, seed-if-empty, write-through on add/replace |
 | `useNewEntryFlow` | The capture → listening → processing → review state machine, speech, AI orchestration |
 | `useExportActions` | Markdown/PDF export, JSON backup export/restore, a `busy` guard and status message |
-| `useSyncOutbox` | Registers the reconnect trigger and does a mount-time drain against the backend outbox; exposes `queueEntryCreate`, `queueEntryCreates` (backup restore) and the timeline's `syncStatus`, read from every finished drain via `subscribeToDrains` |
-| `useEntryAttachments` | The attachment gallery (server-confirmed + locally-queued photos) for whichever entry is open, and the upload flow |
+| `useSyncOutbox` | Registers the reconnect trigger and does a mount-time drain against the backend outbox; exposes `queueEntryCreate`, `queueEntryCreates` (backup restore), `queueEntryDeletion` and the timeline's `syncStatus`, read from every finished drain via `subscribeToDrains` |
+| `useEntryAttachments` | The attachment gallery (server-confirmed + locally-queued photos) for whichever entry is open, the upload flow, and removing a single photo |
 
 **Why this shape instead of one hook, or a global store (Redux/Zustand):** the app has several
 genuinely independent concerns (routing-ish UI state, persisted domain data, a multi-step capture

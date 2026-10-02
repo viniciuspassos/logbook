@@ -1,4 +1,4 @@
-import { buildEntryFromDraft, DEFAULT_MEDIA_HINTS, formatEntryDate } from './buildEntry.ts'
+import { buildEntryFromDraft, DEFAULT_MEDIA_HINTS, formatEntryDate, nextEntryId } from './buildEntry.ts'
 import type { ExtractedEntryFields } from './ai/extractEntry.ts'
 
 const extracted: ExtractedEntryFields = {
@@ -71,5 +71,26 @@ describe('buildEntryFromDraft', () => {
     // Not the same array reference — each saved entry owns its own copy.
     expect(entry.media).not.toBe(DEFAULT_MEDIA_HINTS)
     expect(entry.photoHint).toBe(DEFAULT_MEDIA_HINTS[0])
+  })
+})
+
+describe('nextEntryId', () => {
+  it('uses the clock when it is ahead of every existing id', () => {
+    expect(nextEntryId([{ id: 1 }, { id: 2 }], 1_000_000)).toBe(1_000_000)
+  })
+
+  it('stays above the highest existing id even if the clock is behind', () => {
+    expect(nextEntryId([{ id: 5_000 }, { id: 1 }], 10)).toBe(5_001)
+  })
+
+  it('never reuses the id of a deleted newest entry', () => {
+    const before = nextEntryId([{ id: 1 }], 2_000)
+    // The entry with id `before` is created and then deleted again; the next
+    // id is minted from the remaining list a moment later.
+    expect(nextEntryId([{ id: 1 }], 2_001)).not.toBe(before)
+  })
+
+  it('works on an empty list', () => {
+    expect(nextEntryId([], 42)).toBe(42)
   })
 })

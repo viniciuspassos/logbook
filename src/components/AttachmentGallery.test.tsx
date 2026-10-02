@@ -7,12 +7,13 @@ describe('AttachmentGallery', () => {
     render(
       <AttachmentGallery
         attachments={[
-          { key: 'server-1', url: '/api/attachments/1/file', pending: false },
-          { key: 'pending-2', url: 'blob:local', pending: true },
+          { key: 'server-1', url: '/api/attachments/1/file', pending: false, attachmentId: 1 },
+          { key: 'pending-2', url: 'blob:local', pending: true, queueId: 2 },
         ]}
         busy={false}
         status={null}
         onAddPhoto={() => {}}
+        onRemovePhoto={() => {}}
       />,
     )
     const images = screen.getAllByRole('img')
@@ -23,10 +24,11 @@ describe('AttachmentGallery', () => {
   it('marks a pending (not-yet-uploaded) attachment as such', () => {
     render(
       <AttachmentGallery
-        attachments={[{ key: 'pending-2', url: 'blob:local', pending: true }]}
+        attachments={[{ key: 'pending-2', url: 'blob:local', pending: true, queueId: 2 }]}
         busy={false}
         status={null}
         onAddPhoto={() => {}}
+        onRemovePhoto={() => {}}
       />,
     )
     expect(screen.getByText('Uploading…')).toBeInTheDocument()
@@ -87,14 +89,14 @@ describe('AttachmentGallery', () => {
   })
 
   it('renders no thumbnails when there are no attachments', () => {
-    render(<AttachmentGallery attachments={[]} busy={false} status={null} onAddPhoto={() => {}} />)
+    render(<AttachmentGallery attachments={[]} busy={false} status={null} onAddPhoto={() => {}} onRemovePhoto={() => {}} />)
     expect(screen.queryAllByRole('img')).toHaveLength(0)
   })
 
   it('calls onAddPhoto with the selected file', async () => {
     const onAddPhoto = jest.fn()
     const user = userEvent.setup()
-    render(<AttachmentGallery attachments={[]} busy={false} status={null} onAddPhoto={onAddPhoto} />)
+    render(<AttachmentGallery attachments={[]} busy={false} status={null} onAddPhoto={onAddPhoto} onRemovePhoto={() => {}} />)
 
     const file = new File(['bytes'], 'summit.jpg', { type: 'image/jpeg' })
     await user.upload(screen.getByLabelText('Add photo'), file)
@@ -103,7 +105,7 @@ describe('AttachmentGallery', () => {
   })
 
   it('disables the add-photo input while busy', () => {
-    render(<AttachmentGallery attachments={[]} busy={true} status={null} onAddPhoto={() => {}} />)
+    render(<AttachmentGallery attachments={[]} busy={true} status={null} onAddPhoto={() => {}} onRemovePhoto={() => {}} />)
     expect(screen.getByLabelText('Add photo')).toBeDisabled()
   })
 
@@ -114,13 +116,14 @@ describe('AttachmentGallery', () => {
         busy={false}
         status={{ tone: 'info', message: 'Photo uploaded.' }}
         onAddPhoto={() => {}}
+        onRemovePhoto={() => {}}
       />,
     )
     expect(screen.getByRole('status', { name: 'Attachment status' })).toHaveTextContent('Photo uploaded.')
   })
 
   it('renders no status text when status is absent', () => {
-    render(<AttachmentGallery attachments={[]} busy={false} status={null} onAddPhoto={() => {}} />)
+    render(<AttachmentGallery attachments={[]} busy={false} status={null} onAddPhoto={() => {}} onRemovePhoto={() => {}} />)
     expect(screen.getByRole('status', { name: 'Attachment status' })).toHaveTextContent('')
   })
 
@@ -131,9 +134,70 @@ describe('AttachmentGallery', () => {
         busy={false}
         status={{ tone: 'error', message: 'Too large.' }}
         onAddPhoto={() => {}}
+        onRemovePhoto={() => {}}
       />,
     )
     const status = screen.getByRole('status', { name: 'Attachment status' })
     expect(status.querySelector('.attachment-gallery__status-text--error')).toBeInTheDocument()
+  })
+
+  describe('removing a photo', () => {
+    const photos = [
+      { key: 'server-1', url: '/api/attachments/1/file', pending: false, attachmentId: 1 },
+      { key: 'pending-2', url: 'blob:local', pending: true, queueId: 2 },
+    ] as const
+
+    it('removes only the chosen photo, after confirming', async () => {
+      const onRemovePhoto = jest.fn()
+      const user = userEvent.setup()
+      render(
+        <AttachmentGallery
+          attachments={[...photos]}
+          busy={false}
+          status={null}
+          onAddPhoto={() => {}}
+          onRemovePhoto={onRemovePhoto}
+        />,
+      )
+
+      await user.click(screen.getByRole('button', { name: 'Remove photo 2' }))
+      expect(onRemovePhoto).not.toHaveBeenCalled()
+      await user.click(screen.getByRole('button', { name: 'Remove' }))
+
+      expect(onRemovePhoto).toHaveBeenCalledTimes(1)
+      expect(onRemovePhoto).toHaveBeenCalledWith(photos[1])
+    })
+
+    it('keeps the photo when the removal is cancelled', async () => {
+      const onRemovePhoto = jest.fn()
+      const user = userEvent.setup()
+      render(
+        <AttachmentGallery
+          attachments={[...photos]}
+          busy={false}
+          status={null}
+          onAddPhoto={() => {}}
+          onRemovePhoto={onRemovePhoto}
+        />,
+      )
+
+      await user.click(screen.getByRole('button', { name: 'Remove photo 1' }))
+      await user.click(screen.getByRole('button', { name: 'Keep' }))
+
+      expect(onRemovePhoto).not.toHaveBeenCalled()
+    })
+
+    it('disables removal while another photo action is in flight', () => {
+      render(
+        <AttachmentGallery
+          attachments={[...photos]}
+          busy={true}
+          status={null}
+          onAddPhoto={() => {}}
+          onRemovePhoto={() => {}}
+        />,
+      )
+      expect(screen.getByRole('button', { name: 'Remove photo 1' })).toBeDisabled()
+    })
   })
 })

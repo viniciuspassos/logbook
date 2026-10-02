@@ -70,6 +70,26 @@ export async function removeRecord(queueId: number): Promise<void> {
   }
 }
 
+function readRecord(db: IDBDatabase, queueId: number): Promise<OutboxRecord | undefined> {
+  return new Promise((resolve, reject) => {
+    const request = db.transaction(STORE, 'readonly').objectStore(STORE).get(queueId)
+    request.onsuccess = () => resolve(request.result as OutboxRecord | undefined)
+    request.onerror = () => reject(request.error)
+  })
+}
+
+/** Whether a queued operation is still there — the runner re-checks this
+ *  before running a record from its snapshot, since the user may have
+ *  removed it (deleted its entry or photo) while the drain was going. */
+export async function hasRecord(queueId: number): Promise<boolean> {
+  const db = await openLogbookDb()
+  try {
+    return (await readRecord(db, queueId)) !== undefined
+  } finally {
+    db.close()
+  }
+}
+
 async function updateFailedRecord(
   queueId: number,
   message: string,
@@ -77,11 +97,7 @@ async function updateFailedRecord(
 ): Promise<void> {
   const db = await openLogbookDb()
   try {
-    const existing = await new Promise<OutboxRecord | undefined>((resolve, reject) => {
-      const request = db.transaction(STORE, 'readonly').objectStore(STORE).get(queueId)
-      request.onsuccess = () => resolve(request.result as OutboxRecord | undefined)
-      request.onerror = () => reject(request.error)
-    })
+    const existing = await readRecord(db, queueId)
     if (!existing) return
     const updated: OutboxRecord = { ...existing, ...extra, attempts: existing.attempts + 1, lastError: message }
     await runWrite(db, (store) => store.put(updated))

@@ -1,5 +1,6 @@
 import { useEffect, useRef, useState } from 'react'
 import {
+  deleteEntry,
   getAllEntries,
   isPersistenceSupported,
   putEntries,
@@ -16,8 +17,8 @@ function byNewest(entries: Entry[]): Entry[] {
 /**
  * The most recently created entry, or `undefined` for an empty list. Entries
  * have no separate `createdAt` timestamp field (see `types/entry.ts`); `id`
- * is assigned as `max(existing) + 1` when an entry is saved
- * (`useLogbookApp.saveEntry`), so the highest id is always the newest entry
+ * is minted strictly increasing when an entry is saved (`nextEntryId` in
+ * `lib/buildEntry.ts`), so the highest id is always the newest entry
  * regardless of the list's own order. Used to default-open the desktop
  * right-hand page to the latest entry instead of a static hint (App.tsx).
  */
@@ -28,13 +29,15 @@ export function mostRecentEntry(entries: Entry[]): Entry | undefined {
 /**
  * Owns the persisted entries list. On mount it loads from IndexedDB, seeding
  * the store from `seed` on first run; when persistence is unavailable it falls
- * back to an in-memory copy of the seed so the app still works. `addEntry`
- * updates state immediately and writes through to the store in the background.
+ * back to an in-memory copy of the seed so the app still works. `addEntry` and
+ * `removeEntry` update state immediately and write through to the store in the
+ * background.
  */
 export function useEntries(seed: Entry[]): {
   entries: Entry[]
   loaded: boolean
   addEntry: (entry: Entry) => void
+  removeEntry: (id: number) => void
   replaceEntries: (entries: Entry[]) => Promise<void>
 } {
   const [entries, setEntries] = useState<Entry[]>([])
@@ -93,6 +96,14 @@ export function useEntries(seed: Entry[]): {
     }
   }
 
+  function removeEntry(id: number) {
+    setEntries((prev) => prev.filter((entry) => entry.id !== id))
+    if (isPersistenceSupported()) {
+      // Fire-and-forget, same as addEntry: state already reflects the delete.
+      void deleteEntry(id).catch(() => {})
+    }
+  }
+
   /**
    * Swap the whole list, e.g. when restoring a backup. Unlike `addEntry` this
    * awaits the write and lets failures propagate, so the caller can tell the
@@ -107,5 +118,5 @@ export function useEntries(seed: Entry[]): {
     setEntries(byNewest(next))
   }
 
-  return { entries, loaded, addEntry, replaceEntries }
+  return { entries, loaded, addEntry, removeEntry, replaceEntries }
 }

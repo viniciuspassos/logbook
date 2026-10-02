@@ -6,7 +6,7 @@ if (typeof globalThis.structuredClone === 'undefined') {
 }
 import 'fake-indexeddb/auto'
 import { IDBFactory } from 'fake-indexeddb'
-import { enqueueOperation, getAllRecords, markRejected, recordAttemptFailure, removeRecord } from './outboxStore.ts'
+import { enqueueOperation, getAllRecords, hasRecord, markRejected, recordAttemptFailure, removeRecord } from './outboxStore.ts'
 import type { CreateEntryOperation, UploadAttachmentOperation } from '../../types/outbox.ts'
 
 beforeEach(() => {
@@ -91,6 +91,15 @@ describe('removeRecord', () => {
 
   it('is a no-op when the queueId does not exist', async () => {
     await expect(removeRecord(999)).resolves.toBeUndefined()
+  })
+})
+
+describe('hasRecord', () => {
+  it('is true for a queued operation and false once it is removed', async () => {
+    const record = await enqueueOperation(createOp())
+    expect(await hasRecord(record.queueId)).toBe(true)
+    await removeRecord(record.queueId)
+    expect(await hasRecord(record.queueId)).toBe(false)
   })
 })
 

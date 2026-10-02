@@ -71,6 +71,19 @@ describe('App', () => {
     expect(screen.getByRole('button', { name: /new entry/i })).toBeInTheDocument()
   })
 
+  it('deletes an entry from its detail view and returns to the timeline without it', async () => {
+    const user = userEvent.setup()
+    render(<App />)
+
+    await user.click(screen.getByText(entries[0].title))
+    await user.click(screen.getByRole('button', { name: 'Delete entry' }))
+    await user.click(screen.getByRole('button', { name: 'Delete' }))
+
+    expect(screen.queryByText(entries[0].title)).not.toBeInTheDocument()
+    expect(screen.getByText(entries[1].title)).toBeInTheDocument()
+    expect(screen.getByRole('button', { name: /new entry/i })).toBeInTheDocument()
+  })
+
   it('creates an entry through the type-to-extract flow', async () => {
     // Speech and on-device AI are unavailable under jsdom, so this drives the
     // typed-notes path, which lands on the manual review + editable story.

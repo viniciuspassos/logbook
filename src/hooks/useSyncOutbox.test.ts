@@ -1,7 +1,7 @@
 import { act, renderHook } from '@testing-library/react'
 import { useSyncOutbox } from './useSyncOutbox.ts'
 import { drainOutbox, startAutoSync, subscribeToDrains } from '../lib/sync/outboxRunner.ts'
-import { queueEntryCreate, queueEntryCreates } from '../lib/sync/outboxQueue.ts'
+import { queueEntryCreate, queueEntryCreates, queueEntryDeletion } from '../lib/sync/outboxQueue.ts'
 import type { Entry } from '../types/entry.ts'
 
 jest.mock('../lib/sync/outboxRunner.ts', () => ({
@@ -12,6 +12,7 @@ jest.mock('../lib/sync/outboxRunner.ts', () => ({
 jest.mock('../lib/sync/outboxQueue.ts', () => ({
   queueEntryCreate: jest.fn().mockResolvedValue(undefined),
   queueEntryCreates: jest.fn().mockResolvedValue(undefined),
+  queueEntryDeletion: jest.fn().mockResolvedValue(undefined),
 }))
 
 const drainMock = drainOutbox as jest.Mock
@@ -19,6 +20,7 @@ const startAutoSyncMock = startAutoSync as jest.Mock
 const subscribeMock = subscribeToDrains as jest.Mock
 const queueEntryCreateMock = queueEntryCreate as jest.Mock
 const queueEntryCreatesMock = queueEntryCreates as jest.Mock
+const queueEntryDeletionMock = queueEntryDeletion as jest.Mock
 
 function makeEntry(id: number): Entry {
   return {
@@ -50,6 +52,7 @@ beforeEach(() => {
   subscribeMock.mockReturnValue(jest.fn())
   queueEntryCreateMock.mockResolvedValue(undefined)
   queueEntryCreatesMock.mockResolvedValue(undefined)
+  queueEntryDeletionMock.mockResolvedValue(undefined)
 })
 
 describe('useSyncOutbox', () => {
@@ -139,6 +142,18 @@ describe('useSyncOutbox', () => {
     await act(async () => {
       expect(() => result.current.queueEntryCreate(makeEntry(1))).not.toThrow()
     })
+  })
+
+  it('queueEntryDeletion queues the deletion and kicks a drain', async () => {
+    const { result } = renderHook(() => useSyncOutbox())
+    drainMock.mockClear()
+
+    await act(async () => {
+      result.current.queueEntryDeletion(4)
+    })
+
+    expect(queueEntryDeletionMock).toHaveBeenCalledWith(4)
+    expect(drainMock).toHaveBeenCalled()
   })
 
   describe('auth reporting', () => {

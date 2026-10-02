@@ -1,6 +1,7 @@
 import { act, renderHook, waitFor } from '@testing-library/react'
 import { mostRecentEntry, useEntries } from './useEntries.ts'
 import {
+  deleteEntry,
   getAllEntries,
   isPersistenceSupported,
   putEntries,
@@ -15,6 +16,7 @@ jest.mock('../lib/db/entriesStore.ts', () => ({
   putEntries: jest.fn().mockResolvedValue(undefined),
   putEntry: jest.fn().mockResolvedValue(undefined),
   replaceAllEntries: jest.fn().mockResolvedValue(undefined),
+  deleteEntry: jest.fn().mockResolvedValue(undefined),
 }))
 
 const supportedMock = isPersistenceSupported as jest.Mock
@@ -22,6 +24,7 @@ const getAllMock = getAllEntries as jest.Mock
 const putEntriesMock = putEntries as jest.Mock
 const putEntryMock = putEntry as jest.Mock
 const replaceAllMock = replaceAllEntries as jest.Mock
+const deleteEntryMock = deleteEntry as jest.Mock
 
 function makeEntry(id: number, title = `Entry ${id}`): Entry {
   return {
@@ -53,6 +56,7 @@ beforeEach(() => {
   putEntriesMock.mockResolvedValue(undefined)
   putEntryMock.mockResolvedValue(undefined)
   replaceAllMock.mockResolvedValue(undefined)
+  deleteEntryMock.mockResolvedValue(undefined)
 })
 
 describe('useEntries', () => {
@@ -123,6 +127,44 @@ describe('useEntries', () => {
     act(() => result.current.addEntry(makeEntry(3, 'Fresh')))
     expect(result.current.entries[0].title).toBe('Fresh')
     expect(putEntryMock).not.toHaveBeenCalled()
+  })
+
+  describe('removeEntry', () => {
+    it('drops the entry from state and deletes it from the store', async () => {
+      supportedMock.mockReturnValue(true)
+      getAllMock.mockResolvedValue([makeEntry(2), makeEntry(1)])
+      const { result } = renderHook(() => useEntries(seed))
+      await waitFor(() => expect(result.current.loaded).toBe(true))
+
+      act(() => result.current.removeEntry(2))
+
+      expect(result.current.entries.map((e) => e.id)).toEqual([1])
+      await waitFor(() => expect(deleteEntryMock).toHaveBeenCalledWith(2))
+    })
+
+    it('swallows a failed delete write-through instead of surfacing a rejection', async () => {
+      supportedMock.mockReturnValue(true)
+      getAllMock.mockResolvedValue([makeEntry(1)])
+      deleteEntryMock.mockRejectedValue(new Error('disk full'))
+      const { result } = renderHook(() => useEntries(seed))
+      await waitFor(() => expect(result.current.loaded).toBe(true))
+
+      act(() => result.current.removeEntry(1))
+
+      expect(result.current.entries).toEqual([])
+      await waitFor(() => expect(deleteEntryMock).toHaveBeenCalledWith(1))
+    })
+
+    it('updates state without touching the store when persistence is unsupported', async () => {
+      supportedMock.mockReturnValue(false)
+      const { result } = renderHook(() => useEntries(seed))
+      await waitFor(() => expect(result.current.loaded).toBe(true))
+
+      act(() => result.current.removeEntry(2))
+
+      expect(result.current.entries.map((e) => e.id)).toEqual([1])
+      expect(deleteEntryMock).not.toHaveBeenCalled()
+    })
   })
 
   describe('replaceEntries', () => {

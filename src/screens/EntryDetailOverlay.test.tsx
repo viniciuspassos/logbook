@@ -107,7 +107,9 @@ describe('EntryDetailOverlay', () => {
 
   it('renders a thumbnail for each passed-in attachment', () => {
     renderOverlay({
-      attachments: [{ key: 'server-1', url: '/api/attachments/1/file', pending: false }],
+      attachments: [
+        { key: 'server-1', url: '/api/attachments/1/file', pending: false, attachmentId: 1 },
+      ],
     })
     expect(screen.getByAltText('Photo attachment')).toHaveAttribute('src', '/api/attachments/1/file')
   })
@@ -141,6 +143,40 @@ describe('EntryDetailOverlay', () => {
     await expect(user.upload(screen.getByLabelText('Add photo'), file)).resolves.not.toThrow()
   })
 
+  it('forwards a photo removal to onRemovePhoto', async () => {
+    const onRemovePhoto = jest.fn()
+    const user = userEvent.setup()
+    const photo = { key: 'server-1', url: '/a', pending: false, attachmentId: 1 } as const
+    renderOverlay({ attachments: [photo], onRemovePhoto })
+
+    await user.click(screen.getByRole('button', { name: 'Remove photo 1' }))
+    await user.click(screen.getByRole('button', { name: 'Remove' }))
+
+    expect(onRemovePhoto).toHaveBeenCalledWith(photo)
+  })
+
+  it('offers no per-photo remove button when the caller cannot remove photos', () => {
+    renderOverlay({ attachments: [{ key: 'pending-1', url: '', pending: true, queueId: 1 }] })
+    expect(screen.queryByRole('button', { name: 'Remove photo 1' })).not.toBeInTheDocument()
+  })
+
+  it('deletes the entry only after confirming', async () => {
+    const onDelete = jest.fn()
+    const user = userEvent.setup()
+    renderOverlay({ onDelete })
+
+    await user.click(screen.getByRole('button', { name: 'Delete entry' }))
+    expect(onDelete).not.toHaveBeenCalled()
+    await user.click(screen.getByRole('button', { name: 'Delete' }))
+
+    expect(onDelete).toHaveBeenCalledWith(entry)
+  })
+
+  it('offers no delete button when the caller cannot delete', () => {
+    renderOverlay()
+    expect(screen.queryByRole('button', { name: 'Delete entry' })).not.toBeInTheDocument()
+  })
+
   describe('embedded', () => {
     it('renders the story and field values without a back button, export actions, attachments, or raw notes', () => {
       renderOverlay({ embedded: true })
@@ -153,6 +189,7 @@ describe('EntryDetailOverlay', () => {
       expect(screen.queryByRole('button', { name: 'Export PDF' })).not.toBeInTheDocument()
       expect(screen.queryByText('Attachments')).not.toBeInTheDocument()
       expect(screen.queryByRole('button', { name: 'Show raw notes' })).not.toBeInTheDocument()
+      expect(screen.queryByRole('button', { name: 'Delete entry' })).not.toBeInTheDocument()
     })
   })
 

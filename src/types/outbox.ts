@@ -41,11 +41,21 @@ export interface UploadAttachmentOperation {
   filename: string
 }
 
+/** Removes one already-uploaded photo. `serverAttachmentId` is the server's
+ *  own attachment id (only a server-confirmed photo needs this op — a photo
+ *  still queued for upload is removed by dropping its upload op instead). */
+export interface DeleteAttachmentOperation {
+  kind: 'delete-attachment'
+  localEntryId: number
+  serverAttachmentId: number
+}
+
 export type OutboxOperation =
   | CreateEntryOperation
   | UpdateEntryOperation
   | DeleteEntryOperation
   | UploadAttachmentOperation
+  | DeleteAttachmentOperation
 
 /** A queued operation as stored — `queueId` is assigned by IndexedDB
  *  (autoincrement), so it's absent on a not-yet-enqueued operation. */

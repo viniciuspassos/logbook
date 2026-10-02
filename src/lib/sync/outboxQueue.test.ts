@@ -3,10 +3,12 @@ import {
   entryToCreatePayload,
   getEntryAttachmentSources,
   listPendingAttachments,
+  queueAttachmentDelete,
   queueAttachmentUpload,
   queueEntryCreate,
   queueEntryCreates,
   queueEntryDelete,
+  queueEntryDeletion,
   queueEntryUpdate,
 } from './outboxQueue.ts'
 import { enqueueOperation, getAllRecords, removeRecord } from '../db/outboxStore.ts'
@@ -36,11 +38,11 @@ jest.mock('./attachmentsApi.ts', () => ({
 
 const enqueueMock = enqueueOperation as jest.Mock
 const getAllRecordsMock = getAllRecords as jest.Mock
+const removeRecordMock = removeRecord as jest.Mock
 const getSyncStateMock = getSyncState as jest.Mock
 const putSyncStateMock = putSyncState as jest.Mock
 const deleteSyncStateMock = deleteSyncState as jest.Mock
 const listAttachmentsMock = listAttachmentsForEntry as jest.Mock
-const removeRecordMock = removeRecord as jest.Mock
 const supportedMock = isPersistenceSupported as jest.Mock
 
 function makeEntry(overrides: Partial<Entry> & { id: number }): Entry {
@@ -81,6 +83,7 @@ beforeEach(() => {
   supportedMock.mockReturnValue(true)
   enqueueMock.mockResolvedValue(makeRecord())
   getAllRecordsMock.mockResolvedValue([])
+  removeRecordMock.mockResolvedValue(undefined)
   getSyncStateMock.mockResolvedValue(undefined)
   putSyncStateMock.mockResolvedValue(undefined)
   deleteSyncStateMock.mockResolvedValue(undefined)
@@ -135,6 +138,57 @@ describe('queueEntryDelete', () => {
   it('enqueues a delete-entry operation', async () => {
     await queueEntryDelete(5)
     expect(enqueueMock).toHaveBeenCalledWith({ kind: 'delete-entry', localEntryId: 5 })
+  })
+})
+
+describe('queueEntryDeletion', () => {
+  const upload = (queueId: number, localEntryId: number) =>
+    makeRecord({ queueId, operation: { kind: 'upload-attachment', localEntryId, file: new Blob(), filename: 'x.jpg' } })
+
+  it('drops every still-queued op for the entry and queues the DELETE even before it synced', async () => {
+    // A drain may be creating the entry right now from an older snapshot; the
+    // queued DELETE then runs after that create (and no-ops if it never did).
+    getAllRecordsMock.mockResolvedValue([
+      makeRecord({ queueId: 1, operation: { kind: 'create-entry', localEntryId: 3, payload: entryToCreatePayload(makeEntry({ id: 3 })) } }),
+      upload(2, 3),
+      upload(3, 4),
+      makeRecord({ queueId: 4, operation: { kind: 'delete-attachment', localEntryId: 3, serverAttachmentId: 9 } }),
+    ])
+
+    await queueEntryDeletion(3)
+
+    expect(removeRecordMock.mock.calls).toEqual([[1], [2], [4]])
+    expect(enqueueMock).toHaveBeenCalledWith({ kind: 'delete-entry', localEntryId: 3 })
+  })
+
+  it('does nothing when persistence is unsupported', async () => {
+    supportedMock.mockReturnValue(false)
+    await queueEntryDeletion(3)
+    expect(getAllRecordsMock).not.toHaveBeenCalled()
+    expect(enqueueMock).not.toHaveBeenCalled()
+  })
+
+  it('never throws when the queue cannot be read', async () => {
+    getAllRecordsMock.mockRejectedValue(new Error('broken'))
+    await expect(queueEntryDeletion(3)).resolves.toBeUndefined()
+  })
+})
+
+describe('queueAttachmentDelete', () => {
+  it('enqueues a delete-attachment op', async () => {
+    await queueAttachmentDelete(3, 9)
+    expect(enqueueMock).toHaveBeenCalledWith({ kind: 'delete-attachment', localEntryId: 3, serverAttachmentId: 9 })
+  })
+
+  it('does nothing when persistence is unsupported', async () => {
+    supportedMock.mockReturnValue(false)
+    await queueAttachmentDelete(3, 9)
+    expect(enqueueMock).not.toHaveBeenCalled()
+  })
+
+  it('lets a storage failure propagate so the caller can report it', async () => {
+    enqueueMock.mockRejectedValue(new Error('quota'))
+    await expect(queueAttachmentDelete(3, 9)).rejects.toThrow('quota')
   })
 })
 
@@ -253,6 +307,36 @@ describe('getEntryAttachmentSources', () => {
     listAttachmentsMock.mockRejectedValue(new Error('offline'))
     const result = await getEntryAttachmentSources(makeEntry({ id: 3 }))
     expect(result.serverAttachments).toEqual([])
+  })
+
+  it('degrades to no pending attachments when the queue cannot be read', async () => {
+    getAllRecordsMock.mockRejectedValue(new Error('broken'))
+    const result = await getEntryAttachmentSources(makeEntry({ id: 3 }))
+    expect(result.pending).toEqual([])
+  })
+
+  it('keeps showing a photo whose delete the server refused (parked op)', async () => {
+    getSyncStateMock.mockResolvedValue({ localEntryId: 3, serverId: 42, serverVersion: 1 })
+    listAttachmentsMock.mockResolvedValue([attachment])
+    getAllRecordsMock.mockResolvedValue([
+      makeRecord({
+        queueId: 8,
+        rejected: true,
+        operation: { kind: 'delete-attachment', localEntryId: 3, serverAttachmentId: 1 },
+      }),
+    ])
+    const result = await getEntryAttachmentSources(makeEntry({ id: 3 }))
+    expect(result.serverAttachments.map((a) => a.id)).toEqual([1])
+  })
+
+  it('hides server attachments that already have a queued delete', async () => {
+    getSyncStateMock.mockResolvedValue({ localEntryId: 3, serverId: 42, serverVersion: 1 })
+    listAttachmentsMock.mockResolvedValue([attachment, { ...attachment, id: 2 }])
+    getAllRecordsMock.mockResolvedValue([
+      makeRecord({ queueId: 8, operation: { kind: 'delete-attachment', localEntryId: 3, serverAttachmentId: 1 } }),
+    ])
+    const result = await getEntryAttachmentSources(makeEntry({ id: 3 }))
+    expect(result.serverAttachments.map((a) => a.id)).toEqual([2])
   })
 
   it('includes pending (queued, not-yet-uploaded) attachments for the entry', async () => {

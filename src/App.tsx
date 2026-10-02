@@ -36,6 +36,7 @@ function App() {
     regenerateStory,
     editStory,
     saveEntry,
+    deleteEntry,
     exportActions,
     attachments,
     auth,
@@ -98,6 +99,8 @@ function App() {
           attachmentsStatus={attachments.status}
           onAddPhoto={attachments.addPhoto}
           onDiscardPhoto={attachments.discardPhoto}
+          onRemovePhoto={attachments.removePhoto}
+          onDelete={(entry) => deleteEntry(entry.id)}
         />
       )}
       {overlay === 'newEntry' && (

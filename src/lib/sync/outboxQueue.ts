@@ -69,12 +69,12 @@ export async function queueEntryUpdate(
 }
 
 /**
- * Queues a DELETE for an entry. Also built for completeness — see
- * queueEntryUpdate's docstring; #26 ships no delete-entry UI. Unlike update,
- * this one has no self-heal gap: outboxRunner.ts's processDelete treats "no
- * serverId yet" as "nothing to delete server-side" and no-ops rather than
- * throwing, so a delete queued for a never-synced entry can't get the drain
- * stuck the way an update would.
+ * Queues a raw DELETE for an entry. Prefer {@link queueEntryDeletion}, which
+ * the delete-entry UI uses: it also drops the entry's still-queued ops first.
+ * No self-heal gap here: outboxRunner.ts's processDelete treats "no serverId
+ * yet" as "nothing to delete server-side" and no-ops rather than throwing, so
+ * a delete queued for a never-synced entry can't get the drain stuck the way
+ * an update would.
  */
 export async function queueEntryDelete(localEntryId: number): Promise<void> {
   if (!isPersistenceSupported()) return
@@ -83,6 +83,42 @@ export async function queueEntryDelete(localEntryId: number): Promise<void> {
   } catch {
     // Best-effort, same as queueEntryCreate.
   }
+}
+
+/**
+ * Everything the outbox needs when the user deletes an entry: every op still
+ * queued for it (its create, edits, photo uploads, photo deletes) is dropped
+ * — there's no point uploading a photo for an entry that's about to go — and
+ * a DELETE is queued. The DELETE is queued even if the entry hasn't synced
+ * yet: a drain already in flight may be creating it from an older snapshot,
+ * and the DELETE then runs after that create; if the entry never reaches the
+ * server, processDelete just no-ops. Never throws, same as queueEntryCreate:
+ * the local delete already happened.
+ */
+export async function queueEntryDeletion(localEntryId: number): Promise<void> {
+  if (!isPersistenceSupported()) return
+  try {
+    const records = await getAllRecords()
+    for (const record of records) {
+      if (record.operation.localEntryId === localEntryId) await removeRecord(record.queueId)
+    }
+    await queueEntryDelete(localEntryId)
+  } catch {
+    // Best-effort, same as queueEntryCreate.
+  }
+}
+
+/**
+ * Queues the removal of an already-uploaded photo. Unlike the entry-level
+ * queue functions this lets storage failures propagate: the user explicitly
+ * asked for this photo to go, so useEntryAttachments.ts must be able to say
+ * it didn't. The photo
+ * disappears from the gallery straight away: getEntryAttachmentSources hides
+ * any server attachment with one of these ops queued.
+ */
+export async function queueAttachmentDelete(localEntryId: number, serverAttachmentId: number): Promise<void> {
+  if (!isPersistenceSupported()) return
+  await enqueueOperation({ kind: 'delete-attachment', localEntryId, serverAttachmentId })
 }
 
 /** True if the outbox already has an un-drained create-entry op for this entry. */
@@ -128,23 +164,21 @@ export async function queueAttachmentUpload(entry: Entry, file: Blob, filename: 
   }
 }
 
-/** Queued (not-yet-uploaded) attachment ops for one entry, for local preview. */
-export async function listPendingAttachments(localEntryId: number): Promise<OutboxRecord[]> {
+/** Every queued op, or `[]` when storage is unavailable/unreadable. */
+async function readQueue(): Promise<OutboxRecord[]> {
   if (!isPersistenceSupported()) return []
   try {
-    const records = await getAllRecords()
-    return records.filter(
-      (record) => record.operation.kind === 'upload-attachment' && record.operation.localEntryId === localEntryId,
-    )
+    return await getAllRecords()
   } catch {
     return []
   }
 }
 
 /**
- * Drops an op the server permanently rejected (#91) — the user's way out of
- * a photo that will never upload. Resolves `false` rather than throwing when
- * the queue write fails, so the caller can say so.
+ * Drops one queued op: a photo the server permanently rejected (#91) — the
+ * user's way out of a photo that will never upload — or one the user removes
+ * before it ever uploaded (useEntryAttachments.removePhoto). Resolves `false`
+ * rather than throwing when the queue write fails, so the caller can say so.
  */
 export async function discardRejectedOperation(queueId: number): Promise<boolean> {
   try {
@@ -155,6 +189,28 @@ export async function discardRejectedOperation(queueId: number): Promise<boolean
   }
 }
 
+function pendingUploadsFor(records: OutboxRecord[], localEntryId: number): OutboxRecord[] {
+  return records.filter(
+    (record) => record.operation.kind === 'upload-attachment' && record.operation.localEntryId === localEntryId,
+  )
+}
+
+/** Queued (not-yet-uploaded) attachment ops for one entry, for local preview. */
+export async function listPendingAttachments(localEntryId: number): Promise<OutboxRecord[]> {
+  return pendingUploadsFor(await readQueue(), localEntryId)
+}
+
+/** Server attachment ids with a delete-attachment op still pending. A delete
+ *  the server refused (parked as rejected, #91) doesn't count: the photo is
+ *  still there, so the gallery must keep showing it. */
+function queuedAttachmentDeletes(records: OutboxRecord[]): Set<number> {
+  const ids = new Set<number>()
+  for (const { operation, rejected } of records) {
+    if (operation.kind === 'delete-attachment' && !rejected) ids.add(operation.serverAttachmentId)
+  }
+  return ids
+}
+
 export interface EntryAttachmentSources {
   serverAttachments: ServerAttachment[]
   pending: OutboxRecord[]
@@ -163,7 +219,8 @@ export interface EntryAttachmentSources {
 /**
  * Everything useEntryAttachments.ts needs to render an entry's attachment
  * gallery: attachments already confirmed by the server (if this entry has
- * synced) plus anything still queued locally. Never throws — an unreachable
+ * synced) — minus any whose delete is still queued — plus anything still
+ * queued locally. Never throws — an unreachable
  * server just means an empty `serverAttachments` list, same degrade-gracefully
  * rule as everywhere else this app talks to the backend.
  */
@@ -171,13 +228,17 @@ export async function getEntryAttachmentSources(
   entry: Entry,
   signal?: AbortSignal,
 ): Promise<EntryAttachmentSources> {
-  const pending = await listPendingAttachments(entry.id)
+  const records = await readQueue()
+  const pending = pendingUploadsFor(records, entry.id)
   const syncState = await getSyncState(entry.id).catch(() => undefined)
   if (!syncState?.serverId) {
     return { serverAttachments: [], pending }
   }
   try {
-    const serverAttachments = await listAttachmentsForEntry(syncState.serverId, signal)
+    const deleting = queuedAttachmentDeletes(records)
+    const serverAttachments = (await listAttachmentsForEntry(syncState.serverId, signal)).filter(
+      (attachment) => !deleting.has(attachment.id),
+    )
     return { serverAttachments, pending }
   } catch {
     return { serverAttachments: [], pending }
