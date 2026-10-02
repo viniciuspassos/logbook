@@ -4,7 +4,7 @@ import { extractEntry } from '../lib/ai/extractEntry.ts'
 import { rewriteStory } from '../lib/ai/rewriteStory.ts'
 import { importBackup } from '../lib/backup/exportBackup.ts'
 import { subscribeToDrains } from '../lib/sync/outboxRunner.ts'
-import { queueEntryCreates } from '../lib/sync/outboxQueue.ts'
+import { queueEntryCreates, queueEntryDeletion } from '../lib/sync/outboxQueue.ts'
 import { entries as seedEntries } from '../data/entries.ts'
 import type { Entry } from '../types/entry.ts'
 
@@ -13,6 +13,7 @@ const rewriteMock = rewriteStory as jest.Mock
 const importBackupMock = importBackup as jest.Mock
 const subscribeToDrainsMock = subscribeToDrains as jest.Mock
 const queueEntryCreatesMock = queueEntryCreates as jest.Mock
+const queueEntryDeletionMock = queueEntryDeletion as jest.Mock
 
 // The real runner, with subscribeToDrains wrapped so a test can hand a drain
 // outcome straight to whoever subscribed.
@@ -23,7 +24,11 @@ jest.mock('../lib/sync/outboxRunner.ts', () => {
 
 jest.mock('../lib/sync/outboxQueue.ts', () => {
   const actual = jest.requireActual('../lib/sync/outboxQueue.ts')
-  return { ...actual, queueEntryCreates: jest.fn(actual.queueEntryCreates) }
+  return {
+    ...actual,
+    queueEntryCreates: jest.fn(actual.queueEntryCreates),
+    queueEntryDeletion: jest.fn(actual.queueEntryDeletion),
+  }
 })
 
 jest.mock('../lib/backup/exportBackup.ts', () => {
@@ -196,6 +201,40 @@ describe('useLogbookApp', () => {
     expect(result.current.overlay).toBeNull()
     expect(result.current.tab).toBe('timeline')
     expect(result.current.newStep).toBe('capture')
+  })
+
+  it('saveEntry never reuses the id of a deleted newest entry', async () => {
+    const { result } = renderHook(() => useLogbookApp())
+
+    async function captureAndSave() {
+      act(() => result.current.openNewEntry())
+      await act(async () => {
+        triggerSpeechEnd('climbed a peak today')
+      })
+      act(() => result.current.saveEntry())
+      return result.current.entries[0].id
+    }
+
+    const firstId = await captureAndSave()
+    act(() => result.current.deleteEntry(firstId))
+    const secondId = await captureAndSave()
+
+    expect(secondId).not.toBe(firstId)
+    expect(secondId).toBeGreaterThan(Math.max(...seedEntries.map((entry) => entry.id)))
+  })
+
+  it('deleteEntry closes the detail overlay, drops the entry and queues its deletion for sync', async () => {
+    const { result } = renderHook(() => useLogbookApp())
+    act(() => result.current.openEntry(3))
+
+    await act(async () => {
+      result.current.deleteEntry(3)
+    })
+
+    expect(result.current.overlay).toBeNull()
+    expect(result.current.selectedEntry).toBeNull()
+    expect(result.current.entries.some((entry) => entry.id === 3)).toBe(false)
+    expect(queueEntryDeletionMock).toHaveBeenCalledWith(3)
   })
 
   it('aborts in-flight processing on close and never advances to review', async () => {

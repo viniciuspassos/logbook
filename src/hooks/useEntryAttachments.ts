@@ -1,7 +1,12 @@
 import { useCallback, useEffect, useRef, useState } from 'react'
 import { attachmentFileUrl } from '../lib/sync/attachmentsApi.ts'
 import { validateAttachmentFile } from '../lib/sync/attachmentValidation.ts'
-import { discardRejectedOperation, getEntryAttachmentSources, queueAttachmentUpload } from '../lib/sync/outboxQueue.ts'
+import {
+  discardRejectedOperation,
+  getEntryAttachmentSources,
+  queueAttachmentDelete,
+  queueAttachmentUpload,
+} from '../lib/sync/outboxQueue.ts'
 import { drainOutbox, type DrainSummary } from '../lib/sync/outboxRunner.ts'
 import type { Entry } from '../types/entry.ts'
 import type { OutboxRecord } from '../types/outbox.ts'
@@ -13,6 +18,8 @@ export interface AttachmentPreview {
   pending: boolean
   /** The outbox op behind a locally-queued photo (absent for server ones). */
   queueId?: number
+  /** The server's id for an already-uploaded photo (absent for queued ones). */
+  attachmentId?: number
   /** Set when the server permanently rejected the upload (#91): the photo
    *  will never sync, so the gallery offers to discard it. */
   rejectedReason?: string
@@ -29,6 +36,35 @@ export interface AttachmentStatus {
   message: string
 }
 
+const PHOTO_REMOVED: AttachmentStatus = { tone: 'info', message: 'Photo removed.' }
+
+/**
+ * Takes a photo out of the outbox's hands: drops its queued upload if it
+ * never reached the server, or queues a server-side delete if it did.
+ * Resolves `true` when that delete still has to be drained.
+ */
+async function dropPhoto(entry: Entry, preview: AttachmentPreview): Promise<boolean> {
+  if (preview.queueId !== undefined) {
+    if (!(await discardRejectedOperation(preview.queueId))) throw new Error("Couldn't drop the queued photo.")
+    return false
+  }
+  if (preview.attachmentId === undefined) return false
+  await queueAttachmentDelete(entry.id, preview.attachmentId)
+  return true
+}
+
+/** What to tell the user after draining a queued photo delete. */
+function removalStatus(summary: DrainSummary): AttachmentStatus {
+  if (summary.processed > 0) return PHOTO_REMOVED
+  if (summary.stoppedReason === 'auth') {
+    return { tone: 'info', message: 'Photo removed here — sign in to remove it from the server.' }
+  }
+  if (summary.stoppedReason === 'rejected') {
+    return { tone: 'error', message: `The server refused to remove this photo (${summary.error}).` }
+  }
+  return { tone: 'info', message: "Photo removed here — it'll be removed from the server once you're back online." }
+}
+
 export interface UseEntryAttachmentsOptions {
   /** The upload's drain discovered the session is gone (a 401/403). */
   onAuthRequired?: () => void
@@ -39,7 +75,8 @@ export interface UseEntryAttachmentsOptions {
 /**
  * Owns the attachment gallery for whichever entry is currently open in
  * EntryDetailOverlay: the merged list of server-confirmed + locally-queued
- * photos, and the upload flow (validate -> queue -> drain -> refresh).
+ * photos, the upload flow (validate -> queue -> drain -> refresh), and
+ * removing a single photo without touching the entry.
  * Parameterized by `entry` (re-runs its load on id change) rather than
  * living in useLogbookApp itself, per CLAUDE.md's hook-ownership rule —
  * this is a distinct concern from navigation/entries/new-entry/export.
@@ -60,6 +97,7 @@ export function useEntryAttachments(
   status: AttachmentStatus | null
   addPhoto: (file: File) => void
   discardPhoto: (queueId: number) => void
+  removePhoto: (preview: AttachmentPreview) => void
 } {
   const { onAuthRequired, onAuthConfirmed } = options
   const [attachments, setAttachments] = useState<AttachmentPreview[]>([])
@@ -85,6 +123,7 @@ export function useEntryAttachments(
         key: `server-${attachment.id}`,
         url: attachmentFileUrl(attachment.id),
         pending: false,
+        attachmentId: attachment.id,
       }))
       const canCreateObjectUrl = typeof URL !== 'undefined' && typeof URL.createObjectURL === 'function'
       const pendingPreviews: AttachmentPreview[] = pending.map((record) => {
@@ -221,5 +260,53 @@ export function useEntryAttachments(
     [entry, load],
   )
 
-  return { attachments, busy, status, addPhoto, discardPhoto }
+  /** Drains a queued server-side photo delete and reports how far it got,
+   *  forwarding what the drain learned about the session. */
+  const syncRemoval = useCallback(
+    async (target: Entry, isStale: () => boolean): Promise<AttachmentStatus | null> => {
+      const summary = await drainOutbox()
+      if (isStale()) return null
+      if (summary.processed > 0) {
+        await load(target)
+        onAuthConfirmed?.()
+      } else if (summary.stoppedReason === 'auth') {
+        onAuthRequired?.()
+      }
+      return removalStatus(summary)
+    },
+    [load, onAuthRequired, onAuthConfirmed],
+  )
+
+  /**
+   * Removes one photo, leaving the entry alone. It disappears from the
+   * gallery straight away (getEntryAttachmentSources hides photos with a
+   * queued delete), even offline; an uploaded one is then deleted on the
+   * server by the drain.
+   */
+  const removePhoto = useCallback(
+    (preview: AttachmentPreview) => {
+      if (!entry) return
+      const target = entry
+      const isStale = () => activeEntryIdRef.current !== target.id
+      setStatus(null)
+      setBusy(true)
+      void (async () => {
+        try {
+          const needsSync = await dropPhoto(target, preview)
+          if (isStale()) return
+          await load(target)
+          if (isStale()) return
+          const next = needsSync ? await syncRemoval(target, isStale) : PHOTO_REMOVED
+          if (next && !isStale()) setStatus(next)
+        } catch {
+          if (!isStale()) setStatus({ tone: 'error', message: "Couldn't remove that photo. Try again." })
+        } finally {
+          if (!isStale()) setBusy(false)
+        }
+      })()
+    },
+    [entry, load, syncRemoval],
+  )
+
+  return { attachments, busy, status, addPhoto, discardPhoto, removePhoto }
 }

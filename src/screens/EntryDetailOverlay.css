@@ -223,3 +223,27 @@
 .entry-detail__status-text--error {
   color: var(--lb-danger);
 }
+
+/* Kept apart from the export row so a destructive action never sits next to
+ * an everyday one; ConfirmButton asks before it acts. */
+.entry-detail__delete {
+  width: 100%;
+  margin-top: var(--lb-space-4);
+  padding: 11px;
+  border: 1px solid var(--lb-danger);
+  border-radius: 12px;
+  font-size: 13.5px;
+  color: var(--lb-danger);
+  background: none;
+}
+
+.entry-detail__delete.confirm-button--armed {
+  padding: 0;
+  border: none;
+}
+
+.entry-detail__delete .confirm-button__confirm,
+.entry-detail__delete .confirm-button__cancel {
+  padding: 11px;
+  border-radius: 12px;
+}

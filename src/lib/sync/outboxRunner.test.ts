@@ -4,7 +4,7 @@ import { deleteSyncState, getSyncState, putSyncState } from '../db/syncStateStor
 import { isPersistenceSupported } from '../db/database.ts'
 import { isBackendReachable } from './health.ts'
 import { createEntry, deleteEntry, updateEntry } from './entriesApi.ts'
-import { uploadAttachment } from './attachmentsApi.ts'
+import { deleteAttachment, uploadAttachment } from './attachmentsApi.ts'
 import { SyncAuthError, SyncHttpError } from './errors.ts'
 import type { OutboxRecord } from '../../types/outbox.ts'
 import type { CreateEntryPayload, ServerEntry } from '../../types/sync.ts'
@@ -27,7 +27,7 @@ jest.mock('./entriesApi.ts', () => ({
   updateEntry: jest.fn(),
   deleteEntry: jest.fn(),
 }))
-jest.mock('./attachmentsApi.ts', () => ({ uploadAttachment: jest.fn() }))
+jest.mock('./attachmentsApi.ts', () => ({ uploadAttachment: jest.fn(), deleteAttachment: jest.fn() }))
 
 const supportedMock = isPersistenceSupported as jest.Mock
 const reachableMock = isBackendReachable as jest.Mock
@@ -42,6 +42,7 @@ const createEntryMock = createEntry as jest.Mock
 const updateEntryMock = updateEntry as jest.Mock
 const deleteEntryMock = deleteEntry as jest.Mock
 const uploadAttachmentMock = uploadAttachment as jest.Mock
+const deleteAttachmentMock = deleteAttachment as jest.Mock
 
 const payload = {} as CreateEntryPayload
 
@@ -165,6 +166,58 @@ describe('drainOutbox', () => {
       expect(deleteEntryMock).toHaveBeenCalledWith(42, undefined)
       expect(deleteSyncStateMock).toHaveBeenCalledWith(1)
       expect(removeRecordMock).toHaveBeenCalledWith(1)
+    })
+
+    it('treats a 404 as already deleted rather than stalling the queue', async () => {
+      getSyncStateMock.mockResolvedValue({ localEntryId: 1, serverId: 42, serverVersion: 1 })
+      deleteEntryMock.mockRejectedValue(new SyncHttpError(404, null, 'Not found'))
+      getAllRecordsMock.mockResolvedValue([
+        createRecord({ operation: { kind: 'delete-entry', localEntryId: 1 } }),
+      ])
+
+      const summary = await drainOutbox()
+
+      expect(deleteSyncStateMock).toHaveBeenCalledWith(1)
+      expect(removeRecordMock).toHaveBeenCalledWith(1)
+      expect(summary).toEqual({ processed: 1, stoppedReason: 'empty' })
+    })
+
+    it('still stops the drain on any other HTTP error', async () => {
+      getSyncStateMock.mockResolvedValue({ localEntryId: 1, serverId: 42, serverVersion: 1 })
+      deleteEntryMock.mockRejectedValue(new SyncHttpError(500, null, 'Boom'))
+      getAllRecordsMock.mockResolvedValue([
+        createRecord({ operation: { kind: 'delete-entry', localEntryId: 1 } }),
+      ])
+
+      const summary = await drainOutbox()
+
+      expect(removeRecordMock).not.toHaveBeenCalled()
+      expect(summary).toEqual({ processed: 0, stoppedReason: 'error', error: 'Boom' })
+    })
+  })
+
+  describe('delete-attachment', () => {
+    const op = { kind: 'delete-attachment' as const, localEntryId: 1, serverAttachmentId: 7 }
+
+    it('DELETEs the attachment by its server id', async () => {
+      deleteAttachmentMock.mockResolvedValue(undefined)
+      getAllRecordsMock.mockResolvedValue([createRecord({ operation: op })])
+
+      const summary = await drainOutbox()
+
+      expect(deleteAttachmentMock).toHaveBeenCalledWith(7, undefined)
+      expect(removeRecordMock).toHaveBeenCalledWith(1)
+      expect(summary).toEqual({ processed: 1, stoppedReason: 'empty' })
+    })
+
+    it('treats a 404 as already deleted', async () => {
+      deleteAttachmentMock.mockRejectedValue(new SyncHttpError(404, null, 'Not found'))
+      getAllRecordsMock.mockResolvedValue([createRecord({ operation: op })])
+
+      const summary = await drainOutbox()
+
+      expect(removeRecordMock).toHaveBeenCalledWith(1)
+      expect(summary.stoppedReason).toBe('empty')
     })
   })
 

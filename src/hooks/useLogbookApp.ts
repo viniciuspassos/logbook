@@ -1,5 +1,5 @@
 import { entries as seedEntries } from '../data/entries.ts'
-import { buildEntryFromDraft } from '../lib/buildEntry.ts'
+import { buildEntryFromDraft, nextEntryId } from '../lib/buildEntry.ts'
 import { shouldUseMockData } from '../lib/config/mockData.ts'
 import { useAuth } from './useAuth.ts'
 import { useEntries } from './useEntries.ts'
@@ -34,7 +34,7 @@ export type { AuthState, UseAuthResult } from './useAuth.ts'
  * only in Settings (see SettingsScreen's Account section).
  */
 export function useLogbookApp() {
-  const { entries, addEntry, replaceEntries } = useEntries(shouldUseMockData() ? seedEntries : [])
+  const { entries, addEntry, removeEntry, replaceEntries } = useEntries(shouldUseMockData() ? seedEntries : [])
   const nav = useNavigation(entries)
   const flow = useNewEntryFlow()
   const auth = useAuth()
@@ -67,12 +67,21 @@ export function useLogbookApp() {
   }
 
   function saveEntry() {
-    const nextId = entries.reduce((max, entry) => Math.max(max, entry.id), 0) + 1
-    const entry = buildEntryFromDraft(flow.draft, { id: nextId, date: new Date() })
+    const now = new Date()
+    const entry = buildEntryFromDraft(flow.draft, { id: nextEntryId(entries, now.getTime()), date: now })
     addEntry(entry)
     syncOutbox.queueEntryCreate(entry)
     flow.reset()
     nav.goTimeline()
+  }
+
+  // Local-first like saveEntry: the entry leaves the list (and IndexedDB)
+  // immediately; the outbox drops its unsent ops and, if the server has it,
+  // queues the server-side delete.
+  function deleteEntry(id: number) {
+    nav.closeOverlay()
+    removeEntry(id)
+    syncOutbox.queueEntryDeletion(id)
   }
 
   return {
@@ -90,6 +99,7 @@ export function useLogbookApp() {
     closeOverlay,
     openNewEntry,
     saveEntry,
+    deleteEntry,
     // new-entry flow
     newStep: flow.step,
     draft: flow.draft,

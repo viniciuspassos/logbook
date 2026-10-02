@@ -1,6 +1,11 @@
 import { act, renderHook, waitFor } from '@testing-library/react'
 import { useEntryAttachments } from './useEntryAttachments.ts'
-import { discardRejectedOperation, getEntryAttachmentSources, queueAttachmentUpload } from '../lib/sync/outboxQueue.ts'
+import {
+  discardRejectedOperation,
+  getEntryAttachmentSources,
+  queueAttachmentDelete,
+  queueAttachmentUpload,
+} from '../lib/sync/outboxQueue.ts'
 import { drainOutbox } from '../lib/sync/outboxRunner.ts'
 import { validateAttachmentFile } from '../lib/sync/attachmentValidation.ts'
 import { attachmentFileUrl } from '../lib/sync/attachmentsApi.ts'
@@ -12,6 +17,7 @@ jest.mock('../lib/sync/outboxQueue.ts', () => ({
   getEntryAttachmentSources: jest.fn(),
   queueAttachmentUpload: jest.fn(),
   discardRejectedOperation: jest.fn(),
+  queueAttachmentDelete: jest.fn(),
 }))
 jest.mock('../lib/sync/outboxRunner.ts', () => ({
   drainOutbox: jest.fn(),
@@ -26,6 +32,7 @@ jest.mock('../lib/sync/attachmentsApi.ts', () => ({
 const sourcesMock = getEntryAttachmentSources as jest.Mock
 const queueUploadMock = queueAttachmentUpload as jest.Mock
 const discardMock = discardRejectedOperation as jest.Mock
+const queueDeleteMock = queueAttachmentDelete as jest.Mock
 const drainMock = drainOutbox as jest.Mock
 const validateMock = validateAttachmentFile as jest.Mock
 const fileUrlMock = attachmentFileUrl as jest.Mock
@@ -85,6 +92,7 @@ beforeEach(() => {
   jest.clearAllMocks()
   sourcesMock.mockResolvedValue({ serverAttachments: [], pending: [] })
   queueUploadMock.mockResolvedValue(undefined)
+  queueDeleteMock.mockResolvedValue(undefined)
   drainMock.mockResolvedValue({ processed: 0, stoppedReason: 'unreachable' })
   validateMock.mockReturnValue({ ok: true })
   fileUrlMock.mockImplementation((id: number) => `/api/attachments/${id}/file`)
@@ -112,6 +120,7 @@ describe('useEntryAttachments', () => {
       key: 'server-10',
       url: '/api/attachments/10/file',
       pending: false,
+      attachmentId: 10,
     })
   })
 
@@ -372,5 +381,148 @@ describe('useEntryAttachments', () => {
     expect(result.current.status).toBeNull()
     expect(result.current.busy).toBe(false)
     expect(result.current.attachments).toHaveLength(1)
+  })
+
+  describe('removePhoto', () => {
+    async function renderWith(sources: { serverAttachments: ServerAttachment[]; pending: OutboxRecord[] }, options = {}) {
+      sourcesMock.mockResolvedValue(sources)
+      const hook = renderHook(() => useEntryAttachments(makeEntry(1), options))
+      await waitFor(() => expect(hook.result.current.attachments).toHaveLength(1))
+      sourcesMock.mockResolvedValue({ serverAttachments: [], pending: [] })
+      return hook
+    }
+
+    it('drops a still-queued photo from the outbox and the gallery, without a drain', async () => {
+      discardMock.mockResolvedValue(true)
+      const { result } = await renderWith({ serverAttachments: [], pending: [queuedRecord(5)] })
+      drainMock.mockClear()
+
+      act(() => result.current.removePhoto(result.current.attachments[0]))
+
+      await waitFor(() => expect(result.current.status).toEqual({ tone: 'info', message: 'Photo removed.' }))
+      expect(discardMock).toHaveBeenCalledWith(5)
+      expect(queueDeleteMock).not.toHaveBeenCalled()
+      expect(drainMock).not.toHaveBeenCalled()
+      expect(result.current.attachments).toEqual([])
+      expect(result.current.busy).toBe(false)
+    })
+
+    it('shows an error and keeps a queued photo whose record could not be dropped', async () => {
+      discardMock.mockResolvedValue(false)
+      const { result } = await renderWith({ serverAttachments: [], pending: [queuedRecord(5)] })
+
+      act(() => result.current.removePhoto(result.current.attachments[0]))
+
+      await waitFor(() =>
+        expect(result.current.status).toEqual({ tone: 'error', message: "Couldn't remove that photo. Try again." }),
+      )
+      expect(result.current.attachments).toHaveLength(1)
+      expect(result.current.busy).toBe(false)
+    })
+
+    it('queues a server delete, drains, and confirms once it went through', async () => {
+      const onAuthConfirmed = jest.fn()
+      const { result } = await renderWith({ serverAttachments: [attachment], pending: [] }, { onAuthConfirmed })
+      drainMock.mockResolvedValue({ processed: 1, stoppedReason: 'empty' })
+
+      act(() => result.current.removePhoto(result.current.attachments[0]))
+
+      await waitFor(() => expect(result.current.status?.message).toBe('Photo removed.'))
+      expect(queueDeleteMock).toHaveBeenCalledWith(1, 10)
+      expect(onAuthConfirmed).toHaveBeenCalledTimes(1)
+      expect(result.current.attachments).toEqual([])
+    })
+
+    it('says the removal will reach the server once back online when the drain could not', async () => {
+      const { result } = await renderWith({ serverAttachments: [attachment], pending: [] })
+
+      act(() => result.current.removePhoto(result.current.attachments[0]))
+
+      await waitFor(() =>
+        expect(result.current.status).toEqual({
+          tone: 'info',
+          message: "Photo removed here — it'll be removed from the server once you're back online.",
+        }),
+      )
+      expect(result.current.attachments).toEqual([])
+    })
+
+    it('asks to sign in when the drain finds the session is gone', async () => {
+      const onAuthRequired = jest.fn()
+      const { result } = await renderWith({ serverAttachments: [attachment], pending: [] }, { onAuthRequired })
+      drainMock.mockResolvedValue({ processed: 0, stoppedReason: 'auth' })
+
+      act(() => result.current.removePhoto(result.current.attachments[0]))
+
+      await waitFor(() =>
+        expect(result.current.status?.message).toBe('Photo removed here — sign in to remove it from the server.'),
+      )
+      expect(onAuthRequired).toHaveBeenCalledTimes(1)
+    })
+
+    it('reports a server that refuses the delete', async () => {
+      const { result } = await renderWith({ serverAttachments: [attachment], pending: [] })
+      drainMock.mockResolvedValue({ processed: 0, stoppedReason: 'rejected', error: 'Forbidden' })
+
+      act(() => result.current.removePhoto(result.current.attachments[0]))
+
+      await waitFor(() =>
+        expect(result.current.status).toEqual({ tone: 'error', message: 'The server refused to remove this photo (Forbidden).' }),
+      )
+    })
+
+    it('shows an error and keeps the photo when the delete cannot be queued', async () => {
+      queueDeleteMock.mockRejectedValue(new Error('quota'))
+      const { result } = await renderWith({ serverAttachments: [attachment], pending: [] })
+
+      act(() => result.current.removePhoto(result.current.attachments[0]))
+
+      await waitFor(() => expect(result.current.status?.tone).toBe('error'))
+      expect(result.current.attachments).toHaveLength(1)
+      expect(result.current.busy).toBe(false)
+    })
+
+    it('treats a preview with no queue or server id as already gone', async () => {
+      const { result } = await renderWith({ serverAttachments: [attachment], pending: [] })
+
+      act(() => result.current.removePhoto({ key: 'x', url: '', pending: false }))
+
+      await waitFor(() => expect(result.current.status).toEqual({ tone: 'info', message: 'Photo removed.' }))
+      expect(discardMock).not.toHaveBeenCalled()
+      expect(queueDeleteMock).not.toHaveBeenCalled()
+    })
+
+    it('does not let a slow removal clobber a newly-opened entry', async () => {
+      let resolveDrain: ((value: { processed: number; stoppedReason: string }) => void) | undefined
+      sourcesMock.mockResolvedValue({ serverAttachments: [attachment], pending: [] })
+      const { result, rerender } = renderHook(({ entry }) => useEntryAttachments(entry), {
+        initialProps: { entry: makeEntry(1) as Entry | null },
+      })
+      await waitFor(() => expect(result.current.attachments).toHaveLength(1))
+      drainMock.mockReturnValue(
+        new Promise((resolve) => {
+          resolveDrain = resolve
+        }),
+      )
+
+      act(() => result.current.removePhoto(result.current.attachments[0]))
+      await waitFor(() => expect(drainMock).toHaveBeenCalled())
+      await act(async () => {
+        rerender({ entry: makeEntry(2) })
+      })
+      await act(async () => {
+        resolveDrain?.({ processed: 1, stoppedReason: 'empty' })
+      })
+
+      expect(result.current.status).toBeNull()
+      expect(result.current.busy).toBe(false)
+    })
+
+    it('does nothing when no entry is open', () => {
+      const { result } = renderHook(() => useEntryAttachments(null))
+      act(() => result.current.removePhoto({ key: 'pending-5', url: '', pending: true, queueId: 5 }))
+      expect(discardMock).not.toHaveBeenCalled()
+      expect(result.current.busy).toBe(false)
+    })
   })
 })

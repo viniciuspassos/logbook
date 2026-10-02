@@ -8,6 +8,7 @@ import {
 import {
   queueEntryCreate as queueEntryCreateOp,
   queueEntryCreates as queueEntryCreatesOp,
+  queueEntryDeletion as queueEntryDeletionOp,
 } from '../lib/sync/outboxQueue.ts'
 import { syncStatusLabel } from '../lib/sync/syncStatus.ts'
 import type { Entry } from '../types/entry.ts'
@@ -25,7 +26,8 @@ export interface UseSyncOutboxOptions {
  * itself) and does one drain attempt on mount in case the backend was
  * already reachable when the app opened. Exposes `queueEntryCreate` for
  * useLogbookApp.saveEntry to call once a new entry is saved locally,
- * `queueEntryCreates` for a backup restore to queue every restored entry, and
+ * `queueEntryCreates` for a backup restore to queue every restored entry,
+ * `queueEntryDeletion` for useLogbookApp.deleteEntry, and
  * `syncStatus`, the timeline's sync line, from the last drain that finished
  * anywhere in the app (outboxRunner.ts's subscribeToDrains).
  *
@@ -93,5 +95,10 @@ export function useSyncOutbox(options: UseSyncOutboxOptions = {}) {
     [queueThenDrain],
   )
 
-  return { queueEntryCreate, queueEntryCreates, syncStatus: syncStatusLabel(lastDrain) }
+  const queueEntryDeletion = useCallback(
+    (localEntryId: number) => queueThenDrain(() => queueEntryDeletionOp(localEntryId)),
+    [queueThenDrain],
+  )
+
+  return { queueEntryCreate, queueEntryCreates, queueEntryDeletion, syncStatus: syncStatusLabel(lastDrain) }
 }

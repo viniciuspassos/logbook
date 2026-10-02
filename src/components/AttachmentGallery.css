@@ -64,6 +64,34 @@
   cursor: pointer;
 }
 
+.attachment-gallery__delete {
+  position: absolute;
+  top: 4px;
+  right: 4px;
+  width: 26px;
+  height: 26px;
+  padding: 0;
+  border: none;
+  border-radius: 50%;
+  font-size: 16px;
+  line-height: 1;
+  color: var(--lb-bg);
+  background: oklch(19% 0.025 50 / 0.55);
+}
+
+/* Armed: the confirm/keep pair covers the whole thumbnail so both targets
+ * stay large enough to tap on a phone. */
+.attachment-gallery__delete.confirm-button--armed {
+  inset: 0;
+  width: auto;
+  height: auto;
+  flex-direction: column;
+  justify-content: center;
+  padding: var(--lb-space-2);
+  border-radius: 0;
+  font-size: 12px;
+}
+
 .attachment-gallery__add {
   display: inline-block;
   padding: 9px 14px;

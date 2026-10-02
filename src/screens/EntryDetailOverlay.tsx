@@ -1,4 +1,5 @@
 import { AttachmentGallery } from '../components/AttachmentGallery.tsx'
+import { ConfirmButton } from '../components/ConfirmButton.tsx'
 import { OverlayHeader } from '../components/OverlayHeader.tsx'
 import { PhotoPlaceholder } from '../components/PhotoPlaceholder.tsx'
 import { ShapeGlyph } from '../components/ShapeGlyph.tsx'
@@ -40,6 +41,9 @@ interface EntryDetailOverlayFullProps {
   onExportPdf: (entry: Entry) => void
   onAddPhoto?: (file: File) => void
   onDiscardPhoto?: (queueId: number) => void
+  onRemovePhoto?: (attachment: AttachmentPreview) => void
+  /** Deletes the whole entry (and its photos); no delete button without it. */
+  onDelete?: (entry: Entry) => void
 }
 
 type EntryDetailOverlayProps = EntryDetailOverlayEmbeddedProps | EntryDetailOverlayFullProps
@@ -125,6 +129,7 @@ export function EntryDetailOverlay(props: EntryDetailOverlayProps) {
               status={full.attachmentsStatus ?? null}
               onAddPhoto={full.onAddPhoto ?? (() => {})}
               onDiscardPhoto={full.onDiscardPhoto}
+              onRemovePhoto={full.onRemovePhoto}
             />
 
             <button
@@ -175,6 +180,15 @@ export function EntryDetailOverlay(props: EntryDetailOverlayProps) {
                 </span>
               )}
             </div>
+
+            {full.onDelete && (
+              <ConfirmButton
+                label="Delete entry"
+                confirmLabel="Delete"
+                className="entry-detail__delete"
+                onConfirm={() => full.onDelete?.(entry)}
+              />
+            )}
           </>
         )}
       </div>

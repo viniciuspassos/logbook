@@ -1,12 +1,13 @@
 import { isPersistenceSupported } from '../db/database.ts'
 import { getAllRecords, markRejected, recordAttemptFailure, removeRecord } from '../db/outboxStore.ts'
 import { deleteSyncState, getSyncState, putSyncState } from '../db/syncStateStore.ts'
-import { uploadAttachment } from './attachmentsApi.ts'
+import { deleteAttachment, uploadAttachment } from './attachmentsApi.ts'
 import { createEntry, deleteEntry, updateEntry } from './entriesApi.ts'
-import { SyncAuthError, isPermanentRejection } from './errors.ts'
+import { SyncAuthError, SyncHttpError, isPermanentRejection } from './errors.ts'
 import { isBackendReachable } from './health.ts'
 import type {
   CreateEntryOperation,
+  DeleteAttachmentOperation,
   DeleteEntryOperation,
   OutboxRecord,
   UpdateEntryOperation,
@@ -80,11 +81,29 @@ async function processUpdate(op: UpdateEntryOperation, signal?: AbortSignal): Pr
   await putSyncState({ localEntryId: op.localEntryId, serverId: updated.id, serverVersion: updated.version })
 }
 
+/**
+ * Runs a server-side DELETE, treating a 404 as success: the thing is already
+ * gone (an earlier drain crashed before dequeuing, or another device deleted
+ * it), and a delete that can never succeed must not stall every op behind it.
+ */
+async function deleteIgnoringNotFound(request: () => Promise<void>): Promise<void> {
+  try {
+    await request()
+  } catch (error) {
+    if (!(error instanceof SyncHttpError && error.status === 404)) throw error
+  }
+}
+
 async function processDelete(op: DeleteEntryOperation, signal?: AbortSignal): Promise<void> {
   const state = await getSyncState(op.localEntryId)
   if (!state?.serverId) return // Never synced — nothing server-side to delete.
-  await deleteEntry(state.serverId, signal)
+  const serverId = state.serverId
+  await deleteIgnoringNotFound(() => deleteEntry(serverId, signal))
   await deleteSyncState(op.localEntryId)
+}
+
+async function processDeleteAttachment(op: DeleteAttachmentOperation, signal?: AbortSignal): Promise<void> {
+  await deleteIgnoringNotFound(() => deleteAttachment(op.serverAttachmentId, signal))
 }
 
 async function processUpload(op: UploadAttachmentOperation, signal?: AbortSignal): Promise<void> {
@@ -107,6 +126,8 @@ async function processRecord(record: OutboxRecord, signal?: AbortSignal): Promis
       return processDelete(record.operation, signal)
     case 'upload-attachment':
       return processUpload(record.operation, signal)
+    case 'delete-attachment':
+      return processDeleteAttachment(record.operation, signal)
   }
 }
 
