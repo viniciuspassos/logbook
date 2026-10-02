@@ -97,6 +97,7 @@ function App() {
           attachmentsBusy={attachments.busy}
           attachmentsStatus={attachments.status}
           onAddPhoto={attachments.addPhoto}
+          onDiscardPhoto={attachments.discardPhoto}
         />
       )}
       {overlay === 'newEntry' && (

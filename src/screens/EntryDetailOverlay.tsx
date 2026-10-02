@@ -39,6 +39,7 @@ interface EntryDetailOverlayFullProps {
   onExportMarkdown: (entry: Entry) => void
   onExportPdf: (entry: Entry) => void
   onAddPhoto?: (file: File) => void
+  onDiscardPhoto?: (queueId: number) => void
 }
 
 type EntryDetailOverlayProps = EntryDetailOverlayEmbeddedProps | EntryDetailOverlayFullProps
@@ -123,6 +124,7 @@ export function EntryDetailOverlay(props: EntryDetailOverlayProps) {
               busy={full.attachmentsBusy ?? false}
               status={full.attachmentsStatus ?? null}
               onAddPhoto={full.onAddPhoto ?? (() => {})}
+              onDiscardPhoto={full.onDiscardPhoto}
             />
 
             <button

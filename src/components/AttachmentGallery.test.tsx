@@ -32,6 +32,60 @@ describe('AttachmentGallery', () => {
     expect(screen.getByText('Uploading…')).toBeInTheDocument()
   })
 
+  it('marks a server-rejected photo with its reason instead of "Uploading…"', () => {
+    render(
+      <AttachmentGallery
+        attachments={[
+          { key: 'pending-5', url: 'blob:local', pending: false, queueId: 5, rejectedReason: 'File too large' },
+        ]}
+        busy={false}
+        status={null}
+        onAddPhoto={() => {}}
+      />,
+    )
+    expect(screen.queryByText('Uploading…')).not.toBeInTheDocument()
+    expect(screen.getByText('Rejected: File too large')).toBeInTheDocument()
+    expect(screen.getByAltText('Photo attachment, rejected by the server')).toBeInTheDocument()
+  })
+
+  it('discards a rejected photo by its queueId', async () => {
+    const onDiscardPhoto = jest.fn()
+    const user = userEvent.setup()
+    render(
+      <AttachmentGallery
+        attachments={[
+          { key: 'pending-5', url: 'blob:local', pending: false, queueId: 5, rejectedReason: 'File too large' },
+          { key: 'server-1', url: '/api/attachments/1/file', pending: false },
+        ]}
+        busy={false}
+        status={null}
+        onAddPhoto={() => {}}
+        onDiscardPhoto={onDiscardPhoto}
+      />,
+    )
+
+    const remove = screen.getAllByRole('button', { name: 'Remove rejected photo' })
+    expect(remove).toHaveLength(1)
+    await user.click(remove[0])
+
+    expect(onDiscardPhoto).toHaveBeenCalledWith(5)
+  })
+
+  it('offers no Remove button when there is no discard handler to call', () => {
+    render(
+      <AttachmentGallery
+        attachments={[
+          { key: 'pending-5', url: '', pending: false, queueId: 5, rejectedReason: 'File too large' },
+        ]}
+        busy={false}
+        status={null}
+        onAddPhoto={() => {}}
+      />,
+    )
+    expect(screen.getByText('Rejected: File too large')).toBeInTheDocument()
+    expect(screen.queryByRole('button', { name: 'Remove rejected photo' })).not.toBeInTheDocument()
+  })
+
   it('renders no thumbnails when there are no attachments', () => {
     render(<AttachmentGallery attachments={[]} busy={false} status={null} onAddPhoto={() => {}} />)
     expect(screen.queryAllByRole('img')).toHaveLength(0)

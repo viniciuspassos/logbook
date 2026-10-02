@@ -1,11 +1,11 @@
 import { drainOutbox, startAutoSync, subscribeToDrains } from './outboxRunner.ts'
-import { getAllRecords, recordAttemptFailure, removeRecord } from '../db/outboxStore.ts'
+import { getAllRecords, markRejected, recordAttemptFailure, removeRecord } from '../db/outboxStore.ts'
 import { deleteSyncState, getSyncState, putSyncState } from '../db/syncStateStore.ts'
 import { isPersistenceSupported } from '../db/database.ts'
 import { isBackendReachable } from './health.ts'
 import { createEntry, deleteEntry, updateEntry } from './entriesApi.ts'
 import { uploadAttachment } from './attachmentsApi.ts'
-import { SyncAuthError } from './errors.ts'
+import { SyncAuthError, SyncHttpError } from './errors.ts'
 import type { OutboxRecord } from '../../types/outbox.ts'
 import type { CreateEntryPayload, ServerEntry } from '../../types/sync.ts'
 
@@ -14,6 +14,7 @@ jest.mock('../db/outboxStore.ts', () => ({
   getAllRecords: jest.fn(),
   removeRecord: jest.fn(),
   recordAttemptFailure: jest.fn(),
+  markRejected: jest.fn(),
 }))
 jest.mock('../db/syncStateStore.ts', () => ({
   getSyncState: jest.fn(),
@@ -33,6 +34,7 @@ const reachableMock = isBackendReachable as jest.Mock
 const getAllRecordsMock = getAllRecords as jest.Mock
 const removeRecordMock = removeRecord as jest.Mock
 const recordFailureMock = recordAttemptFailure as jest.Mock
+const markRejectedMock = markRejected as jest.Mock
 const getSyncStateMock = getSyncState as jest.Mock
 const putSyncStateMock = putSyncState as jest.Mock
 const deleteSyncStateMock = deleteSyncState as jest.Mock
@@ -60,6 +62,7 @@ beforeEach(() => {
   getAllRecordsMock.mockResolvedValue([])
   removeRecordMock.mockResolvedValue(undefined)
   recordFailureMock.mockResolvedValue(undefined)
+  markRejectedMock.mockResolvedValue(undefined)
   getSyncStateMock.mockResolvedValue(undefined)
   putSyncStateMock.mockResolvedValue(undefined)
   deleteSyncStateMock.mockResolvedValue(undefined)
@@ -403,5 +406,149 @@ describe('subscribeToDrains', () => {
     expect(healthy).toHaveBeenCalledTimes(1)
     unsubscribeBroken()
     unsubscribeHealthy()
+  })
+})
+
+describe('drainOutbox with permanently rejected ops (#91)', () => {
+  const tooLarge = new SyncHttpError(413, null, 'File too large')
+
+  function uploadRecord(queueId: number, localEntryId: number, overrides: Partial<OutboxRecord> = {}): OutboxRecord {
+    return createRecord({
+      queueId,
+      operation: { kind: 'upload-attachment', localEntryId, file: new Blob(), filename: 'big.jpg' },
+      ...overrides,
+    })
+  }
+
+  function createFor(queueId: number, localEntryId: number, overrides: Partial<OutboxRecord> = {}): OutboxRecord {
+    return createRecord({ queueId, operation: { kind: 'create-entry', localEntryId, payload }, ...overrides })
+  }
+
+  beforeEach(() => {
+    getSyncStateMock.mockImplementation((id: number) =>
+      Promise.resolve(id === 1 ? { localEntryId: 1, serverId: 42, serverVersion: 1 } : undefined),
+    )
+    createEntryMock.mockResolvedValue({ id: 99, version: 1 })
+  })
+
+  it('parks a permanently rejected op and keeps draining the ops behind it', async () => {
+    uploadAttachmentMock.mockRejectedValue(tooLarge)
+    getAllRecordsMock.mockResolvedValue([uploadRecord(1, 1), createFor(2, 2)])
+
+    const summary = await drainOutbox()
+
+    expect(markRejectedMock).toHaveBeenCalledWith(1, 'File too large')
+    expect(recordFailureMock).not.toHaveBeenCalled()
+    expect(removeRecordMock).not.toHaveBeenCalledWith(1)
+    expect(createEntryMock).toHaveBeenCalledTimes(1)
+    expect(removeRecordMock).toHaveBeenCalledWith(2)
+    expect(summary).toEqual({ processed: 1, stoppedReason: 'rejected', error: 'File too large' })
+  })
+
+  it('never retries an op that an earlier drain already parked', async () => {
+    getAllRecordsMock.mockResolvedValue([
+      uploadRecord(1, 1, { rejected: true, lastError: 'File too large' }),
+      createFor(2, 2),
+    ])
+
+    const summary = await drainOutbox()
+
+    expect(uploadAttachmentMock).not.toHaveBeenCalled()
+    expect(markRejectedMock).not.toHaveBeenCalled()
+    expect(summary).toEqual({ processed: 1, stoppedReason: 'rejected', error: 'File too large' })
+  })
+
+  it('parks every op that depends on a rejected create, with the reason, instead of running it', async () => {
+    getAllRecordsMock.mockResolvedValue([
+      createFor(1, 2, { rejected: true, lastError: 'Bad entry' }),
+      createRecord({ queueId: 2, operation: { kind: 'update-entry', localEntryId: 2, payload: { version: 1 } } }),
+      uploadRecord(3, 2),
+      createFor(4, 3),
+    ])
+
+    const summary = await drainOutbox()
+
+    expect(updateEntryMock).not.toHaveBeenCalled()
+    expect(uploadAttachmentMock).not.toHaveBeenCalled()
+    expect(recordFailureMock).not.toHaveBeenCalled()
+    expect(markRejectedMock).toHaveBeenCalledTimes(2)
+    expect(markRejectedMock).toHaveBeenCalledWith(2, 'Its entry was rejected by the server: Bad entry')
+    expect(markRejectedMock).toHaveBeenCalledWith(3, 'Its entry was rejected by the server: Bad entry')
+    expect(removeRecordMock).toHaveBeenCalledTimes(1)
+    expect(removeRecordMock).toHaveBeenCalledWith(4)
+    expect(summary).toEqual({ processed: 1, stoppedReason: 'rejected', error: 'Bad entry' })
+  })
+
+  it('parks the dependents of a create rejected during this same drain', async () => {
+    createEntryMock.mockRejectedValueOnce(new SyncHttpError(400, null, 'Bad entry'))
+    getAllRecordsMock.mockResolvedValue([createFor(1, 2), uploadRecord(2, 2)])
+
+    const summary = await drainOutbox()
+
+    expect(markRejectedMock).toHaveBeenCalledWith(1, 'Bad entry')
+    expect(markRejectedMock).toHaveBeenCalledWith(2, 'Its entry was rejected by the server: Bad entry')
+    expect(uploadAttachmentMock).not.toHaveBeenCalled()
+    expect(summary).toEqual({ processed: 0, stoppedReason: 'rejected', error: 'Bad entry' })
+  })
+
+  it('still stops at a transient failure behind a parked op', async () => {
+    createEntryMock.mockRejectedValue(new Error('Could not reach the server.'))
+    getAllRecordsMock.mockResolvedValue([
+      uploadRecord(1, 1, { rejected: true, lastError: 'File too large' }),
+      createFor(2, 2),
+      createFor(3, 3),
+    ])
+
+    const summary = await drainOutbox()
+
+    expect(createEntryMock).toHaveBeenCalledTimes(1)
+    expect(recordFailureMock).toHaveBeenCalledWith(2, 'Could not reach the server.')
+    expect(summary).toEqual({ processed: 0, stoppedReason: 'error', error: 'Could not reach the server.' })
+  })
+
+  it('runs one more pass for work queued mid-drain even when the pass ended "rejected"', async () => {
+    let releaseUpload: (() => void) | undefined
+    uploadAttachmentMock.mockReturnValueOnce(
+      new Promise((_, reject) => {
+        releaseUpload = () => reject(tooLarge)
+      }),
+    )
+    getAllRecordsMock
+      .mockResolvedValueOnce([uploadRecord(1, 1)])
+      .mockResolvedValue([uploadRecord(1, 1, { rejected: true, lastError: 'File too large' }), createFor(2, 2)])
+
+    const first = drainOutbox()
+    await new Promise((r) => setTimeout(r, 0)) // let the first pass reach the upload
+    const joined = drainOutbox() // e.g. a save that queued entry 2 mid-pass
+    releaseUpload?.()
+
+    expect(await first).toEqual({ processed: 1, stoppedReason: 'rejected', error: 'File too large' })
+    expect(await joined).toEqual(await first)
+    expect(removeRecordMock).toHaveBeenCalledWith(2)
+  })
+
+  it('keeps draining when parking a dependent of a rejected create fails to persist', async () => {
+    markRejectedMock.mockRejectedValue(new Error('db write failed'))
+    getAllRecordsMock.mockResolvedValue([
+      createFor(1, 2, { rejected: true, lastError: 'Bad entry' }),
+      uploadRecord(2, 2),
+      createFor(3, 3),
+    ])
+
+    const summary = await drainOutbox()
+
+    expect(markRejectedMock).toHaveBeenCalledWith(2, 'Its entry was rejected by the server: Bad entry')
+    expect(removeRecordMock).toHaveBeenCalledWith(3)
+    expect(summary).toEqual({ processed: 1, stoppedReason: 'rejected', error: 'Bad entry' })
+  })
+
+  it('still reports the rejection when parking the op fails to persist', async () => {
+    uploadAttachmentMock.mockRejectedValue(tooLarge)
+    markRejectedMock.mockRejectedValue(new Error('db write failed'))
+    getAllRecordsMock.mockResolvedValue([uploadRecord(1, 1)])
+
+    const summary = await drainOutbox()
+
+    expect(summary).toEqual({ processed: 0, stoppedReason: 'rejected', error: 'File too large' })
   })
 })

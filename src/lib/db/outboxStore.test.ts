@@ -6,7 +6,7 @@ if (typeof globalThis.structuredClone === 'undefined') {
 }
 import 'fake-indexeddb/auto'
 import { IDBFactory } from 'fake-indexeddb'
-import { enqueueOperation, getAllRecords, recordAttemptFailure, removeRecord } from './outboxStore.ts'
+import { enqueueOperation, getAllRecords, markRejected, recordAttemptFailure, removeRecord } from './outboxStore.ts'
 import type { CreateEntryOperation, UploadAttachmentOperation } from '../../types/outbox.ts'
 
 beforeEach(() => {
@@ -105,6 +105,21 @@ describe('recordAttemptFailure', () => {
 
   it('is a no-op when the record was already removed', async () => {
     await expect(recordAttemptFailure(999, 'gone')).resolves.toBeUndefined()
+  })
+})
+
+describe('markRejected', () => {
+  it('parks the record with the rejection message and counts the attempt', async () => {
+    const record = await enqueueOperation(createOp())
+    await markRejected(record.queueId, 'File too large')
+    const [updated] = await getAllRecords()
+    expect(updated.rejected).toBe(true)
+    expect(updated.attempts).toBe(1)
+    expect(updated.lastError).toBe('File too large')
+  })
+
+  it('is a no-op when the record was already removed', async () => {
+    await expect(markRejected(999, 'gone')).resolves.toBeUndefined()
   })
 })
 

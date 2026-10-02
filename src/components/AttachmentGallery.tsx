@@ -8,6 +8,38 @@ interface AttachmentGalleryProps {
   busy: boolean
   status: AttachmentStatus | null
   onAddPhoto: (file: File) => void
+  /** Discards a photo the server permanently rejected, by its outbox queueId. */
+  onDiscardPhoto?: (queueId: number) => void
+}
+
+function altText(attachment: AttachmentPreview): string {
+  if (attachment.rejectedReason !== undefined) return 'Photo attachment, rejected by the server'
+  return attachment.pending ? 'Photo attachment, uploading' : 'Photo attachment'
+}
+
+function AttachmentTile({ attachment, onDiscard }: { attachment: AttachmentPreview; onDiscard?: (queueId: number) => void }) {
+  const { rejectedReason, queueId } = attachment
+  return (
+    <div className="attachment-gallery__item">
+      {attachment.url && <img className="attachment-gallery__image" src={attachment.url} alt={altText(attachment)} />}
+      {attachment.pending && <span className="attachment-gallery__pending-badge">Uploading…</span>}
+      {rejectedReason !== undefined && (
+        <div className="attachment-gallery__rejected">
+          <span className="attachment-gallery__rejected-reason">Rejected: {rejectedReason}</span>
+          {queueId !== undefined && onDiscard && (
+            <button
+              type="button"
+              className="attachment-gallery__remove"
+              aria-label="Remove rejected photo"
+              onClick={() => onDiscard(queueId)}
+            >
+              Remove
+            </button>
+          )}
+        </div>
+      )}
+    </div>
+  )
 }
 
 /**
@@ -16,7 +48,13 @@ interface AttachmentGalleryProps {
  * elsewhere in EntryDetailOverlay for those). Presentational: all loading/
  * upload/validation state lives in useEntryAttachments.ts.
  */
-export function AttachmentGallery({ attachments, busy, status, onAddPhoto }: AttachmentGalleryProps) {
+export function AttachmentGallery({
+  attachments,
+  busy,
+  status,
+  onAddPhoto,
+  onDiscardPhoto,
+}: AttachmentGalleryProps) {
   const inputId = useId()
 
   function handleChange(event: ChangeEvent<HTMLInputElement>) {
@@ -30,18 +68,7 @@ export function AttachmentGallery({ attachments, busy, status, onAddPhoto }: Att
       {attachments.length > 0 && (
         <div className="attachment-gallery__grid">
           {attachments.map((attachment) => (
-            <div key={attachment.key} className="attachment-gallery__item">
-              {attachment.url && (
-                <img
-                  className="attachment-gallery__image"
-                  src={attachment.url}
-                  alt={attachment.pending ? 'Photo attachment, uploading' : 'Photo attachment'}
-                />
-              )}
-              {attachment.pending && (
-                <span className="attachment-gallery__pending-badge">Uploading…</span>
-              )}
-            </div>
+            <AttachmentTile key={attachment.key} attachment={attachment} onDiscard={onDiscardPhoto} />
           ))}
         </div>
       )}

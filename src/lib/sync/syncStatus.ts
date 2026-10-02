@@ -16,6 +16,8 @@ export function syncStatusLabel(lastDrain: DrainSummary | null): string {
       return 'Saved locally · sign in to sync'
     case 'error':
       return 'Saved locally · sync failed'
+    case 'rejected':
+      return 'Saved locally · some changes rejected'
     default:
       return 'Saved locally'
   }

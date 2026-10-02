@@ -40,6 +40,18 @@ no-op'ing silently otherwise. Two things separate this from the target architect
   implements `login`/`logout`, but nothing under `src/screens` calls it, so against a real
   deployment every outbox request 401s and is left queued until a login UI lands.
 
+**Drain policy: stop on transient failures, park permanent rejections.** `outboxRunner` drains
+strictly FIFO, which is what guarantees an entry's create lands before any op that needs its server
+id. A transient failure (offline, 5xx, 401/403, a #24 409) stops the drain and the op is retried
+next time. A **permanent** rejection (any other 4xx, e.g. a 413 photo or a 400 payload) would fail
+identically forever, and stopping on it pinned the whole queue behind it
+([#91](https://github.com/viniciuspassos/logbook/issues/91)). So such an op is parked
+(`rejected: true`) and the drain moves on. Ops for an entry whose create was parked are parked
+too (they could never resolve a server id), so ordering still holds. The drain then reports
+`'rejected'` (timeline: "some changes rejected"), and a parked photo shows its reason in the
+gallery with a Remove button. Parked ops are never auto-retried: the server already said no.
+There is no UI yet to discard a parked *entry* create/update — only photos.
+
 Read this section as the current midpoint, not the end state — `entriesStore.ts` is still what
 every screen reads from.
 

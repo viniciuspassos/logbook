@@ -1,6 +1,6 @@
 import { act, renderHook, waitFor } from '@testing-library/react'
 import { useEntryAttachments } from './useEntryAttachments.ts'
-import { getEntryAttachmentSources, queueAttachmentUpload } from '../lib/sync/outboxQueue.ts'
+import { discardRejectedOperation, getEntryAttachmentSources, queueAttachmentUpload } from '../lib/sync/outboxQueue.ts'
 import { drainOutbox } from '../lib/sync/outboxRunner.ts'
 import { validateAttachmentFile } from '../lib/sync/attachmentValidation.ts'
 import { attachmentFileUrl } from '../lib/sync/attachmentsApi.ts'
@@ -11,6 +11,7 @@ import type { ServerAttachment } from '../types/sync.ts'
 jest.mock('../lib/sync/outboxQueue.ts', () => ({
   getEntryAttachmentSources: jest.fn(),
   queueAttachmentUpload: jest.fn(),
+  discardRejectedOperation: jest.fn(),
 }))
 jest.mock('../lib/sync/outboxRunner.ts', () => ({
   drainOutbox: jest.fn(),
@@ -24,6 +25,7 @@ jest.mock('../lib/sync/attachmentsApi.ts', () => ({
 
 const sourcesMock = getEntryAttachmentSources as jest.Mock
 const queueUploadMock = queueAttachmentUpload as jest.Mock
+const discardMock = discardRejectedOperation as jest.Mock
 const drainMock = drainOutbox as jest.Mock
 const validateMock = validateAttachmentFile as jest.Mock
 const fileUrlMock = attachmentFileUrl as jest.Mock
@@ -59,6 +61,20 @@ const attachment: ServerAttachment = {
   mimeType: 'image/jpeg',
   sizeBytes: 10,
   createdAt: '2026-01-01T00:00:00.000Z',
+}
+
+function queuedRecord(queueId: number, overrides: Partial<OutboxRecord> = {}): OutboxRecord {
+  return {
+    queueId,
+    createdAt: '2026-01-01T00:00:00.000Z',
+    attempts: 0,
+    operation: { kind: 'upload-attachment', localEntryId: 1, file: new Blob(), filename: 'big.jpg' },
+    ...overrides,
+  }
+}
+
+function rejectedRecord(queueId: number): OutboxRecord {
+  return queuedRecord(queueId, { attempts: 1, rejected: true, lastError: 'File too large' })
 }
 
 function fakeFile(name = 'photo.jpg'): File {
@@ -116,6 +132,103 @@ describe('useEntryAttachments', () => {
 
     await waitFor(() => expect(result.current.attachments).toHaveLength(1))
     expect(result.current.attachments[0]).toMatchObject({ key: 'pending-5', pending: true })
+  })
+
+  it('marks a photo the server permanently rejected, with its queueId and reason', async () => {
+    sourcesMock.mockResolvedValue({ serverAttachments: [], pending: [rejectedRecord(5)] })
+    const { result } = renderHook(() => useEntryAttachments(makeEntry(1)))
+
+    await waitFor(() => expect(result.current.attachments).toHaveLength(1))
+    expect(result.current.attachments[0]).toMatchObject({
+      key: 'pending-5',
+      queueId: 5,
+      pending: false,
+      rejectedReason: 'File too large',
+    })
+  })
+
+  it('reports a photo the server rejected during its own upload drain', async () => {
+    sourcesMock
+      .mockResolvedValueOnce({ serverAttachments: [], pending: [] })
+      .mockResolvedValueOnce({ serverAttachments: [], pending: [queuedRecord(6)] })
+      .mockResolvedValue({ serverAttachments: [], pending: [rejectedRecord(6)] })
+    drainMock.mockResolvedValue({ processed: 0, stoppedReason: 'rejected', error: 'File too large' })
+    const { result } = renderHook(() => useEntryAttachments(makeEntry(1)))
+    await waitFor(() => expect(sourcesMock).toHaveBeenCalled())
+
+    act(() => result.current.addPhoto(fakeFile()))
+
+    await waitFor(() =>
+      expect(result.current.status).toEqual({
+        tone: 'error',
+        message: 'The server rejected this photo (File too large). Remove it and try another.',
+      }),
+    )
+    expect(result.current.attachments[0]).toMatchObject({ rejectedReason: 'File too large' })
+  })
+
+  it('does not blame the new photo for a rejection that was already parked', async () => {
+    sourcesMock.mockResolvedValue({ serverAttachments: [attachment], pending: [rejectedRecord(5)] })
+    drainMock.mockResolvedValue({ processed: 1, stoppedReason: 'rejected', error: 'File too large' })
+    const { result } = renderHook(() => useEntryAttachments(makeEntry(1)))
+    await waitFor(() => expect(sourcesMock).toHaveBeenCalled())
+
+    act(() => result.current.addPhoto(fakeFile()))
+
+    await waitFor(() => expect(result.current.status?.message).toBe('Photo uploaded.'))
+  })
+
+  it('discards a rejected photo and reloads the gallery', async () => {
+    sourcesMock
+      .mockResolvedValueOnce({ serverAttachments: [], pending: [rejectedRecord(5)] })
+      .mockResolvedValue({ serverAttachments: [], pending: [] })
+    discardMock.mockResolvedValue(true)
+    const { result } = renderHook(() => useEntryAttachments(makeEntry(1)))
+    await waitFor(() => expect(result.current.attachments).toHaveLength(1))
+
+    act(() => result.current.discardPhoto(5))
+
+    await waitFor(() => expect(result.current.attachments).toHaveLength(0))
+    expect(discardMock).toHaveBeenCalledWith(5)
+    expect(result.current.status).toEqual({ tone: 'info', message: 'Photo removed.' })
+    await waitFor(() => expect(drainMock).toHaveBeenCalledTimes(1)) // refreshes the timeline sync line
+  })
+
+  it('reports a new photo parked behind its rejected entry as rejected, not "queued"', async () => {
+    const parkedBehindEntry = queuedRecord(6, {
+      rejected: true,
+      lastError: 'Its entry was rejected by the server: Bad entry',
+    })
+    sourcesMock
+      .mockResolvedValueOnce({ serverAttachments: [], pending: [] })
+      .mockResolvedValueOnce({ serverAttachments: [], pending: [queuedRecord(6)] })
+      .mockResolvedValue({ serverAttachments: [], pending: [parkedBehindEntry] })
+    drainMock.mockResolvedValue({ processed: 0, stoppedReason: 'rejected', error: 'Bad entry' })
+    const { result } = renderHook(() => useEntryAttachments(makeEntry(1)))
+    await waitFor(() => expect(sourcesMock).toHaveBeenCalled())
+
+    act(() => result.current.addPhoto(fakeFile()))
+
+    await waitFor(() => expect(result.current.status?.tone).toBe('error'))
+    expect(result.current.status?.message).toContain('Its entry was rejected by the server: Bad entry')
+  })
+
+  it('says so when discarding a rejected photo fails', async () => {
+    discardMock.mockResolvedValue(false)
+    const { result } = renderHook(() => useEntryAttachments(makeEntry(1)))
+    await waitFor(() => expect(sourcesMock).toHaveBeenCalled())
+
+    act(() => result.current.discardPhoto(5))
+
+    await waitFor(() =>
+      expect(result.current.status).toEqual({ tone: 'error', message: "Couldn't remove that photo. Try again." }),
+    )
+  })
+
+  it('ignores a discard when no entry is open', () => {
+    const { result } = renderHook(() => useEntryAttachments(null))
+    act(() => result.current.discardPhoto(5))
+    expect(discardMock).not.toHaveBeenCalled()
   })
 
   it('reloads when the open entry changes', async () => {

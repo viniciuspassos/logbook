@@ -112,6 +112,17 @@ describe('EntryDetailOverlay', () => {
     expect(screen.getByAltText('Photo attachment')).toHaveAttribute('src', '/api/attachments/1/file')
   })
 
+  it('forwards a rejected photo removal to onDiscardPhoto', async () => {
+    const onDiscardPhoto = jest.fn()
+    const user = userEvent.setup()
+    renderOverlay({
+      attachments: [{ key: 'pending-5', url: '', pending: false, queueId: 5, rejectedReason: 'File too large' }],
+      onDiscardPhoto,
+    })
+    await user.click(screen.getByRole('button', { name: 'Remove rejected photo' }))
+    expect(onDiscardPhoto).toHaveBeenCalledWith(5)
+  })
+
   it('forwards a selected photo to onAddPhoto', async () => {
     const onAddPhoto = jest.fn()
     const user = userEvent.setup()

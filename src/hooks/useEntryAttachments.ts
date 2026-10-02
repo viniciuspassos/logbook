@@ -1,8 +1,8 @@
 import { useCallback, useEffect, useRef, useState } from 'react'
 import { attachmentFileUrl } from '../lib/sync/attachmentsApi.ts'
 import { validateAttachmentFile } from '../lib/sync/attachmentValidation.ts'
-import { getEntryAttachmentSources, queueAttachmentUpload } from '../lib/sync/outboxQueue.ts'
-import { drainOutbox } from '../lib/sync/outboxRunner.ts'
+import { discardRejectedOperation, getEntryAttachmentSources, queueAttachmentUpload } from '../lib/sync/outboxQueue.ts'
+import { drainOutbox, type DrainSummary } from '../lib/sync/outboxRunner.ts'
 import type { Entry } from '../types/entry.ts'
 import type { OutboxRecord } from '../types/outbox.ts'
 
@@ -11,6 +11,17 @@ export interface AttachmentPreview {
   url: string
   /** Still queued locally, not yet confirmed by the server. */
   pending: boolean
+  /** The outbox op behind a locally-queued photo (absent for server ones). */
+  queueId?: number
+  /** Set when the server permanently rejected the upload (#91): the photo
+   *  will never sync, so the gallery offers to discard it. */
+  rejectedReason?: string
+}
+
+/** The first photo rejected in `after` that wasn't already rejected in `before`. */
+function findNewRejection(before: AttachmentPreview[], after: AttachmentPreview[]): AttachmentPreview | undefined {
+  const alreadyRejected = new Set(before.filter((p) => p.rejectedReason !== undefined).map((p) => p.key))
+  return after.find((p) => p.rejectedReason !== undefined && !alreadyRejected.has(p.key))
 }
 
 export interface AttachmentStatus {
@@ -48,6 +59,7 @@ export function useEntryAttachments(
   busy: boolean
   status: AttachmentStatus | null
   addPhoto: (file: File) => void
+  discardPhoto: (queueId: number) => void
 } {
   const { onAuthRequired, onAuthConfirmed } = options
   const [attachments, setAttachments] = useState<AttachmentPreview[]>([])
@@ -79,7 +91,9 @@ export function useEntryAttachments(
         const file = record.operation.kind === 'upload-attachment' ? record.operation.file : new Blob()
         const url = canCreateObjectUrl ? URL.createObjectURL(file) : ''
         if (url) objectUrlsRef.current.push(url)
-        return { key: `pending-${record.queueId}`, url, pending: true }
+        const preview: AttachmentPreview = { key: `pending-${record.queueId}`, url, pending: !record.rejected, queueId: record.queueId }
+        if (record.rejected) preview.rejectedReason = record.lastError ?? 'Rejected by the server.'
+        return preview
       })
       return [...server, ...pendingPreviews]
     },
@@ -87,10 +101,12 @@ export function useEntryAttachments(
   )
 
   const load = useCallback(
-    async (target: Entry, signal?: AbortSignal) => {
+    async (target: Entry, signal?: AbortSignal): Promise<AttachmentPreview[]> => {
       const sources = await getEntryAttachmentSources(target, signal)
-      if (signal?.aborted) return
-      setAttachments(buildPreviews(sources.serverAttachments, sources.pending))
+      if (signal?.aborted) return []
+      const previews = buildPreviews(sources.serverAttachments, sources.pending)
+      setAttachments(previews)
+      return previews
     },
     [buildPreviews],
   )
@@ -123,6 +139,31 @@ export function useEntryAttachments(
 
   useEffect(() => revokeObjectUrls, [revokeObjectUrls])
 
+  const reportDrain = useCallback(
+    (summary: DrainSummary, rejection: AttachmentPreview | undefined) => {
+      if (rejection) {
+        setStatus({
+          tone: 'error',
+          message: `The server rejected this photo (${rejection.rejectedReason}). Remove it and try another.`,
+        })
+      } else if (summary.processed > 0) {
+        setStatus({ tone: 'info', message: 'Photo uploaded.' })
+        onAuthConfirmed?.()
+      } else if (summary.stoppedReason === 'auth') {
+        // Distinguishes "you're not signed in" from "you're offline" —
+        // the generic offline message below would otherwise be shown for
+        // both, which is what prompted this hook's auth-awareness (see
+        // the bug this fixes: a reachable-but-unauthenticated backend
+        // looked identical to no connectivity at all).
+        setStatus({ tone: 'info', message: 'Photo queued — sign in to sync it.' })
+        onAuthRequired?.()
+      } else {
+        setStatus({ tone: 'info', message: "Photo queued — it'll upload once you're back online." })
+      }
+    },
+    [onAuthRequired, onAuthConfirmed],
+  )
+
   const addPhoto = useCallback(
     (file: File) => {
       if (!entry) return
@@ -139,26 +180,14 @@ export function useEntryAttachments(
         try {
           await queueAttachmentUpload(entry, file, file.name)
           if (isStale()) return
-          await load(entry)
+          const before = await load(entry)
           if (isStale()) return
           const summary = await drainOutbox()
           if (isStale()) return
-          if (summary.processed > 0) {
-            await load(entry)
-            if (isStale()) return
-            setStatus({ tone: 'info', message: 'Photo uploaded.' })
-            onAuthConfirmed?.()
-          } else if (summary.stoppedReason === 'auth') {
-            // Distinguishes "you're not signed in" from "you're offline" —
-            // the generic offline message below would otherwise be shown for
-            // both, which is what prompted this hook's auth-awareness (see
-            // the bug this fixes: a reachable-but-unauthenticated backend
-            // looked identical to no connectivity at all).
-            setStatus({ tone: 'info', message: 'Photo queued — sign in to sync it.' })
-            onAuthRequired?.()
-          } else {
-            setStatus({ tone: 'info', message: "Photo queued — it'll upload once you're back online." })
-          }
+          const changed = summary.processed > 0 || summary.stoppedReason === 'rejected'
+          const after = changed ? await load(entry) : before
+          if (isStale()) return
+          reportDrain(summary, findNewRejection(before, after))
         } catch {
           if (!isStale()) setStatus({ tone: 'error', message: "Couldn't queue that photo. Try again." })
         } finally {
@@ -166,8 +195,31 @@ export function useEntryAttachments(
         }
       })()
     },
-    [entry, load, onAuthRequired, onAuthConfirmed],
+    [entry, load, reportDrain],
   )
 
-  return { attachments, busy, status, addPhoto }
+  /** Drops a photo the server permanently rejected (#91) from the outbox. */
+  const discardPhoto = useCallback(
+    (queueId: number) => {
+      if (!entry) return
+      const entryId = entry.id
+      const isStale = () => activeEntryIdRef.current !== entryId
+      void (async () => {
+        const removed = await discardRejectedOperation(queueId)
+        if (isStale()) return
+        if (!removed) {
+          setStatus({ tone: 'error', message: "Couldn't remove that photo. Try again." })
+          return
+        }
+        await load(entry)
+        if (!isStale()) setStatus({ tone: 'info', message: 'Photo removed.' })
+        // Re-drain so the timeline's sync line (fed by every drain) stops
+        // saying "some changes rejected" once nothing rejected is left.
+        void drainOutbox()
+      })()
+    },
+    [entry, load],
+  )
+
+  return { attachments, busy, status, addPhoto, discardPhoto }
 }
