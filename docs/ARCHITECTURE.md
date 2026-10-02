@@ -184,6 +184,33 @@ The same reasoning applies one level down to `lib/export/entryFields.ts`: it's t
 that defines which `Entry` fields appear in an export and in what order, so Markdown and PDF
 export can't drift apart by one of them forgetting a field the other added.
 
+## Visual design: the "Dropzone" direction
+
+The UI's look comes from the skydiving half of the audience: open sky as the page
+(`--lb-page-bg`), cloud-white surfaces (`--lb-bg`), navy ink (`--lb-ink`), and canopy orange
+(`--lb-accent`) as the one accent. Headings use Archivo's expanded width (`--display`,
+`font-stretch: 125%`), and body text stays on the system sans. It replaced
+([#113](https://github.com/viniciuspassos/logbook/issues/113)) an "open logbook" desktop
+layout: a leather spine rail and two cream pages with terracotta and serif type. That design
+read as generic, and the book metaphor made the list look like a page instead of a list.
+
+- **Tokens are the only source of colour.** Every colour is a `--lb-*` token in
+  `src/index.css`, with a dark ("night sky") value for each. The manifest/`theme-color` values
+  and the standalone PDF stylesheet (`src/lib/export/printDocument.ts`, which can't read CSS
+  variables) mirror them by hand.
+- **The bright orange never carries small text.** `#ff5b1f` is about 3:1 on white. It's for
+  icons and shapes only. Orange text uses `--lb-accent-ink`, and a button with a text label
+  sits on `--lb-accent-fill` with `--lb-on-accent` text. Both pass WCAG AA in light and dark.
+- **Desktop is three columns:** the navy nav rail, the list on the sky, and a white reading
+  panel. The list row of whichever entry the panel shows is marked (`aria-current`, from
+  `App` → `TimelineScreen` → `EntryCard`) and turns panel-white, running flush into the panel,
+  so list and panel read as one surface. Mobile keeps its single-column layout.
+- **Fonts are self-hosted** (`src/assets/fonts/`) so the PWA renders them offline. Archivo
+  ships as one variable latin-subset woff2 that covers every weight and width.
+- **App icons** (`public/*.png`) are rendered from `public/icon.svg` with
+  [`@resvg/resvg-js`](https://github.com/yisibl/resvg-js). The maskable and Apple touch icons
+  use a square-cornered background because the OS crops them to its own shape.
+
 ## Key architectural decisions
 
 | Decision | Alternative considered | Why this one |
