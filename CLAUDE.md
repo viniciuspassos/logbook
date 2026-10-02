@@ -36,6 +36,16 @@ Sync local `main` (`git fetch origin && git log origin/main`) and search the cod
 
 **Isolate parallel sessions on their own branch.** The user often runs multiple unrelated Claude Code sessions against this repo at once, and a new session inherits whatever branch (and working tree) happens to be checked out — which may belong to a different, unrelated task another session is mid-way through. Before making any code or documentation change, check whether the current branch's purpose matches this task; if it doesn't (or you're on `main`), check `git status` first — if it shows changes you didn't make, they likely belong to another session, so stash them (`git stash -u`) rather than carrying them onto a new branch — then create a fresh branch off `origin/main` (`git fetch origin && git checkout -b <type>/<slug> origin/main`) before editing anything. Only keep working on the current branch when this task is a continuation of what that branch is already doing.
 
+## Parallelize with subagents
+
+Use subagents whenever work can be split, so independent pieces run concurrently instead of one after another. Launch independent subagents in a **single message** (multiple `Agent` calls in one turn) — sequential launches serialize the work and throw the speedup away.
+
+- **Fan out independent work.** Frontend + backend + infra changes for one feature, reviews of unrelated modules, or several unrelated bug fixes each go to their own specialist (`frontend-engineer`, `backend-engineer`, `devops-engineer` — see `docs/AGENTIC_WORKFLOW.md`) in parallel. Cross-cutting requests go through `product-engineer`, which does the same fan-out.
+- **Offload noisy investigation.** Broad codebase searches, log trawls, and "where is X used" sweeps go to `Explore` (or several `Explore` agents, one per area) so only the conclusions land back in the main context.
+- **Isolate parallel writers.** Subagents that edit files concurrently must not share a working tree — give each one `isolation: "worktree"`, or split the work so their file sets don't overlap.
+- **Keep dependent steps sequential.** Don't parallelize when one step needs another's output (e.g. the backend API contract must exist before the client that calls it), and don't spawn an agent for a quick single-file read or edit you can do directly — a cold-started agent costs more than it saves there.
+- **Brief each agent fully.** A subagent starts without this conversation's context: state the goal, the files/area in scope, the constraints (TDD, layering, gates), and exactly what to return.
+
 ## Testing
 
 Follow Test-Driven Development: write the failing Jest test for the behavior first, then write the minimum code to make it pass, then refactor. Every function, both backend and frontend, must have a unit test written with Jest. When adding a function, add or update its corresponding Jest test in the same change.
