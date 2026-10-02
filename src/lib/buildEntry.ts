@@ -49,7 +49,9 @@ export const DEFAULT_MEDIA_HINTS: [string, string, string] = [
  * above every existing id if the clock is behind. Ids are the local key the
  * outbox and sync-state map use, so they must never be reused — a plain
  * `max + 1` would hand a deleted newest entry's id to the next entry, which
- * would then inherit the deleted entry's server mapping and photos. Still
+ * would then inherit the deleted entry's server mapping and photos (relies on
+ * the clock moving between two saves, which it always does for two human
+ * actions). Still
  * strictly increasing, so "highest id = newest" (see useEntries'
  * mostRecentEntry) keeps holding.
  */

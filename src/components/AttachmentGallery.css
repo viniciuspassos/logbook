@@ -31,8 +31,8 @@
   padding: 3px 6px;
   font-size: 10px;
   text-align: center;
-  color: var(--lb-bg);
-  background: oklch(19% 0.025 50 / 0.55);
+  color: var(--lb-on-scrim);
+  background: var(--lb-scrim);
 }
 
 /* A photo the server permanently rejected (#91): reason + a way out. */
@@ -75,8 +75,8 @@
   border-radius: 50%;
   font-size: 16px;
   line-height: 1;
-  color: var(--lb-bg);
-  background: oklch(19% 0.025 50 / 0.55);
+  color: var(--lb-on-scrim);
+  background: var(--lb-scrim);
 }
 
 /* Armed: the confirm/keep pair covers the whole thumbnail so both targets

@@ -21,7 +21,7 @@ interface ConfirmButtonProps {
  * `onConfirm`. Inline rather than `window.confirm`, which would block the page
  * and can't be styled or announced like the rest of the app. Focus moves to
  * the confirm button when armed so keyboard users land on the choice; Escape
- * or Cancel backs out.
+ * or Cancel backs out and puts focus back on the trigger.
  */
 export function ConfirmButton({
   label,
@@ -34,14 +34,30 @@ export function ConfirmButton({
 }: ConfirmButtonProps) {
   const [armed, setArmed] = useState(false)
   const confirmRef = useRef<HTMLButtonElement>(null)
+  const triggerRef = useRef<HTMLButtonElement>(null)
+  // Set when the user backs out, so focus returns to the trigger instead of
+  // falling to <body> as the confirm/cancel pair unmounts. Not after a
+  // confirm: the action usually removes the trigger's whole context.
+  const restoreFocusRef = useRef(false)
 
   useEffect(() => {
-    if (armed) confirmRef.current?.focus()
+    if (armed) {
+      confirmRef.current?.focus()
+    } else if (restoreFocusRef.current) {
+      restoreFocusRef.current = false
+      triggerRef.current?.focus()
+    }
   }, [armed])
+
+  function disarm() {
+    restoreFocusRef.current = true
+    setArmed(false)
+  }
 
   if (!armed) {
     return (
       <button
+        ref={triggerRef}
         type="button"
         className={cx('confirm-button', className)}
         aria-label={children === undefined ? undefined : label}
@@ -54,7 +70,7 @@ export function ConfirmButton({
   }
 
   function handleKeyDown(event: KeyboardEvent) {
-    if (event.key === 'Escape') setArmed(false)
+    if (event.key === 'Escape') disarm()
   }
 
   return (
@@ -76,7 +92,7 @@ export function ConfirmButton({
       >
         {confirmLabel}
       </button>
-      <button type="button" className="confirm-button__cancel" onClick={() => setArmed(false)}>
+      <button type="button" className="confirm-button__cancel" onClick={disarm}>
         {cancelLabel}
       </button>
     </span>

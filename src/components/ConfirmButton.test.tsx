@@ -37,7 +37,7 @@ describe('ConfirmButton', () => {
     await user.click(screen.getByRole('button', { name: 'Keep' }))
 
     expect(onConfirm).not.toHaveBeenCalled()
-    expect(screen.getByRole('button', { name: 'Delete entry' })).toBeInTheDocument()
+    expect(screen.getByRole('button', { name: 'Delete entry' })).toHaveFocus()
   })
 
   it('backs out on Escape', async () => {
@@ -47,7 +47,8 @@ describe('ConfirmButton', () => {
     await user.keyboard('{Escape}')
 
     expect(onConfirm).not.toHaveBeenCalled()
-    expect(screen.getByRole('button', { name: 'Delete entry' })).toBeInTheDocument()
+    // Keyboard and screen-reader users land back where they started.
+    expect(screen.getByRole('button', { name: 'Delete entry' })).toHaveFocus()
   })
 
   it('ignores other keys while armed', async () => {

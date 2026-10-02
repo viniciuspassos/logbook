@@ -204,6 +204,9 @@ describe('useLogbookApp', () => {
   })
 
   it('saveEntry never reuses the id of a deleted newest entry', async () => {
+    // Two saves a human makes are never in the same millisecond; pin the
+    // clock so the test is deterministic about that.
+    const clock = jest.spyOn(Date, 'now').mockReturnValueOnce(1_000_000).mockReturnValueOnce(1_000_500)
     const { result } = renderHook(() => useLogbookApp())
 
     async function captureAndSave() {
@@ -219,8 +222,9 @@ describe('useLogbookApp', () => {
     act(() => result.current.deleteEntry(firstId))
     const secondId = await captureAndSave()
 
-    expect(secondId).not.toBe(firstId)
-    expect(secondId).toBeGreaterThan(Math.max(...seedEntries.map((entry) => entry.id)))
+    expect(firstId).toBe(1_000_000)
+    expect(secondId).toBe(1_000_500)
+    clock.mockRestore()
   })
 
   it('deleteEntry closes the detail overlay, drops the entry and queues its deletion for sync', async () => {

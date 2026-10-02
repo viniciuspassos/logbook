@@ -67,8 +67,8 @@ export function useLogbookApp() {
   }
 
   function saveEntry() {
-    const now = new Date()
-    const entry = buildEntryFromDraft(flow.draft, { id: nextEntryId(entries, now.getTime()), date: now })
+    const now = Date.now()
+    const entry = buildEntryFromDraft(flow.draft, { id: nextEntryId(entries, now), date: new Date(now) })
     addEntry(entry)
     syncOutbox.queueEntryCreate(entry)
     flow.reset()

@@ -145,30 +145,19 @@ describe('queueEntryDeletion', () => {
   const upload = (queueId: number, localEntryId: number) =>
     makeRecord({ queueId, operation: { kind: 'upload-attachment', localEntryId, file: new Blob(), filename: 'x.jpg' } })
 
-  it('drops every still-queued op for the entry and skips the DELETE when it never synced', async () => {
+  it('drops every still-queued op for the entry and queues the DELETE even before it synced', async () => {
+    // A drain may be creating the entry right now from an older snapshot; the
+    // queued DELETE then runs after that create (and no-ops if it never did).
     getAllRecordsMock.mockResolvedValue([
       makeRecord({ queueId: 1, operation: { kind: 'create-entry', localEntryId: 3, payload: entryToCreatePayload(makeEntry({ id: 3 })) } }),
       upload(2, 3),
       upload(3, 4),
-    ])
-    getSyncStateMock.mockResolvedValue(undefined)
-
-    await queueEntryDeletion(3)
-
-    expect(removeRecordMock.mock.calls).toEqual([[1], [2]])
-    expect(enqueueMock).not.toHaveBeenCalled()
-  })
-
-  it('queues a delete-entry op when the entry already has a serverId', async () => {
-    getAllRecordsMock.mockResolvedValue([
-      upload(2, 3),
       makeRecord({ queueId: 4, operation: { kind: 'delete-attachment', localEntryId: 3, serverAttachmentId: 9 } }),
     ])
-    getSyncStateMock.mockResolvedValue({ localEntryId: 3, serverId: 42, serverVersion: 1 })
 
     await queueEntryDeletion(3)
 
-    expect(removeRecordMock.mock.calls).toEqual([[2], [4]])
+    expect(removeRecordMock.mock.calls).toEqual([[1], [2], [4]])
     expect(enqueueMock).toHaveBeenCalledWith({ kind: 'delete-entry', localEntryId: 3 })
   })
 
@@ -324,6 +313,20 @@ describe('getEntryAttachmentSources', () => {
     getAllRecordsMock.mockRejectedValue(new Error('broken'))
     const result = await getEntryAttachmentSources(makeEntry({ id: 3 }))
     expect(result.pending).toEqual([])
+  })
+
+  it('keeps showing a photo whose delete the server refused (parked op)', async () => {
+    getSyncStateMock.mockResolvedValue({ localEntryId: 3, serverId: 42, serverVersion: 1 })
+    listAttachmentsMock.mockResolvedValue([attachment])
+    getAllRecordsMock.mockResolvedValue([
+      makeRecord({
+        queueId: 8,
+        rejected: true,
+        operation: { kind: 'delete-attachment', localEntryId: 3, serverAttachmentId: 1 },
+      }),
+    ])
+    const result = await getEntryAttachmentSources(makeEntry({ id: 3 }))
+    expect(result.serverAttachments.map((a) => a.id)).toEqual([1])
   })
 
   it('hides server attachments that already have a queued delete', async () => {

@@ -89,9 +89,11 @@ export async function queueEntryDelete(localEntryId: number): Promise<void> {
  * Everything the outbox needs when the user deletes an entry: every op still
  * queued for it (its create, edits, photo uploads, photo deletes) is dropped
  * — there's no point uploading a photo for an entry that's about to go — and
- * a DELETE is queued only if the server actually has the entry. A
- * never-synced entry therefore leaves no trace in the queue at all. Never
- * throws, same as queueEntryCreate: the local delete already happened.
+ * a DELETE is queued. The DELETE is queued even if the entry hasn't synced
+ * yet: a drain already in flight may be creating it from an older snapshot,
+ * and the DELETE then runs after that create; if the entry never reaches the
+ * server, processDelete just no-ops. Never throws, same as queueEntryCreate:
+ * the local delete already happened.
  */
 export async function queueEntryDeletion(localEntryId: number): Promise<void> {
   if (!isPersistenceSupported()) return
@@ -100,8 +102,7 @@ export async function queueEntryDeletion(localEntryId: number): Promise<void> {
     for (const record of records) {
       if (record.operation.localEntryId === localEntryId) await removeRecord(record.queueId)
     }
-    const syncState = await getSyncState(localEntryId)
-    if (syncState?.serverId) await queueEntryDelete(localEntryId)
+    await queueEntryDelete(localEntryId)
   } catch {
     // Best-effort, same as queueEntryCreate.
   }
@@ -199,11 +200,13 @@ export async function listPendingAttachments(localEntryId: number): Promise<Outb
   return pendingUploadsFor(await readQueue(), localEntryId)
 }
 
-/** Server attachment ids with a delete-attachment op still queued. */
+/** Server attachment ids with a delete-attachment op still pending. A delete
+ *  the server refused (parked as rejected, #91) doesn't count: the photo is
+ *  still there, so the gallery must keep showing it. */
 function queuedAttachmentDeletes(records: OutboxRecord[]): Set<number> {
   const ids = new Set<number>()
-  for (const { operation } of records) {
-    if (operation.kind === 'delete-attachment') ids.add(operation.serverAttachmentId)
+  for (const { operation, rejected } of records) {
+    if (operation.kind === 'delete-attachment' && !rejected) ids.add(operation.serverAttachmentId)
   }
   return ids
 }
