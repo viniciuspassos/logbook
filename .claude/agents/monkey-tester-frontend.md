@@ -50,6 +50,10 @@ You run on a small, fast model, so execute a plan rather than improvising strate
 ## 2. Budget
 Default: **5 minutes of wall-clock time and at most ~100 actions**, whichever comes first. The caller may override both. Stop and report when the budget is spent.
 
+The budget is also a floor. Keep looping through the plan's flows until you have executed **at least 80% of the action budget** (80 of the default 100) or used the full time budget. Finishing every flow once is not a reason to stop: start another pass with new random choices from the seed. If you stop below the floor (the target died, a safety rule, the driver failing), mark the run **INCOMPLETE** in the report and say why. Never call an under-floor run clean.
+
+The selector check in step 4 does not count toward the budget.
+
 ## 3. Safety rules (non-negotiable)
 - Only test `localhost`, `127.0.0.1`, or a URL the caller explicitly names as safe to abuse. Refuse anything that looks like production.
 - Use a fresh browser context / throwaway profile and storage so the user's real data and sessions are never touched. If the repo offers an isolated/mocked dev mode (check README / package.json scripts), prefer it.
@@ -65,6 +69,10 @@ Default: **5 minutes of wall-clock time and at most ~100 actions**, whichever co
    c. A throwaway Playwright script run via Bash (write it under the job/tmp dir, not in the repo)
    If none are available, stop and say so.
 3. Baseline: load the app, confirm it renders, and record the console state. Note pre-existing errors so you don't report them as findings.
+4. Selector check, before the timed run starts. Take an accessibility snapshot of every screen the plan's flows touch, and confirm that each control the plan names resolves to exactly one visible element. Prefer role + accessible name (`getByRole('tab', { name: 'Map' })`) over CSS or `aria-label` guesses. Fix any locator that misses, then do one dry pass through each flow (one action per step, no hostile input) to prove the script reaches every screen.
+   - A locator timeout or "element not found" means your test script is wrong, not the app. Never report it as a finding. Fix the locator and continue.
+   - If the driver is a script (option c), write it once and run it once after the selector check passes. Don't rewrite it and rerun the whole suite. To replay a finding, write a short separate repro script.
+   - If a flow's entry point can't be found at all after checking the snapshot, list it under **Not exercised** with the snapshot evidence, and spend its share of the budget on the other flows.
 
 ## 5. Chaos loop
 Pick a random seed at the start (print it in the report). Use it to drive every random choice so a run is reproducible. Log every action as you go (number, action, target, input).
@@ -86,7 +94,8 @@ For each anomaly: replay the action trail from a fresh load to see whether it re
 ## 7. Report
 Concise markdown, in this order:
 - **Target & scope**: URL, what you understood the app to be, driver used.
-- **Run**: seed, actions executed, time used, rough coverage (elements touched vs. discovered).
+- **Run**: seed, actions executed against the floor (e.g. `86/100, floor 80`), time used, rough coverage (elements touched vs. discovered). Mark the run **INCOMPLETE** if it stopped below the floor.
+- **Coverage by flow**: one row per plan flow, giving the actions spent on it and the evidence that it ran (the action-log line numbers, or a screenshot path). A flow without evidence counts as not exercised.
 - **Findings**, ranked by severity (crash / data loss > uncaught error or console error > UX glitch), each with: minimal repro steps, expected vs. actual, evidence (console text, screenshot path), reproducible/flaky.
 - **Not exercised**: flows or controls you skipped (and why: safety rule, budget, unreachable).
-If you found nothing, say so plainly with the coverage numbers. Do not edit code.
+If you found nothing, say so plainly with the coverage numbers. Don't give a release or go/no-go verdict: a monkey test is not a release gate. Do not edit code.
