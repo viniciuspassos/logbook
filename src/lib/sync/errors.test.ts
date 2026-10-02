@@ -4,6 +4,7 @@ import {
   SyncError,
   SyncHttpError,
   SyncNetworkError,
+  isPermanentRejection,
 } from './errors.ts'
 import type { ServerEntry } from '../../types/sync.ts'
 
@@ -52,5 +53,31 @@ describe('SyncConflictError', () => {
     expect(error).toBeInstanceOf(SyncHttpError)
     expect(error.currentEntry).toBe(currentEntry)
     expect(error.status).toBe(409)
+  })
+})
+
+describe('isPermanentRejection', () => {
+  it.each([400, 404, 413, 415, 422])('treats a %i response as a permanent rejection', (status) => {
+    expect(isPermanentRejection(new SyncHttpError(status, null, 'rejected'))).toBe(true)
+  })
+
+  it.each([408, 429, 500, 503])('treats a %i response as retryable', (status) => {
+    expect(isPermanentRejection(new SyncHttpError(status, null, 'try later'))).toBe(false)
+  })
+
+  it('leaves auth failures retryable so signing in can unblock them', () => {
+    expect(isPermanentRejection(new SyncAuthError(401, null))).toBe(false)
+    expect(isPermanentRejection(new SyncAuthError(403, null))).toBe(false)
+  })
+
+  it('leaves a #24 version conflict queued rather than parking it', () => {
+    const conflict = new SyncConflictError(409, null, {} as ServerEntry, 'conflict')
+    expect(isPermanentRejection(conflict)).toBe(false)
+  })
+
+  it('treats network failures and non-HTTP errors as retryable', () => {
+    expect(isPermanentRejection(new SyncNetworkError())).toBe(false)
+    expect(isPermanentRejection(new Error('boom'))).toBe(false)
+    expect(isPermanentRejection('boom')).toBe(false)
   })
 })

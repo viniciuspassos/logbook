@@ -1,4 +1,5 @@
 import {
+  discardRejectedOperation,
   entryToCreatePayload,
   getEntryAttachmentSources,
   listPendingAttachments,
@@ -8,7 +9,7 @@ import {
   queueEntryDelete,
   queueEntryUpdate,
 } from './outboxQueue.ts'
-import { enqueueOperation, getAllRecords } from '../db/outboxStore.ts'
+import { enqueueOperation, getAllRecords, removeRecord } from '../db/outboxStore.ts'
 import { deleteSyncState, getSyncState, putSyncState } from '../db/syncStateStore.ts'
 import { isPersistenceSupported } from '../db/database.ts'
 import { listAttachmentsForEntry } from './attachmentsApi.ts'
@@ -22,6 +23,7 @@ jest.mock('../db/database.ts', () => ({
 jest.mock('../db/outboxStore.ts', () => ({
   enqueueOperation: jest.fn(),
   getAllRecords: jest.fn(),
+  removeRecord: jest.fn(),
 }))
 jest.mock('../db/syncStateStore.ts', () => ({
   getSyncState: jest.fn(),
@@ -38,6 +40,7 @@ const getSyncStateMock = getSyncState as jest.Mock
 const putSyncStateMock = putSyncState as jest.Mock
 const deleteSyncStateMock = deleteSyncState as jest.Mock
 const listAttachmentsMock = listAttachmentsForEntry as jest.Mock
+const removeRecordMock = removeRecord as jest.Mock
 const supportedMock = isPersistenceSupported as jest.Mock
 
 function makeEntry(overrides: Partial<Entry> & { id: number }): Entry {
@@ -203,6 +206,19 @@ describe('listPendingAttachments', () => {
     supportedMock.mockReturnValue(false)
     expect(await listPendingAttachments(3)).toEqual([])
     expect(getAllRecordsMock).not.toHaveBeenCalled()
+  })
+})
+
+describe('discardRejectedOperation', () => {
+  it('removes the parked op from the queue and reports success', async () => {
+    removeRecordMock.mockResolvedValue(undefined)
+    await expect(discardRejectedOperation(7)).resolves.toBe(true)
+    expect(removeRecordMock).toHaveBeenCalledWith(7)
+  })
+
+  it('reports failure instead of throwing when the queue write fails', async () => {
+    removeRecordMock.mockRejectedValue(new Error('db write failed'))
+    await expect(discardRejectedOperation(7)).resolves.toBe(false)
   })
 })
 

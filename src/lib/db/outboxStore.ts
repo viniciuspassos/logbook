@@ -70,9 +70,11 @@ export async function removeRecord(queueId: number): Promise<void> {
   }
 }
 
-/** Bumps `attempts` and stores `message` as `lastError` after a failed drain
- *  attempt. A no-op if the record was concurrently removed. */
-export async function recordAttemptFailure(queueId: number, message: string): Promise<void> {
+async function updateFailedRecord(
+  queueId: number,
+  message: string,
+  extra: Partial<OutboxRecord> = {},
+): Promise<void> {
   const db = await openLogbookDb()
   try {
     const existing = await new Promise<OutboxRecord | undefined>((resolve, reject) => {
@@ -81,9 +83,21 @@ export async function recordAttemptFailure(queueId: number, message: string): Pr
       request.onerror = () => reject(request.error)
     })
     if (!existing) return
-    const updated: OutboxRecord = { ...existing, attempts: existing.attempts + 1, lastError: message }
+    const updated: OutboxRecord = { ...existing, ...extra, attempts: existing.attempts + 1, lastError: message }
     await runWrite(db, (store) => store.put(updated))
   } finally {
     db.close()
   }
+}
+
+/** Bumps `attempts` and stores `message` as `lastError` after a failed drain
+ *  attempt. A no-op if the record was concurrently removed. */
+export function recordAttemptFailure(queueId: number, message: string): Promise<void> {
+  return updateFailedRecord(queueId, message)
+}
+
+/** Like recordAttemptFailure, but also parks the record as permanently
+ *  rejected by the server (#91) so the runner stops retrying it. */
+export function markRejected(queueId: number, message: string): Promise<void> {
+  return updateFailedRecord(queueId, message, { rejected: true })
 }

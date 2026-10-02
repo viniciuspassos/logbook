@@ -54,3 +54,19 @@ export class SyncConflictError extends SyncHttpError {
     this.currentEntry = currentEntry
   }
 }
+
+// 4xx statuses that can still succeed on a later attempt without the op
+// itself changing: a timeout (408) or rate limit (429). 401/403 are
+// SyncAuthError (signing in fixes them) and 409 is #24's conflict, which has
+// its own "stay queued until resolved" semantics.
+const RETRYABLE_CLIENT_STATUSES = new Set([401, 403, 408, 409, 429])
+
+/**
+ * Whether the server rejected an op in a way that will fail identically
+ * forever (400/413/415/422…), so the outbox must park it rather than retry it
+ * at the head of the queue (#91). Network errors and 5xx stay retryable.
+ */
+export function isPermanentRejection(error: unknown): boolean {
+  if (!(error instanceof SyncHttpError)) return false
+  return error.status >= 400 && error.status < 500 && !RETRYABLE_CLIENT_STATUSES.has(error.status)
+}

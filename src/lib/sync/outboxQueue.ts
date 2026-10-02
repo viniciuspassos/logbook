@@ -1,5 +1,5 @@
 import { isPersistenceSupported } from '../db/database.ts'
-import { enqueueOperation, getAllRecords } from '../db/outboxStore.ts'
+import { enqueueOperation, getAllRecords, removeRecord } from '../db/outboxStore.ts'
 import { getSyncState } from '../db/syncStateStore.ts'
 import { listAttachmentsForEntry } from './attachmentsApi.ts'
 import type { Entry } from '../../types/entry.ts'
@@ -138,6 +138,20 @@ export async function listPendingAttachments(localEntryId: number): Promise<Outb
     )
   } catch {
     return []
+  }
+}
+
+/**
+ * Drops an op the server permanently rejected (#91) — the user's way out of
+ * a photo that will never upload. Resolves `false` rather than throwing when
+ * the queue write fails, so the caller can say so.
+ */
+export async function discardRejectedOperation(queueId: number): Promise<boolean> {
+  try {
+    await removeRecord(queueId)
+    return true
+  } catch {
+    return false
   }
 }
 

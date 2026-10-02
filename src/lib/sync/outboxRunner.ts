@@ -1,9 +1,9 @@
 import { isPersistenceSupported } from '../db/database.ts'
-import { getAllRecords, recordAttemptFailure, removeRecord } from '../db/outboxStore.ts'
+import { getAllRecords, markRejected, recordAttemptFailure, removeRecord } from '../db/outboxStore.ts'
 import { deleteSyncState, getSyncState, putSyncState } from '../db/syncStateStore.ts'
 import { uploadAttachment } from './attachmentsApi.ts'
 import { createEntry, deleteEntry, updateEntry } from './entriesApi.ts'
-import { SyncAuthError } from './errors.ts'
+import { SyncAuthError, isPermanentRejection } from './errors.ts'
 import { isBackendReachable } from './health.ts'
 import type {
   CreateEntryOperation,
@@ -28,6 +28,14 @@ import type {
  * op behind it waits for the next drain rather than racing ahead
  * out of order.
  *
+ * The one exception is an op the server **permanently** rejected (a 4xx that
+ * will fail identically forever — see `isPermanentRejection`, e.g. a 413
+ * photo). Stopping there would pin the whole queue behind it (#91), so it is
+ * parked (`rejected: true`) and the drain moves on. Ordering still holds:
+ * ops for an entry whose create-entry is parked are parked too, since they
+ * could never resolve a server id. Parked ops are never retried
+ * automatically; the user discards them (see discardRejectedOperation).
+ *
  * Sequential by design for the same reason the AI pipeline in
  * useNewEntryFlow.ts is sequential: predictable ordering beats throughput
  * for a single-user, low-volume write queue.
@@ -41,7 +49,12 @@ export interface DrainSummary {
    * other failure and show a "sign in" message instead of the generic
    * "queued, will retry" one — see useEntryAttachments.ts and useAuth.ts.
    */
-  stoppedReason: 'unsupported' | 'unreachable' | 'empty' | 'error' | 'auth' | 'aborted'
+  /**
+   * `'rejected'` means the pass reached the end of the queue but some ops are
+   * parked as permanently rejected (or depend on a parked create), so the
+   * queue is not empty; `error` then carries the first rejection's reason.
+   */
+  stoppedReason: 'unsupported' | 'unreachable' | 'empty' | 'error' | 'auth' | 'aborted' | 'rejected'
   error?: string
 }
 
@@ -97,27 +110,85 @@ async function processRecord(record: OutboxRecord, signal?: AbortSignal): Promis
   }
 }
 
+/** What one pass over the queue has learned so far. */
+interface PassState {
+  processed: number
+  /** Entries whose create-entry op is parked (-> its reason): their
+   *  dependents can't run. */
+  blockedEntries: Map<number, string>
+  firstRejection?: string
+}
+
+const REJECTED_FALLBACK = 'Rejected by the server.'
+
+function isHeldBack(record: OutboxRecord, state: PassState): boolean {
+  return record.rejected === true || state.blockedEntries.has(record.operation.localEntryId)
+}
+
+function noteRejection(record: OutboxRecord, message: string, state: PassState): void {
+  state.firstRejection ??= message
+  if (record.operation.kind === 'create-entry') state.blockedEntries.set(record.operation.localEntryId, message)
+}
+
+/**
+ * Skips a parked op, or parks a dependent of a parked create too: it can
+ * never run either, and parking it lets the UI show why (instead of a photo
+ * stuck on "Uploading…") and offer to discard it.
+ */
+async function holdBack(record: OutboxRecord, state: PassState): Promise<void> {
+  if (record.rejected) {
+    noteRejection(record, record.lastError ?? REJECTED_FALLBACK, state)
+    return
+  }
+  const reason = `Its entry was rejected by the server: ${state.blockedEntries.get(record.operation.localEntryId)}`
+  await markRejected(record.queueId, reason).catch(() => {})
+  noteRejection(record, reason, state)
+}
+
+/** Runs one record. Resolves a summary only when the pass must stop here. */
+async function attemptRecord(
+  record: OutboxRecord,
+  state: PassState,
+  signal?: AbortSignal,
+): Promise<DrainSummary | null> {
+  try {
+    await processRecord(record, signal)
+    await removeRecord(record.queueId)
+    state.processed += 1
+    return null
+  } catch (error) {
+    const message = errorMessage(error)
+    if (isPermanentRejection(error)) {
+      await markRejected(record.queueId, message).catch(() => {})
+      noteRejection(record, message, state)
+      return null
+    }
+    await recordAttemptFailure(record.queueId, message).catch(() => {})
+    const stoppedReason = error instanceof SyncAuthError ? 'auth' : 'error'
+    return { processed: state.processed, stoppedReason, error: message }
+  }
+}
+
+async function processQueue(records: OutboxRecord[], signal?: AbortSignal): Promise<DrainSummary> {
+  const state: PassState = { processed: 0, blockedEntries: new Map() }
+  for (const record of records) {
+    if (signal?.aborted) return { processed: state.processed, stoppedReason: 'aborted' }
+    if (isHeldBack(record, state)) {
+      await holdBack(record, state)
+      continue
+    }
+    const stop = await attemptRecord(record, state, signal)
+    if (stop) return stop
+  }
+  if (state.firstRejection === undefined) return { processed: state.processed, stoppedReason: 'empty' }
+  return { processed: state.processed, stoppedReason: 'rejected', error: state.firstRejection }
+}
+
 async function runDrain(signal?: AbortSignal): Promise<DrainSummary> {
   try {
     if (!isPersistenceSupported()) return { processed: 0, stoppedReason: 'unsupported' }
     if (!(await isBackendReachable(signal))) return { processed: 0, stoppedReason: 'unreachable' }
-
-    const records = await getAllRecords()
-    let processed = 0
-    for (const record of records) {
-      if (signal?.aborted) return { processed, stoppedReason: 'aborted' }
-      try {
-        await processRecord(record, signal)
-        await removeRecord(record.queueId)
-        processed += 1
-      } catch (error) {
-        const message = errorMessage(error)
-        await recordAttemptFailure(record.queueId, message).catch(() => {})
-        const stoppedReason = error instanceof SyncAuthError ? 'auth' : 'error'
-        return { processed, stoppedReason, error: message }
-      }
-    }
-    return { processed, stoppedReason: 'empty' }
+    return await processQueue(await getAllRecords(), signal)
   } catch (error) {
     return { processed: 0, stoppedReason: 'error', error: errorMessage(error) }
   }
@@ -163,7 +234,7 @@ async function drainUntilSettled(signal?: AbortSignal): Promise<DrainSummary> {
     rerunRequested = false
     summary = await runDrain(signal)
     processed += summary.processed
-  } while (rerunRequested && summary.stoppedReason === 'empty')
+  } while (rerunRequested && (summary.stoppedReason === 'empty' || summary.stoppedReason === 'rejected'))
   return { ...summary, processed }
 }
 

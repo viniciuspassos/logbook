@@ -54,6 +54,10 @@ export interface OutboxRecord {
   createdAt: string
   attempts: number
   lastError?: string
+  /** The server permanently rejected this op (#91): the runner skips it, and
+   *  everything that depends on it, instead of retrying it forever.
+   *  `lastError` holds the server's reason. */
+  rejected?: boolean
   operation: OutboxOperation
 }
 
