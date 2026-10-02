@@ -10,7 +10,7 @@ function matchesDesktop(): boolean {
 
 /**
  * Mirrors the `min-width: 960px` breakpoint that reflows the app from a
- * single mobile card into the two-page desktop layout (src/App.css). Layout
+ * single mobile card into the three-column desktop layout (src/App.css). Layout
  * itself stays pure CSS; this only exists because keeping the nav rail
  * reachable while an overlay is open depends on real viewport width, which
  * CSS alone can't express as a mount/unmount decision. Guards `matchMedia`

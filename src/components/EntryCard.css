@@ -9,25 +9,6 @@
   box-shadow: var(--lb-card-shadow);
 }
 
-/* Desktop "ledger row" material: flush hairline-divided rows instead of
-   individually bordered/shadowed cards, so this list reads as one running
-   page — shared by TimelineScreen's list and SearchScreen's results, since
-   both just render this component. */
-@media (min-width: 960px) {
-  .entry-card {
-    gap: var(--lb-space-3);
-    padding: var(--lb-space-3) 0;
-    border: none;
-    border-bottom: 1px solid var(--lb-border);
-    border-radius: 0;
-    background: none;
-    box-shadow: none;
-  }
-  .entry-card:last-child {
-    border-bottom: none;
-  }
-}
-
 .entry-card__thumb {
   position: relative;
   width: 60px;
@@ -76,4 +57,45 @@
   color: var(--lb-ink);
   margin: 8px 0 0;
   line-height: 1.45;
+}
+
+/* Desktop rows sit straight on the sky, no card chrome. The selected row
+   (the entry the reading panel shows) turns panel-white and bleeds through
+   .app-screen's right padding so it runs flush into the panel — list and
+   panel read as one surface. Shared by TimelineScreen and SearchScreen. */
+@media (min-width: 960px) {
+  .entry-card {
+    gap: var(--lb-space-3);
+    margin-right: calc(-1 * var(--lb-space-4));
+    padding: 12px var(--lb-space-4) 12px 12px;
+    border: none;
+    border-radius: 12px 0 0 12px;
+    background: none;
+    box-shadow: none;
+  }
+
+  .entry-card:hover {
+    background: var(--lb-row-hover);
+  }
+
+  .entry-card.is-selected {
+    background: var(--lb-bg);
+  }
+
+  .entry-card__thumb {
+    width: 56px;
+    height: 56px;
+  }
+
+  .entry-card__title {
+    font-size: 15px;
+  }
+
+  .entry-card__meta {
+    font-size: 13px;
+  }
+
+  .entry-card__excerpt {
+    display: none;
+  }
 }

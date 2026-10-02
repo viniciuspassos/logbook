@@ -8,8 +8,9 @@
 
 @media (min-width: 960px) {
   .search-screen__title {
-    font-family: var(--serif);
-    font-weight: 600;
+    font-family: var(--display);
+    font-stretch: 125%;
+    font-weight: 800;
     letter-spacing: -0.3px;
   }
 }
@@ -46,8 +47,8 @@
   font-family: inherit;
 }
 .search-screen__tag.is-active {
-  background: var(--lb-accent);
-  color: #fff;
+  background: var(--lb-accent-fill);
+  color: var(--lb-on-accent);
 }
 
 .search-screen__section-label {
@@ -64,14 +65,19 @@
   gap: 12px;
 }
 
-/* Reuses the same "ledger row" material as TimelineScreen's list — both just
-   render EntryCard, so restyling that component's own desktop CSS already
-   makes these rows match; this only aligns the container's rhythm (no inter-
-   row gap, since EntryCard's hairline divider supplies it) so Search and
-   Timeline read as one continuous page, not two different systems. */
+/* Same flush rows-on-the-sky as TimelineScreen's list — both just render
+   EntryCard, whose own desktop CSS does the styling; this only matches the
+   timeline's tight row rhythm. */
 @media (min-width: 960px) {
   .search-screen__list {
-    gap: 0;
+    gap: 2px;
+  }
+
+  .search-screen__section-label {
+    font-size: 13px;
+    font-weight: 600;
+    text-transform: none;
+    letter-spacing: 0;
   }
 }
 

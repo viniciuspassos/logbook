@@ -57,9 +57,9 @@ export default defineConfig(({ mode }) => ({
         scope: '/',
         display: 'standalone',
         orientation: 'portrait',
-        // Mirrors --lb-page-bg / --lb-accent in src/index.css.
-        background_color: '#ECDFD0',
-        theme_color: '#C1552C',
+        // Mirrors --lb-page-bg / --lb-ink (the navy rail) in src/index.css.
+        background_color: '#D3E5F3',
+        theme_color: '#0F2547',
         icons: [
           { src: 'pwa-192x192.png', sizes: '192x192', type: 'image/png' },
           { src: 'pwa-512x512.png', sizes: '512x512', type: 'image/png' },

@@ -51,8 +51,8 @@
   font-size: 13px;
   font-weight: 600;
   font-family: inherit;
-  color: var(--lb-bg);
-  background: var(--lb-accent);
+  color: var(--lb-on-accent);
+  background: var(--lb-accent-fill);
   cursor: pointer;
   white-space: nowrap;
 }

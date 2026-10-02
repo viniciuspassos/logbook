@@ -15,7 +15,7 @@ interface EntryDetailOverlayEmbeddedProps {
   entry: Entry
   /** Renders without the back-chevron header and without the interactive
    *  export/attachments/raw-notes sections — used for the desktop-only
-   *  right-hand page that shows the most recently created entry when no
+   *  reading panel that shows the most recently created entry when no
    *  overlay is open (App.tsx), which isn't a modal and has nothing to close
    *  back out of. In this mode there's no raw-notes toggle, export, or
    *  attachments UI, so none of those props exist to pass. */
@@ -78,7 +78,7 @@ export function EntryDetailOverlay(props: EntryDetailOverlayProps) {
           </div>
         </div>
 
-        {/* Desktop-only "instrument panel": the scannable stat fields, split
+        {/* Desktop-only stat chips: the scannable stat fields, split
          *  out from the plain field grid below by splitDetailFields so a
          *  field never appears in both. Below 960px there's no split at all —
          *  showStatStrip is false, so every field flows into the one grid

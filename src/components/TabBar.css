@@ -105,7 +105,7 @@
   align-items: center;
   justify-content: center;
   cursor: pointer;
-  box-shadow: 0 6px 14px oklch(58% 0.15 40 / 0.45);
+  box-shadow: 0 6px 14px var(--lb-accent-glow);
 }
 
 .tab-bar__add-dot {
@@ -119,62 +119,50 @@
   display: none;
 }
 
-/* Above --lb-desktop the bottom bar becomes the book's spine: a vertical
-   leather-toned rail down the left edge, running the full height of the
-   two open pages. Same component, same click handlers — layout only. */
+/* Above --lb-desktop the bottom bar becomes the navy nav rail down the left
+   edge of the window. Same component, same click handlers — layout only. */
 @media (min-width: 960px) {
   .tab-bar {
     order: 1;
-    flex: 0 0 84px;
+    flex: 0 0 88px;
     flex-direction: column;
-    /* Buttons stretch to the rail's full width (rather than the previous
-       align-items: center) so each button's own left edge — where the active
-       accent block below is anchored — actually sits flush with the rail's
-       real left edge instead of floating in the middle of a centered column.
-       .tab-bar__add keeps its own fixed size + centering below. */
-    align-items: stretch;
+    align-items: center;
     justify-content: flex-start;
-    gap: 30px;
-    padding: var(--lb-space-6) 0 var(--lb-space-4);
+    gap: var(--lb-space-1);
+    padding: var(--lb-space-4) 0;
     border-top: none;
-    border-radius: var(--lb-radius-lg) 0 0 var(--lb-radius-lg);
     background: var(--lb-rail-bg);
   }
 
   .tab-bar__mark {
     display: block;
-    margin-bottom: var(--lb-space-2);
-    text-align: center;
+    margin-bottom: var(--lb-space-4);
     font-family: var(--display);
-    font-weight: 900;
-    font-size: 22px;
-    color: var(--lb-brass);
+    font-stretch: 125%;
+    font-weight: 800;
+    font-size: 20px;
     line-height: 1;
+    color: var(--lb-on-scrim);
   }
 
   .tab-bar__button {
-    position: relative;
-    width: auto;
-    padding: var(--lb-space-2) var(--lb-space-3);
-    z-index: 1;
+    width: 72px;
+    padding: 10px 0;
+    gap: 6px;
+    border-radius: 10px;
   }
 
-  /* The active tab's page-edge tab divider: an accent block bleeding off the
-   *  rail's left edge, behind the icon + label. `aria-current="page"` is
-   *  already set by TabButton based on `isActive`, so this is styling only —
-   *  no new prop/state needed on TabBar itself. */
-  .tab-bar__button[aria-current='page']::before {
-    content: '';
-    position: absolute;
-    inset: 2px 0;
-    left: 0;
-    width: 20px;
-    background: var(--lb-accent);
-    border-radius: 0 5px 5px 0;
-    z-index: -1;
+  .tab-bar__button:hover {
+    background: var(--lb-rail-hover);
+  }
+
+  .tab-bar__button[aria-current='page'] {
+    background: var(--lb-rail-active);
   }
 
   .tab-bar__label {
+    font-size: 12px;
+    font-weight: 600;
     color: var(--lb-rail-ink);
   }
 
@@ -203,10 +191,8 @@
   }
 
   .tab-bar__add {
-    /* Keep its own fixed circle centered — align-items: stretch above is for
-       the tab buttons' bleed-to-the-edge accent, not this fixed-size button. */
-    align-self: center;
-    margin-top: 0;
-    border-color: var(--lb-rail-bg);
+    margin: var(--lb-space-3) 0;
+    border: none;
+    box-shadow: none;
   }
 }

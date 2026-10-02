@@ -8,7 +8,7 @@ export interface EntryDateGroup {
 /**
  * Groups already-ordered entries into consecutive runs sharing the same
  * `date` label, preserving the incoming order — used to render the desktop
- * ledger's uppercase date headers (TimelineScreen) without reordering or
+ * day headers (TimelineScreen) without reordering or
  * deduping entries that happen to share a date label non-adjacently (this
  * groups by run, not by date value overall).
  */

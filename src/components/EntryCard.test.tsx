@@ -19,6 +19,16 @@ describe('EntryCard', () => {
     expect(screen.queryByText(entry.excerpt)).not.toBeInTheDocument()
   })
 
+  it('marks itself as the entry being read when selected', () => {
+    render(<EntryCard entry={entry} onOpen={() => {}} selected />)
+    expect(screen.getByRole('button', { current: true })).toHaveTextContent(entry.title)
+  })
+
+  it('is not marked as being read by default', () => {
+    render(<EntryCard entry={entry} onOpen={() => {}} />)
+    expect(screen.getByRole('button')).not.toHaveAttribute('aria-current')
+  })
+
   it('calls onOpen when clicked', async () => {
     const onOpen = jest.fn()
     const user = userEvent.setup()

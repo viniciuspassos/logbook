@@ -98,7 +98,7 @@
   border: 1px dashed var(--lb-border);
   border-radius: 12px;
   font-size: 13px;
-  color: var(--lb-accent);
+  color: var(--lb-accent-ink);
   cursor: pointer;
   text-align: center;
 }

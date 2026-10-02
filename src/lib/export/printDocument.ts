@@ -62,15 +62,16 @@ export function entryToPrintHtml(entry: Entry): string {
   return `<article class="entry">\n${blocks.join('\n')}\n</article>`
 }
 
-/** Print styling: deliberately plain, so the PDF reads like a journal page. */
+/** Print styling: deliberately plain so the PDF reads like a journal page,
+ *  in the app's "Dropzone" navy ink (src/index.css) with one orange rule. */
 const PRINT_CSS = `
   :root { color-scheme: light; }
   * { box-sizing: border-box; }
   body {
     margin: 0;
     padding: 32px;
-    font-family: Georgia, 'Times New Roman', serif;
-    color: #1a1a1a;
+    font-family: system-ui, -apple-system, 'Segoe UI', Roboto, sans-serif;
+    color: #0f2547;
     line-height: 1.6;
   }
   h1 { font-size: 22pt; margin: 0 0 4px; }
@@ -78,26 +79,26 @@ const PRINT_CSS = `
     font-size: 11pt;
     text-transform: uppercase;
     letter-spacing: 0.08em;
-    color: #666;
+    color: #50627d;
     margin: 24px 0 8px;
   }
-  .subtitle { margin: 0 0 2px; color: #444; }
-  .metric { margin: 0 0 16px; color: #666; font-variant-numeric: tabular-nums; }
+  .subtitle { margin: 0 0 2px; color: #3a4b66; }
+  .metric { margin: 0 0 16px; color: #b83a0b; font-variant-numeric: tabular-nums; }
   .story p { margin: 0 0 12px; }
   .details { display: grid; grid-template-columns: 1fr 1fr; gap: 8px 24px; margin: 0; }
   .field { break-inside: avoid; }
-  dt { font-size: 9pt; text-transform: uppercase; letter-spacing: 0.06em; color: #888; }
+  dt { font-size: 9pt; text-transform: uppercase; letter-spacing: 0.06em; color: #50627d; }
   dd { margin: 0; }
   blockquote {
     margin: 0;
     padding-left: 14px;
-    border-left: 2px solid #ddd;
-    color: #555;
+    border-left: 2px solid #cfdcea;
+    color: #50627d;
     font-style: italic;
   }
-  .doc-header { border-bottom: 1px solid #ddd; padding-bottom: 12px; margin-bottom: 24px; }
+  .doc-header { border-bottom: 2px solid #ff5b1f; padding-bottom: 12px; margin-bottom: 24px; }
   .doc-header h1 { font-size: 26pt; }
-  .doc-header .subtitle { color: #666; }
+  .doc-header .subtitle { color: #50627d; }
   /* Each entry starts its own page in a multi-entry export. */
   .entry + .entry { break-before: page; padding-top: 8px; }
   @page { margin: 18mm; }

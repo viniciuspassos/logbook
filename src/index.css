@@ -1,73 +1,57 @@
-/* Self-hosted display/mono faces for the desktop redesign (both SIL Open Font
-   License, safe to bundle offline — see src/assets/fonts/). Kept to the two
-   weights each screen actually uses so the PWA doesn't ship unused woff2s. */
+/* Archivo, self-hosted so the PWA renders it offline (SIL Open Font License —
+   see src/assets/fonts/). One variable file covers every weight and the
+   width axis: the "Dropzone" headings use its expanded cut (font-stretch
+   125%), body text stays on the system sans. Latin subset only. */
 @font-face {
-  font-family: 'Fraunces';
-  src: url('./assets/fonts/fraunces-300.woff2') format('woff2');
-  font-weight: 300;
-  font-style: normal;
-  font-display: swap;
-}
-@font-face {
-  font-family: 'Fraunces';
-  src: url('./assets/fonts/fraunces-600.woff2') format('woff2');
-  font-weight: 600;
-  font-style: normal;
-  font-display: swap;
-}
-@font-face {
-  font-family: 'Fraunces';
-  src: url('./assets/fonts/fraunces-900.woff2') format('woff2');
-  font-weight: 900;
-  font-style: normal;
-  font-display: swap;
-}
-@font-face {
-  font-family: 'IBM Plex Mono';
-  src: url('./assets/fonts/plexmono-400.woff2') format('woff2');
-  font-weight: 400;
-  font-style: normal;
-  font-display: swap;
-}
-@font-face {
-  font-family: 'IBM Plex Mono';
-  src: url('./assets/fonts/plexmono-600.woff2') format('woff2');
-  font-weight: 600;
+  font-family: 'Archivo';
+  src: url('./assets/fonts/archivo-variable.woff2') format('woff2');
+  font-weight: 100 900;
+  font-stretch: 62% 125%;
   font-style: normal;
   font-display: swap;
 }
 
+/* "Dropzone" palette: open sky as the page, cloud-white surfaces, navy ink,
+   and canopy orange as the one accent. */
 :root {
-  --lb-bg: #fff;
-  --lb-page-bg: oklch(91% 0.025 70);
-  --lb-ink: oklch(19% 0.025 50);
-  --lb-muted: oklch(45% 0.03 55);
-  --lb-border: oklch(85% 0.025 55);
-  --lb-surface-muted: oklch(95% 0.02 70);
-  --lb-accent: oklch(58% 0.15 40);
-  --lb-accent-bg: oklch(91% 0.05 45);
-  --lb-accent-ink: oklch(36% 0.12 40);
-  --lb-success: oklch(65% 0.15 145);
-  --lb-danger: oklch(55% 0.19 27);
+  --lb-bg: #ffffff;
+  --lb-page-bg: #d3e5f3;
+  --lb-ink: #0f2547;
+  --lb-muted: #50627d;
+  --lb-border: #cfdcea;
+  --lb-surface-muted: #eaf2f9;
+  --lb-accent: #ff5b1f;
+  --lb-accent-bg: #ffe4d6;
+  --lb-accent-glow: rgb(255 91 31 / 0.4);
+  /* --lb-accent is too light for text (about 3:1 on white), so it's kept for
+     icons and shapes. Orange text uses --lb-accent-ink; a button with a text
+     label sits on --lb-accent-fill with --lb-on-accent text. All three pass
+     WCAG AA for small text. */
+  --lb-accent-ink: #b83a0b;
+  --lb-accent-fill: #c4430f;
+  --lb-on-accent: #ffffff;
+  --lb-success: #2e9d62;
+  --lb-danger: #d2342b;
   /* Translucent overlay on top of a photo, and the ink drawn on it. */
-  --lb-scrim: oklch(19% 0.025 50 / 0.55);
-  --lb-on-scrim: oklch(98% 0.01 70);
-  --lb-surface-hover: oklch(19% 0.025 50 / 0.04);
-  --lb-inactive: oklch(68% 0.025 55);
-  --lb-card-shadow: 0 3px 12px oklch(19% 0.025 50 / 0.07);
+  --lb-scrim: rgb(15 37 71 / 0.55);
+  --lb-on-scrim: #f5f9fc;
+  --lb-surface-hover: rgb(15 37 71 / 0.05);
+  --lb-inactive: #8da2bc;
+  --lb-card-shadow: 0 3px 12px rgb(15 37 71 / 0.08);
+  /* Skydiving's marker colour, beside the accent used for mountain entries. */
+  --lb-sky-strong: #3e7cb8;
 
-  /* Desktop-only "open logbook" shell: a leather-toned spine rail and the
-     crease shadow between its two pages. Unused below --lb-desktop. */
-  --lb-rail-bg: oklch(28% 0.035 45);
-  --lb-rail-ink: oklch(92% 0.015 70);
-  --lb-rail-inactive: oklch(55% 0.03 50);
-  --lb-spine-shadow: oklch(19% 0.025 50 / 0.18);
-
-  /* Desktop redesign accents: verdigris for secondary/instrument-data
-     callouts, brass for hairlines/dividers. */
-  --lb-verdigris: oklch(52% 0.08 175);
-  --lb-verdigris-bg: oklch(91% 0.03 175);
-  --lb-brass: oklch(76% 0.09 85);
+  /* Desktop-only shell (unused below 960px): the navy nav rail, the list's
+     row hover on the sky, and the reading panel's sky-gradient header. */
+  --lb-rail-bg: #0f2547;
+  --lb-rail-ink: #c9d6ea;
+  --lb-rail-active: #1e3a66;
+  --lb-rail-inactive: #6f86a8;
+  --lb-rail-hover: rgb(255 255 255 / 0.06);
+  --lb-row-hover: #e3eef8;
+  --lb-hero-top: #7fb2de;
+  --lb-hero-mid: #b9d7ee;
+  --lb-hero-bottom: #ffffff;
 
   /* Minimal spacing/radius scale — new/changed CSS only; existing screens'
      literals are out of scope for this pass. */
@@ -79,12 +63,10 @@
   --lb-space-6: 40px;
   --lb-radius-sm: 8px;
   --lb-radius-md: 14px;
-  --lb-radius-lg: 24px;
+  --lb-radius-lg: 18px;
 
   --sans: system-ui, -apple-system, 'Segoe UI', Roboto, sans-serif;
-  --serif: ui-serif, Georgia, 'Iowan Old Style', 'Times New Roman', serif;
-  --display: 'Fraunces', var(--serif);
-  --mono: 'IBM Plex Mono', ui-monospace, 'SF Mono', 'Cascadia Code', monospace;
+  --display: 'Archivo', var(--sans);
 
   font: 15px/1.45 var(--sans);
   color-scheme: light dark;
@@ -96,31 +78,38 @@
   -moz-osx-font-smoothing: grayscale;
 }
 
+/* Night sky: same roles, the orange stays the single accent. */
 @media (prefers-color-scheme: dark) {
   :root {
-    --lb-bg: oklch(21% 0.015 50);
-    --lb-page-bg: oklch(14% 0.015 50);
-    --lb-ink: oklch(94% 0.01 60);
-    --lb-muted: oklch(68% 0.02 55);
-    --lb-border: oklch(32% 0.02 55);
-    --lb-surface-muted: oklch(27% 0.015 55);
-    --lb-accent: oklch(68% 0.15 40);
-    --lb-accent-bg: oklch(30% 0.06 40);
-    --lb-accent-ink: oklch(85% 0.06 45);
-    --lb-success: oklch(72% 0.15 145);
-    --lb-danger: oklch(70% 0.17 27);
-    --lb-scrim: oklch(10% 0.01 50 / 0.7);
-    --lb-on-scrim: oklch(96% 0.01 60);
-    --lb-surface-hover: oklch(94% 0.01 60 / 0.06);
-    --lb-inactive: oklch(45% 0.02 55);
+    --lb-bg: #16264a;
+    --lb-page-bg: #0e1b33;
+    --lb-ink: #e6eef8;
+    --lb-muted: #9db0cb;
+    --lb-border: #2a3d63;
+    --lb-surface-muted: #1d3058;
+    --lb-accent: #ff6a2e;
+    --lb-accent-bg: #4a2614;
+    --lb-accent-glow: rgb(255 106 46 / 0.35);
+    --lb-accent-ink: #ffb08a;
+    --lb-accent-fill: #ff6a2e;
+    --lb-on-accent: #0e1b33;
+    --lb-success: #4cc38a;
+    --lb-danger: #ff6b5e;
+    --lb-scrim: rgb(5 12 25 / 0.7);
+    --lb-on-scrim: #f0f5fb;
+    --lb-surface-hover: rgb(230 238 248 / 0.06);
+    --lb-inactive: #5d7396;
     --lb-card-shadow: 0 3px 12px rgba(0, 0, 0, 0.35);
-    --lb-rail-bg: oklch(11% 0.02 50);
-    --lb-rail-ink: oklch(88% 0.015 70);
-    --lb-rail-inactive: oklch(40% 0.02 55);
-    --lb-spine-shadow: rgba(0, 0, 0, 0.5);
-    --lb-verdigris: oklch(70% 0.09 175);
-    --lb-verdigris-bg: oklch(28% 0.04 175);
-    --lb-brass: oklch(58% 0.08 85);
+    --lb-sky-strong: #5b9bd5;
+    --lb-rail-bg: #091327;
+    --lb-rail-ink: #c9d6ea;
+    --lb-rail-active: #1e3358;
+    --lb-rail-inactive: #5d7396;
+    --lb-rail-hover: rgb(255 255 255 / 0.05);
+    --lb-row-hover: #15284a;
+    --lb-hero-top: #1f4677;
+    --lb-hero-mid: #1a325c;
+    --lb-hero-bottom: #16264a;
   }
 }
 

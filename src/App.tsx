@@ -45,13 +45,18 @@ function App() {
   const isDesktop = useIsDesktop()
   // Below the desktop breakpoint an overlay is a full-screen cover, so the
   // rail underneath must unmount (both visually and from focus/AT). At
-  // desktop width the overlay is just the right-hand page next to the list,
-  // so the spine rail — and the ability to switch tabs or close out to a new
+  // desktop width the overlay is just the reading panel next to the list,
+  // so the nav rail — and the ability to switch tabs or close out to a new
   // entry — stays put instead of disappearing while reading.
   const showTabBar = isDesktop || !overlay
-  // Desktop-only: the right-hand page defaults to showing the latest entry
+  // Desktop-only: the reading panel defaults to showing the latest entry
   // read-only instead of a static hint, whenever no overlay has it covered.
   const latestEntry = isDesktop ? mostRecentEntry(entries) : undefined
+  // Whichever entry the reading panel shows gets its list row marked, so the
+  // list and the panel read as one connected surface. The new-entry form
+  // shows no entry, so no row is marked while it's open.
+  const shownEntry = overlay === 'entry' ? selectedEntry : overlay ? null : latestEntry
+  const readingId = shownEntry?.id
 
   return (
     <div className="app">
@@ -60,6 +65,7 @@ function App() {
           <TimelineScreen
             syncStatus={syncStatus}
             entries={entries}
+            selectedId={readingId}
             timelineView={timelineView}
             onChangeView={setTimelineView}
             onOpenEntry={openEntry}
@@ -78,9 +84,8 @@ function App() {
         <EntryDetailOverlay entry={latestEntry} embedded />
       )}
       {!overlay && !latestEntry && (
-        <div className="book-right-page">
-          <div className="book-right-page__rings" aria-hidden="true" />
-          <p className="book-right-page__hint">Open an entry to read it here</p>
+        <div className="reading-empty">
+          <p className="reading-empty__hint">Open an entry to read it here</p>
         </div>
       )}
 
