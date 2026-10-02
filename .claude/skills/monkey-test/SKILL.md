@@ -27,7 +27,7 @@ Launch the matching agent (`monkey-tester-frontend` or `monkey-tester-backend`) 
 - any user scope/budget overrides from `$ARGUMENTS`;
 - the reminder that it only reports findings and never edits code;
 - the coverage floor: it must keep going until it has used at least 80% of the action budget or the full time budget, and must mark the run INCOMPLETE if it stops short;
-- frontend only: run the selector check from its preflight before the timed run starts. Locator misses are script bugs, not findings.
+- the preflight check before the timed run: for frontend, the selector check, where locator misses are script bugs, not findings; for backend, the auth check, where harness auth or CSRF failures are script bugs, not findings.
 
 ## Step 3 — Report
 Relay the agent's report to the user in your own words, preserving the severity ranking, seed, and repro steps. Note which plan was used (one line) and flag anything the agent said it skipped. If the agent stopped early (safety rule, tool failures, unreachable target), say so plainly and what the user must do to unblock it.
