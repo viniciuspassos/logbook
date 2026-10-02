@@ -50,7 +50,11 @@ services:
       NODE_ENV: development
       DATABASE_URL: postgres://logbook:logbook@db:5432/logbook
       UPLOAD_DIR: /app/uploads
-      MAX_UPLOAD_SIZE_BYTES: "10485760"
+      # MAX_UPLOAD_SIZE_BYTES is deliberately unset: the backend's 25MB default
+      # (server/src/config/configuration.ts) matches the client pre-check in
+      # src/lib/sync/attachmentValidation.ts. Overriding it lower here makes the
+      # client queue photos the server will always reject with 413 (#92).
+
       # Dev-only default credential, committed here the same way the
       # Postgres user/password above are — this is local/opt-in infra only,
       # not a hosted deployment (see the file header). Hashes the password

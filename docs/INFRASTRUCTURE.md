@@ -58,7 +58,10 @@ Services:
   Compose network name. `UPLOAD_DIR` (`/app/uploads` inside the container) is backed by the named
   volume `logbook-uploads`, so uploaded files survive `docker compose down`/`up` and container
   recreation — `server/.env.example` flags the bare local-disk default as non-durable without
-  this. Has an HTTP healthcheck against `GET /health`.
+  this. `MAX_UPLOAD_SIZE_BYTES` is intentionally left unset so the backend's 25MB default applies,
+  matching the client's pre-check (`MAX_ATTACHMENT_BYTES` in `src/lib/sync/attachmentValidation.ts`);
+  a lower compose override makes the client queue photos the server always rejects with 413.
+  Has an HTTP healthcheck against `GET /health`.
 - Schema is created and evolved entirely by TypeORM migrations (see "Database migrations
   (`server/src/database/`)" below) — `synchronize` is `false` in every environment, including this
   Compose setup's `NODE_ENV=development`. `migrationsRun: true` (`server/src/database/typeorm.config.ts`)
