@@ -63,6 +63,15 @@ agent's prompt states policy ("run the quality gate") rather than reimplementing
   (start command, priority flows or endpoints, a hostile-input corpus fitted to the real fields and
   DTOs), then the matching `monkey-tester-*` agent runs that plan on Haiku. Planning needs judgment,
   so it gets the bigger model. Execution is a long loop of cheap actions, so it gets the cheaper one.
+  Two rules stop the cheaper model from reporting a clean result it hasn't earned. These came from
+  the first nightly run (2026-10-02). Its frontend half spent the budget fixing its own wrong
+  selectors, then reported "0 findings" after about 28 actions in under 30 seconds:
+  - **Coverage floor.** A run must use at least 80% of its action budget or its full time budget.
+    Otherwise it is reported as INCOMPLETE, and the skill rechecks this before relaying "clean".
+  - **Selector check (frontend only).** Before the timed run starts, the tester resolves every
+    control the plan names against a live accessibility snapshot and does one dry pass per flow.
+    The plan supplies each control's role and accessible name from the JSX. A locator miss is a
+    script bug, never a finding.
 
 All four implementing agents (`product-engineer` excluded) call these in the same order: **write
 code test-first → `code-reviewer` → `ship-pr`** (which itself calls `validate-before-commit` and
