@@ -9,8 +9,8 @@ import { Attachment } from './attachment.entity'
  * EntriesRepository.
  *
  * Every read/delete resolves ownership through the *parent entry's* owner
- * (an inner join on `entries.userId`), not the attachment's own nullable
- * `userId`: the entry is the unit of ownership, so a legacy attachment whose
+ * (an inner join on `entries.userId`, tombstoned entries excluded), not the
+ * attachment's own nullable `userId`: the entry is the unit of ownership, so a legacy attachment whose
  * own `userId` was never set stays reachable by whoever owns its entry, and
  * can never be reached by anyone else. (The join is a query-builder join on
  * the plain `entryId` column, not a TypeORM relation — see the note on
@@ -38,19 +38,41 @@ export class AttachmentsRepository {
     return this.orm.save(draft)
   }
 
+  /**
+   * One scoped DELETE: the attachment goes only if its parent entry is owned
+   * by `userId` and not tombstoned, checked inside the same statement (no
+   * separate lookup to race against, and one fewer query). The column is
+   * quoted explicitly because a DELETE has no entity alias for TypeORM to
+   * resolve `entryId` through.
+   */
   async remove(id: number, userId: number): Promise<boolean> {
-    const owned = await this.findById(id, userId)
-    if (!owned) {
-      return false
-    }
-    const result = await this.orm.delete(id)
+    const ownedEntries = this.orm
+      .createQueryBuilder()
+      .subQuery()
+      .select('owned.id')
+      .from(Entry, 'owned')
+      .where('owned.userId = :userId')
+      .andWhere('owned.deletedAt IS NULL')
+      .getQuery()
+    const result = await this.orm
+      .createQueryBuilder()
+      .delete()
+      .from(Attachment)
+      .where('id = :id', { id })
+      .andWhere(`"entryId" IN ${ownedEntries}`)
+      .setParameter('userId', userId)
+      .execute()
     return (result.affected ?? 0) > 0
   }
 
   private ownedBy(userId: number): SelectQueryBuilder<Attachment> {
+    // `entry.deletedAt IS NULL` is explicit (not left to TypeORM's implicit
+    // soft-delete handling of joins): an attachment of a tombstoned entry is
+    // as gone as the entry, matching what upload already answers (404).
     return this.orm
       .createQueryBuilder('attachment')
       .innerJoin(Entry, 'entry', 'entry.id = attachment.entryId')
       .where('entry.userId = :userId', { userId })
+      .andWhere('entry.deletedAt IS NULL')
   }
 }

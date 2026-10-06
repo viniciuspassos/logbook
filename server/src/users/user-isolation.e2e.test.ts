@@ -234,6 +234,47 @@ describe('Per-user isolation (e2e)', () => {
     ).expect(404)
   })
 
+  it('an attachment of a tombstoned entry is gone for its owner too: 404 on metadata, file and delete, like upload', async () => {
+    const entryRes = await withAuth(request(app.getHttpServer()).post('/entries'), userA, {
+      mutating: true,
+    })
+      .send({ ...entryPayload, title: 'To be deleted' })
+      .expect(201)
+    const goneEntryId = entryRes.body.id as number
+    const uploadRes = await withAuth(
+      request(app.getHttpServer()).post(`/entries/${goneEntryId}/attachments`),
+      userA,
+      { mutating: true },
+    )
+      .attach('file', JPEG_BYTES, 'gone.jpg')
+      .expect(201)
+    const goneAttachmentId = uploadRes.body.id as number
+    // Tombstone the entry while leaving the attachment row in place (the
+    // state a race or a legacy row can leave behind).
+    await dataSource.getRepository(Entry).update({ id: goneEntryId }, { deletedAt: new Date() })
+
+    await withAuth(
+      request(app.getHttpServer()).get(`/attachments/${goneAttachmentId}`),
+      userA,
+    ).expect(404)
+    await withAuth(
+      request(app.getHttpServer()).get(`/attachments/${goneAttachmentId}/file`),
+      userA,
+    ).expect(404)
+    await withAuth(
+      request(app.getHttpServer()).delete(`/attachments/${goneAttachmentId}`),
+      userA,
+      { mutating: true },
+    ).expect(404)
+    await withAuth(
+      request(app.getHttpServer()).post(`/entries/${goneEntryId}/attachments`),
+      userA,
+      { mutating: true },
+    )
+      .attach('file', JPEG_BYTES, 'again.jpg')
+      .expect(404)
+  })
+
   it("user A still sees exactly their own data, and B's entries never leak to A", async () => {
     const bEntry = await withAuth(request(app.getHttpServer()).post('/entries'), userB, {
       mutating: true,

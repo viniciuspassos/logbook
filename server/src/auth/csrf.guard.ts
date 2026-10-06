@@ -1,6 +1,7 @@
 import { ForbiddenException, Injectable, type CanActivate, type ExecutionContext } from '@nestjs/common'
 import { Reflector } from '@nestjs/core'
 import { getCsrfHeaderToken } from './cookies'
+import { IS_SESSION_OPTIONAL_KEY } from './optional-session.decorator'
 import { IS_PUBLIC_KEY } from './public.decorator'
 import type { RequestWithSession } from './request-with-session'
 import { timingSafeEqualStrings } from './token.util'
@@ -46,6 +47,12 @@ export class CsrfGuard implements CanActivate {
 
     const session = request.session
     if (!session) {
+      // @OptionalSession() routes (logout) run with no session when the
+      // cookie is absent/stale: nothing to protect, so no token to check.
+      // Anywhere else a missing session here fails closed.
+      if (this.isSessionOptional(context)) {
+        return true
+      }
       throw new ForbiddenException('CSRF validation failed')
     }
 
@@ -55,5 +62,14 @@ export class CsrfGuard implements CanActivate {
     }
 
     return true
+  }
+
+  private isSessionOptional(context: ExecutionContext): boolean {
+    return (
+      this.reflector.getAllAndOverride<boolean>(IS_SESSION_OPTIONAL_KEY, [
+        context.getHandler(),
+        context.getClass(),
+      ]) === true
+    )
   }
 }

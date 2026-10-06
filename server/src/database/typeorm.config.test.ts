@@ -11,6 +11,7 @@ function fakeConfig(overrides: Partial<AppConfig> = {}): AppConfig {
     maxUploadSizeBytes: 1024,
     googleClientId: 'client-id.apps.googleusercontent.com',
     allowedEmails: ['me@example.com'],
+    legacyOwnerEmail: 'me@example.com',
     sessionTtlDays: 30,
     cookieSecure: false,
     ...overrides,

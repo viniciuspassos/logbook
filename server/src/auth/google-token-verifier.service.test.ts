@@ -1,7 +1,9 @@
 import { Logger, ServiceUnavailableException, UnauthorizedException } from '@nestjs/common'
 import type { ConfigService } from '@nestjs/config'
 import { OAuth2Client, type LoginTicket, type TokenPayload } from 'google-auth-library'
-import { GoogleTokenVerifier } from './google-token-verifier.service'
+import * as fs from 'node:fs'
+import * as path from 'node:path'
+import { CERT_FETCH_FAILURE_PREFIX, GoogleTokenVerifier } from './google-token-verifier.service'
 
 jest.mock('google-auth-library')
 
@@ -80,15 +82,38 @@ describe('GoogleTokenVerifier', () => {
   })
 
   it.each([
-    ['a network error code', Object.assign(new Error('getaddrinfo ENOTFOUND'), { code: 'ENOTFOUND' })],
-    ['a timeout', Object.assign(new Error('timed out'), { code: 'ETIMEDOUT' })],
+    'ECONNREFUSED',
+    'ECONNRESET',
+    'ENOTFOUND',
+    'ETIMEDOUT',
+    'EAI_AGAIN',
+    'EPIPE',
+    'ECONNABORTED',
+    'ENETUNREACH',
+    'EHOSTUNREACH',
+  ])('answers 503 and logs (not a 401) for the network error code %s', async (code) => {
+    const { verifier, verifyIdToken } = setup()
+    const warnSpy = jest.spyOn(Logger.prototype, 'warn').mockImplementation(() => undefined)
+    verifyIdToken.mockRejectedValue(Object.assign(new Error('network'), { code }))
+
+    await expect(verifier.verify('valid-token')).rejects.toBeInstanceOf(
+      ServiceUnavailableException,
+    )
+    expect(warnSpy).toHaveBeenCalled()
+    warnSpy.mockRestore()
+  })
+
+  it.each([
+    ['an upstream 5xx on the error', Object.assign(new Error('bad gateway'), { status: 502 })],
+    [
+      'an upstream 5xx on the response',
+      Object.assign(new Error('x'), { response: { status: 500 } }),
+    ],
     [
       "the library's cert-fetch failure",
-      new Error('Failed to retrieve verification certificates: Request failed with status code 503'),
+      new Error(`${CERT_FETCH_FAILURE_PREFIX}: Request failed with status code 503`),
     ],
-    ['an upstream 5xx', Object.assign(new Error('bad gateway'), { status: 502 })],
-    ['an upstream 5xx on the response', Object.assign(new Error('x'), { response: { status: 500 } })],
-  ])('answers 503 and logs (not a generic 401) when verification fails with %s', async (_label, error) => {
+  ])('answers 503 and logs for %s', async (_label, error) => {
     const { verifier, verifyIdToken } = setup()
     const warnSpy = jest.spyOn(Logger.prototype, 'warn').mockImplementation(() => undefined)
     verifyIdToken.mockRejectedValue(error)
@@ -96,8 +121,29 @@ describe('GoogleTokenVerifier', () => {
     await expect(verifier.verify('valid-token')).rejects.toBeInstanceOf(
       ServiceUnavailableException,
     )
-    expect(warnSpy).toHaveBeenCalled()
     warnSpy.mockRestore()
+  })
+
+  it.each([
+    ['an unlisted E* code', Object.assign(new Error('permission'), { code: 'EACCES' })],
+    ['an ERR_* code', Object.assign(new Error('tls'), { code: 'ERR_SSL_WRONG_VERSION_NUMBER' })],
+    ['a 4xx status', Object.assign(new Error('forbidden'), { status: 403 })],
+    ['a 4xx on the response', Object.assign(new Error('x'), { response: { status: 404 } })],
+    ['a plain invalid-token error', new Error('Wrong recipient, payload audience != requiredAudience')],
+  ])('keeps answering 401 for %s (an invalid token, not an outage)', async (_label, error) => {
+    const { verifier, verifyIdToken } = setup()
+    verifyIdToken.mockRejectedValue(error)
+
+    await expect(verifier.verify('t')).rejects.toBeInstanceOf(UnauthorizedException)
+  })
+
+  it('pins the cert-fetch failure prefix to the installed google-auth-library version', () => {
+    // If a library upgrade changes this message, this fails loudly instead of
+    // silently turning cert-fetch outages back into 401s.
+    const libraryDir = path.dirname(require.resolve('google-auth-library'))
+    const source = fs.readFileSync(path.join(libraryDir, 'auth', 'oauth2client.js'), 'utf8')
+
+    expect(source).toContain(`${CERT_FETCH_FAILURE_PREFIX}:`)
   })
 
   it('still answers 401 for a non-Error rejection from the library', async () => {

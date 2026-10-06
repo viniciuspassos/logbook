@@ -197,7 +197,7 @@ describe('Auth (e2e)', () => {
     await withAuth(request(app.getHttpServer()).get('/auth/me'), auth).expect(401)
   })
 
-  it('the first user to sign in inherits every ownerless entry and attachment; a later user takes nothing', async () => {
+  it('only the configured legacy owner inherits ownerless entries and attachments, even when another allowlisted user signs in first', async () => {
     const entries = dataSource.getRepository(Entry)
     const attachments = dataSource.getRepository(Attachment)
     const legacyEntry = await entries.save(entries.create(ownerlessEntry('legacy')))
@@ -216,9 +216,15 @@ describe('Auth (e2e)', () => {
     await dataSource.getRepository(Session).clear()
     await dataSource.getRepository(User).clear()
 
+    // B (not the legacy owner, see TEST_AUTH_ENV) signs in first and gets nothing.
+    await loginForTests(app, TEST_USER_B_EMAIL)
+    await expect(entries.findOneByOrFail({ id: legacyEntry.id })).resolves.toMatchObject({
+      userId: null,
+    })
+
+    // The owner signs in and inherits both rows.
     await loginForTests(app, TEST_USER_A_EMAIL)
     const userA = await dataSource.getRepository(User).findOneByOrFail({ email: TEST_USER_A_EMAIL })
-
     await expect(entries.findOneByOrFail({ id: legacyEntry.id })).resolves.toMatchObject({
       userId: userA.id,
     })
@@ -226,15 +232,52 @@ describe('Auth (e2e)', () => {
       userId: userA.id,
     })
 
+    // Signing in again later claims nothing more.
     const lateOrphan = await entries.save(entries.create(ownerlessEntry('late orphan')))
-    await loginForTests(app, TEST_USER_B_EMAIL)
-
+    await loginForTests(app, TEST_USER_A_EMAIL)
     await expect(entries.findOneByOrFail({ id: lateOrphan.id })).resolves.toMatchObject({
       userId: null,
     })
-    await expect(entries.findOneByOrFail({ id: legacyEntry.id })).resolves.toMatchObject({
-      userId: userA.id,
-    })
+  })
+
+  it('logout with a valid session but no CSRF header is rejected with 403 and the session survives', async () => {
+    const auth = await loginForTests(app, TEST_USER_A_EMAIL)
+
+    await withAuth(request(app.getHttpServer()).post('/auth/logout'), auth).expect(403)
+
+    await withAuth(request(app.getHttpServer()).get('/auth/me'), auth).expect(200)
+  })
+
+  it('logout with a valid session but a wrong CSRF header is rejected with 403 and the session survives', async () => {
+    const auth = await loginForTests(app, TEST_USER_A_EMAIL)
+
+    await withAuth(request(app.getHttpServer()).post('/auth/logout'), auth)
+      .set(CSRF_HEADER_NAME, 'forged-cross-site-value')
+      .expect(403)
+
+    await withAuth(request(app.getHttpServer()).get('/auth/me'), auth).expect(200)
+  })
+
+  it('logout with a valid session and the right CSRF header revokes it and clears the cookies', async () => {
+    const auth = await loginForTests(app, TEST_USER_A_EMAIL)
+
+    const res = await withAuth(request(app.getHttpServer()).post('/auth/logout'), auth, {
+      mutating: true,
+    }).expect(200)
+
+    const cleared = res.headers['set-cookie'] as unknown as string[]
+    expect(cleared.some((c) => c.startsWith(`${SESSION_COOKIE_NAME}=;`))).toBe(true)
+    await withAuth(request(app.getHttpServer()).get('/auth/me'), auth).expect(401)
+  })
+
+  it('GET /auth/me re-issues both session cookies (self-healing resync)', async () => {
+    const auth = await loginForTests(app, TEST_USER_A_EMAIL)
+
+    const res = await withAuth(request(app.getHttpServer()).get('/auth/me'), auth).expect(200)
+
+    const setCookie = res.headers['set-cookie'] as unknown as string[]
+    expect(setCookie.some((c) => c.startsWith(`${SESSION_COOKIE_NAME}=`))).toBe(true)
+    expect(setCookie.some((c) => c.startsWith(`${CSRF_COOKIE_NAME}=`))).toBe(true)
   })
 
   it('logout with no session at all still answers 200 and clears both cookies', async () => {

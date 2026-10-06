@@ -9,6 +9,7 @@ import { Reflector } from '@nestjs/core'
 import type { Response } from 'express'
 import type { AppConfig } from '../config/configuration'
 import { getSessionCookie, setSessionCookies } from './cookies'
+import { IS_SESSION_OPTIONAL_KEY } from './optional-session.decorator'
 import { IS_PUBLIC_KEY } from './public.decorator'
 import type { RequestWithSession } from './request-with-session'
 import { SessionsService } from './sessions.service'
@@ -20,7 +21,9 @@ import { SessionsService } from './sessions.service'
  * was chosen over per-controller `@UseGuards()` specifically because the
  * failure mode of forgetting to protect a route is silent — a new
  * entries/attachments controller added later would ship unauthenticated
- * unless someone remembered to wire the guard onto it. Opt-out-by-exception
+ * unless someone remembered to wire the guard onto it. A second, narrower
+ * opt-out, `@OptionalSession()`, lets a route (logout) run without a valid
+ * session while still attaching one when it exists. Opt-out-by-exception
  * makes the safe behaviour the path of least resistance instead.
  *
  * When SessionsService slides the expiry forward it also re-issues both
@@ -47,12 +50,13 @@ export class SessionAuthGuard implements CanActivate {
 
     const request = context.switchToHttp().getRequest<RequestWithSession>()
     const sessionToken = getSessionCookie(request)
-    if (!sessionToken) {
-      throw new UnauthorizedException('Authentication required')
-    }
-
-    const validated = await this.sessionsService.validate(sessionToken)
-    if (!validated) {
+    const validated = sessionToken ? await this.sessionsService.validate(sessionToken) : null
+    if (!sessionToken || !validated) {
+      // An @OptionalSession() route (logout) proceeds with no session
+      // attached; CsrfGuard then has nothing to protect.
+      if (this.isSessionOptional(context)) {
+        return true
+      }
       throw new UnauthorizedException('Authentication required')
     }
     const { session, renewed } = validated
@@ -73,5 +77,14 @@ export class SessionAuthGuard implements CanActivate {
     }
 
     return true
+  }
+
+  private isSessionOptional(context: ExecutionContext): boolean {
+    return (
+      this.reflector.getAllAndOverride<boolean>(IS_SESSION_OPTIONAL_KEY, [
+        context.getHandler(),
+        context.getClass(),
+      ]) === true
+    )
   }
 }

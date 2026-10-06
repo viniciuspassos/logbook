@@ -29,28 +29,27 @@ export class UsersRepository {
   }
 
   /**
-   * Returns the user with this Google `sub`, creating it first if needed, and
-   * when it creates the very first user hands every entry and attachment that
-   * has no owner (`userId IS NULL` — everything written before accounts
-   * existed) to them, exactly once. All of it runs in one transaction, so a
-   * failed claim never leaves a user behind who silently lost the legacy data
-   * to a retry.
+   * Returns the user with this Google `sub`, creating it first if needed. When
+   * it creates the user and `claimLegacyRows` is set, it also hands every
+   * entry and attachment that has no owner (`userId IS NULL` — everything
+   * written before accounts existed) to them. Creation and claim happen in
+   * one transaction, so a failed claim never leaves a user behind who
+   * silently lost the legacy data to a retry. Who may claim is the caller's
+   * decision (the configured legacy owner only, see UsersService); this
+   * method only guarantees it happens at most once, with the creation.
    *
-   * Under READ COMMITTED two sign-ins racing on an empty `users` table would
-   * both see "no users yet", and two sign-ins of the same new account would
-   * both try to insert (one losing to the unique `googleSub` with a 500). So
-   * the transaction first takes a Postgres transaction-scoped advisory lock:
-   * concurrent callers queue up, and each re-reads under the lock, which makes
-   * the call idempotent per `sub` and makes "first user" well defined — the
-   * claim goes to whoever creates the first row, even if another user's
-   * request arrived earlier or commits right after. (sql.js, used only in
-   * tests, is single-connection, so no lock is needed there.)
+   * Under READ COMMITTED two sign-ins of the same new account would both try
+   * to insert (one losing to the unique `googleSub` with a 500). So the
+   * transaction first takes a Postgres transaction-scoped advisory lock:
+   * concurrent callers queue up and each re-reads under the lock, which makes
+   * the call idempotent per `sub`. (sql.js, used only in tests, is
+   * single-connection, so no lock is needed there.)
    *
    * Reaches into the Entry/Attachment entities via the shared EntityManager
    * for the same reason EntriesRepository.removeCascade does: one transaction
    * across tables without a circular module dependency.
    */
-  async findOrCreateClaimingLegacyRowsIfFirst(data: NewUser): Promise<User> {
+  async findOrCreate(data: NewUser, options: { claimLegacyRows: boolean }): Promise<User> {
     return this.orm.manager.transaction(async (manager) => {
       await serializeUserCreation(manager)
 
@@ -59,9 +58,8 @@ export class UsersRepository {
         return existing
       }
 
-      const isFirstUser = (await manager.count(User)) === 0
       const user = await manager.save(manager.create(User, data))
-      if (isFirstUser) {
+      if (options.claimLegacyRows) {
         await manager.update(Entry, { userId: IsNull() }, { userId: user.id })
         await manager.update(Attachment, { userId: IsNull() }, { userId: user.id })
       }

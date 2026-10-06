@@ -27,46 +27,83 @@ function makeRepoMock() {
     findByGoogleSub: jest.fn(),
     findById: jest.fn(),
     updateProfile: jest.fn(),
-    findOrCreateClaimingLegacyRowsIfFirst: jest.fn(),
+    findOrCreate: jest.fn(),
   } as unknown as jest.Mocked<UsersRepository>
 }
 
 describe('UsersService', () => {
   describe('findOrCreateFromGoogle', () => {
-    it('creates a user (claiming legacy rows if first) when the sub is unknown', async () => {
+    it('creates a user, asking to claim the legacy rows, when their e-mail is the legacy owner', async () => {
       const repo = makeRepoMock()
       const created = fakeUser({ id: 9 })
       repo.findByGoogleSub.mockResolvedValue(null)
-      repo.findOrCreateClaimingLegacyRowsIfFirst.mockResolvedValue(created)
-      const service = new UsersService(repo)
+      repo.findOrCreate.mockResolvedValue(created)
+      const service = new UsersService(repo, { legacyOwnerEmail: 'me@example.com' })
 
       await expect(service.findOrCreateFromGoogle(identity)).resolves.toBe(created)
 
       expect(repo.findByGoogleSub).toHaveBeenCalledWith('sub-1')
-      expect(repo.findOrCreateClaimingLegacyRowsIfFirst).toHaveBeenCalledWith({
-        googleSub: 'sub-1',
-        email: 'me@example.com',
-        name: 'Me',
-        picture: 'https://example.com/me.png',
-      })
+      expect(repo.findOrCreate).toHaveBeenCalledWith(
+        {
+          googleSub: 'sub-1',
+          email: 'me@example.com',
+          name: 'Me',
+          picture: 'https://example.com/me.png',
+        },
+        { claimLegacyRows: true },
+      )
+    })
+
+    it('creates a user without claiming the legacy rows when they are not the legacy owner', async () => {
+      const repo = makeRepoMock()
+      repo.findByGoogleSub.mockResolvedValue(null)
+      repo.findOrCreate.mockResolvedValue(fakeUser({ id: 10 }))
+      const service = new UsersService(repo, { legacyOwnerEmail: 'someone-else@example.com' })
+
+      await service.findOrCreateFromGoogle(identity)
+
+      expect(repo.findOrCreate).toHaveBeenCalledWith(expect.anything(), { claimLegacyRows: false })
+    })
+
+    it('matches the legacy owner case-insensitively', async () => {
+      const repo = makeRepoMock()
+      repo.findByGoogleSub.mockResolvedValue(null)
+      repo.findOrCreate.mockResolvedValue(fakeUser())
+      const service = new UsersService(repo, { legacyOwnerEmail: 'me@example.com' })
+
+      await service.findOrCreateFromGoogle({ ...identity, email: 'ME@Example.com' })
+
+      expect(repo.findOrCreate).toHaveBeenCalledWith(expect.anything(), { claimLegacyRows: true })
     })
 
     it('returns the existing user without writing when the profile is unchanged', async () => {
       const repo = makeRepoMock()
       const existing = fakeUser()
       repo.findByGoogleSub.mockResolvedValue(existing)
-      const service = new UsersService(repo)
+      const service = new UsersService(repo, { legacyOwnerEmail: 'me@example.com' })
 
       await expect(service.findOrCreateFromGoogle(identity)).resolves.toBe(existing)
 
       expect(repo.updateProfile).not.toHaveBeenCalled()
-      expect(repo.findOrCreateClaimingLegacyRowsIfFirst).not.toHaveBeenCalled()
+      expect(repo.findOrCreate).not.toHaveBeenCalled()
+    })
+
+    it('updates the stored e-mail at sign-in when Google reports a changed address for the same sub', async () => {
+      const repo = makeRepoMock()
+      repo.findByGoogleSub.mockResolvedValue(fakeUser({ email: 'old-address@example.com' }))
+      const service = new UsersService(repo, { legacyOwnerEmail: 'me@example.com' })
+
+      const result = await service.findOrCreateFromGoogle(identity)
+
+      expect(repo.updateProfile).toHaveBeenCalledWith(1, expect.objectContaining({ email: 'me@example.com' }))
+      expect(result.email).toBe('me@example.com')
+      expect(repo.findOrCreate).not.toHaveBeenCalled()
     })
 
     it('refreshes the profile snapshot when e-mail, name or picture changed, matching by sub and never by e-mail', async () => {
       const repo = makeRepoMock()
       repo.findByGoogleSub.mockResolvedValue(fakeUser({ email: 'old@example.com', name: null }))
-      const service = new UsersService(repo)
+      const service = new UsersService(repo, { legacyOwnerEmail: 'me@example.com' })
 
       const result = await service.findOrCreateFromGoogle(identity)
 
@@ -86,7 +123,7 @@ describe('UsersService', () => {
       const repo = makeRepoMock()
       const user = fakeUser()
       repo.findById.mockResolvedValue(user)
-      const service = new UsersService(repo)
+      const service = new UsersService(repo, { legacyOwnerEmail: 'me@example.com' })
 
       await expect(service.findById(1)).resolves.toBe(user)
       expect(repo.findById).toHaveBeenCalledWith(1)

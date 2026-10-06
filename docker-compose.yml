@@ -55,16 +55,23 @@ services:
       # src/lib/sync/attachmentValidation.ts. Overriding it lower here makes the
       # client queue photos the server will always reject with 413 (#92).
 
-      # Sign in with Google is the only login method. Both values are
-      # deployment-specific, so they come from your shell or from a
-      # git-ignored `.env` file next to this compose file — never commit real
-      # values. `docker compose up` refuses to start until both are set.
+      # Sign in with Google is the only login method. These come from your
+      # shell or from a `.env` file next to this compose file that is not
+      # committed (copy `.env.example`) — never commit real values. They
+      # default to empty here so `docker compose config/build/down/ps` work
+      # without a `.env`; the backend itself refuses to boot (clear error in
+      # `docker compose logs backend`) until the required ones are set.
       #   GOOGLE_CLIENT_ID: the OAuth "Web application" client ID from Google
-      #     Cloud Console (public, but specific to your project).
+      #     Cloud Console (public, but specific to your project). Required.
       #   ALLOWED_EMAILS: comma-separated e-mail addresses allowed to sign in.
+      #     Required.
+      #   LEGACY_OWNER_EMAIL: which allowlisted user inherits the entries and
+      #     photos that existed before accounts. Optional with one allowed
+      #     address (that one inherits); required with several.
       # See docs/INFRASTRUCTURE.md -> "Backend authentication".
-      GOOGLE_CLIENT_ID: ${GOOGLE_CLIENT_ID:?Set GOOGLE_CLIENT_ID to your Google OAuth web client ID (see docs/INFRASTRUCTURE.md)}
-      ALLOWED_EMAILS: ${ALLOWED_EMAILS:?Set ALLOWED_EMAILS to a comma-separated list of e-mail addresses allowed to sign in}
+      GOOGLE_CLIENT_ID: ${GOOGLE_CLIENT_ID:-}
+      ALLOWED_EMAILS: ${ALLOWED_EMAILS:-}
+      LEGACY_OWNER_EMAIL: ${LEGACY_OWNER_EMAIL:-}
     volumes:
       # Named volume so uploaded files survive container restarts/recreation
       # (server/.env.example flags the bare default `./uploads` as non-durable).

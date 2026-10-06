@@ -3,11 +3,16 @@ import type { Reflector } from '@nestjs/core'
 import type { Request } from 'express'
 import { CsrfGuard } from './csrf.guard'
 import { CSRF_HEADER_NAME } from './cookies'
+import { IS_SESSION_OPTIONAL_KEY } from './optional-session.decorator'
 import type { RequestWithSession } from './request-with-session'
 import type { Session } from './session.entity'
 
-function makeReflectorMock(isPublic: boolean) {
-  return { getAllAndOverride: jest.fn().mockReturnValue(isPublic) } as unknown as jest.Mocked<Reflector>
+function makeReflectorMock(isPublic: boolean, sessionOptional = false) {
+  return {
+    getAllAndOverride: jest.fn((key: string) =>
+      key === IS_SESSION_OPTIONAL_KEY ? sessionOptional : isPublic,
+    ),
+  } as unknown as jest.Mocked<Reflector>
 }
 
 function makeContext(req: Partial<RequestWithSession>): ExecutionContext {
@@ -92,5 +97,47 @@ describe('CsrfGuard', () => {
     } as unknown as Partial<Request>)
 
     expect(() => guard.canActivate(context)).toThrow(ForbiddenException)
+  })
+
+  describe('on an @OptionalSession() route', () => {
+    it('lets a mutating request through when no session was attached (nothing to protect)', () => {
+      const guard = new CsrfGuard(makeReflectorMock(false, true))
+      const context = makeContext({ method: 'POST', headers: {} } as unknown as Partial<Request>)
+
+      expect(guard.canActivate(context)).toBe(true)
+    })
+
+    it('still rejects a mutating request with a valid session but a missing CSRF header', () => {
+      const guard = new CsrfGuard(makeReflectorMock(false, true))
+      const context = makeContext({
+        method: 'POST',
+        session: fakeSession(),
+        headers: {},
+      } as unknown as Partial<Request>)
+
+      expect(() => guard.canActivate(context)).toThrow(ForbiddenException)
+    })
+
+    it('still rejects a mutating request with a valid session but a wrong CSRF header', () => {
+      const guard = new CsrfGuard(makeReflectorMock(false, true))
+      const context = makeContext({
+        method: 'POST',
+        session: fakeSession(),
+        headers: { [CSRF_HEADER_NAME]: 'wrong-token' },
+      } as unknown as Partial<Request>)
+
+      expect(() => guard.canActivate(context)).toThrow(ForbiddenException)
+    })
+
+    it('lets a mutating request with a valid session and matching CSRF header through', () => {
+      const guard = new CsrfGuard(makeReflectorMock(false, true))
+      const context = makeContext({
+        method: 'POST',
+        session: fakeSession(),
+        headers: { [CSRF_HEADER_NAME]: 'expected-csrf-token' },
+      } as unknown as Partial<Request>)
+
+      expect(guard.canActivate(context)).toBe(true)
+    })
   })
 })

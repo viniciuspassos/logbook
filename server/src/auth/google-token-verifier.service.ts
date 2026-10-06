@@ -71,15 +71,36 @@ export class GoogleTokenVerifier {
   }
 }
 
-const NETWORK_ERROR_CODE = /^(E[A-Z]+|ERR_[A-Z_]+)$/
-// Prefix google-auth-library puts on failures fetching Google's signing certs.
-const CERT_FETCH_FAILURE = 'Failed to retrieve verification certificates'
+/**
+ * Node network error codes that mean "could not reach Google". An explicit
+ * list, not a pattern: an unrelated `E*`/`ERR_*` code (EACCES, a TLS parse
+ * error) must not turn a bad token into a retryable-looking 503.
+ */
+const NETWORK_ERROR_CODES: ReadonlySet<string> = new Set([
+  'ECONNREFUSED',
+  'ECONNRESET',
+  'ENOTFOUND',
+  'ETIMEDOUT',
+  'EAI_AGAIN',
+  'EPIPE',
+  'ECONNABORTED',
+  'ENETUNREACH',
+  'EHOSTUNREACH',
+])
+
+/**
+ * Prefix google-auth-library puts on failures fetching Google's signing
+ * certs. A test pins it against the installed library's source, so an
+ * upgrade that changes the message fails loudly.
+ */
+export const CERT_FETCH_FAILURE_PREFIX = 'Failed to retrieve verification certificates'
 
 /**
  * True when verification failed because Google (or the network to it) could
- * not be reached, as opposed to the token itself being bad. Only recognised
- * signals count; anything unrecognised stays an invalid-token 401, the safe
- * side for an authentication check.
+ * not be reached, as opposed to the token itself being bad: a listed Node
+ * network code, an upstream HTTP 5xx (gaxios puts it on `response.status`),
+ * or the library's cert-fetch failure message. Anything else stays an
+ * invalid-token 401, the safe side for an authentication check.
  */
 function isInfrastructureError(error: unknown): boolean {
   if (typeof error !== 'object' || error === null) {
@@ -93,9 +114,9 @@ function isInfrastructureError(error: unknown): boolean {
   }
   const httpStatus = typeof status === 'number' ? status : response?.status
   return (
-    (typeof code === 'string' && NETWORK_ERROR_CODE.test(code)) ||
+    (typeof code === 'string' && NETWORK_ERROR_CODES.has(code)) ||
     (typeof httpStatus === 'number' && httpStatus >= 500) ||
-    (typeof message === 'string' && message.startsWith(CERT_FETCH_FAILURE))
+    (typeof message === 'string' && message.startsWith(CERT_FETCH_FAILURE_PREFIX))
   )
 }
 

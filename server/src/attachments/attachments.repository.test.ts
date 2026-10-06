@@ -135,10 +135,55 @@ describe('AttachmentsRepository', () => {
       await expect(repo.findById(99999, owner.id)).resolves.toBeNull()
     })
 
+    it('an entry that has been tombstoned hides its attachments from findByEntryId, findById and remove', async () => {
+      const entries = dataSource.getRepository(Entry)
+      const attachments = dataSource.getRepository(Attachment)
+      const deletedEntry = await entries.save(entries.create(entryFor(owner.id)))
+      const orphaned = await attachments.save(
+        attachments.create({
+          entryId: deletedEntry.id,
+          originalFilename: 't.jpg',
+          storageKey: 'kt',
+          mimeType: 'image/jpeg',
+          sizeBytes: 1,
+          userId: owner.id,
+        }),
+      )
+      await entries.update({ id: deletedEntry.id }, { deletedAt: new Date() })
+
+      await expect(repo.findByEntryId(deletedEntry.id, owner.id)).resolves.toEqual([])
+      await expect(repo.findById(orphaned.id, owner.id)).resolves.toBeNull()
+      await expect(repo.remove(orphaned.id, owner.id)).resolves.toBe(false)
+      await expect(attachments.findOneBy({ id: orphaned.id })).resolves.not.toBeNull()
+    })
+
     it('remove returns false and deletes nothing for another user', async () => {
       await expect(repo.remove(ownedWithUserId.id, other.id)).resolves.toBe(false)
 
       await expect(repo.findById(ownedWithUserId.id, owner.id)).resolves.not.toBeNull()
+    })
+
+    it('remove is one scoped DELETE: ownership is folded into the statement, with no separate lookup first', async () => {
+      const findByIdSpy = jest.spyOn(repo, 'findById')
+      const attachments = dataSource.getRepository(Attachment)
+      const doomed = await attachments.save(
+        attachments.create({
+          entryId,
+          originalFilename: 'd.jpg',
+          storageKey: 'kd',
+          mimeType: 'image/jpeg',
+          sizeBytes: 1,
+          userId: null,
+        }),
+      )
+
+      await expect(repo.remove(doomed.id, other.id)).resolves.toBe(false)
+      await expect(attachments.findOneBy({ id: doomed.id })).resolves.not.toBeNull()
+      await expect(repo.remove(doomed.id, owner.id)).resolves.toBe(true)
+      await expect(attachments.findOneBy({ id: doomed.id })).resolves.toBeNull()
+
+      expect(findByIdSpy).not.toHaveBeenCalled()
+      findByIdSpy.mockRestore()
     })
 
     it('remove deletes the attachment for the entry owner and reports true', async () => {

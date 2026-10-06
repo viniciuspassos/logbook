@@ -6,6 +6,7 @@ import { SessionAuthGuard } from './session-auth.guard'
 import type { SessionsService } from './sessions.service'
 import type { Session } from './session.entity'
 import { SESSION_COOKIE_NAME, CSRF_COOKIE_NAME } from './cookies'
+import { IS_SESSION_OPTIONAL_KEY } from './optional-session.decorator'
 
 function makeSessionsServiceMock() {
   return {
@@ -15,8 +16,12 @@ function makeSessionsServiceMock() {
   } as unknown as jest.Mocked<SessionsService>
 }
 
-function makeReflectorMock(isPublic: boolean) {
-  return { getAllAndOverride: jest.fn().mockReturnValue(isPublic) } as unknown as jest.Mocked<Reflector>
+function makeReflectorMock(isPublic: boolean, sessionOptional = false) {
+  return {
+    getAllAndOverride: jest.fn((key: string) =>
+      key === IS_SESSION_OPTIONAL_KEY ? sessionOptional : isPublic,
+    ),
+  } as unknown as jest.Mocked<Reflector>
 }
 
 function makeConfigServiceMock(cookieSecure: boolean) {
@@ -150,5 +155,60 @@ describe('SessionAuthGuard', () => {
       'fresh-csrf',
       expect.objectContaining({ expires: session.expiresAt, secure: true }),
     )
+  })
+
+  describe('on an @OptionalSession() route', () => {
+    function optionalGuard(sessionsService: jest.Mocked<SessionsService>) {
+      return new SessionAuthGuard(
+        sessionsService,
+        makeReflectorMock(false, true),
+        makeConfigServiceMock(false),
+      )
+    }
+
+    it('lets a request with no session cookie through without attaching a session', async () => {
+      const sessionsService = makeSessionsServiceMock()
+      const req = { cookies: {} } as unknown as Record<string, unknown>
+
+      await expect(
+        optionalGuard(sessionsService).canActivate(makeContext(req as Partial<Request>)),
+      ).resolves.toBe(true)
+
+      expect(req.session).toBeUndefined()
+      expect(sessionsService.validate).not.toHaveBeenCalled()
+    })
+
+    it('lets a request with a stale/revoked session cookie through without attaching a session', async () => {
+      const sessionsService = makeSessionsServiceMock()
+      sessionsService.validate.mockResolvedValue(null)
+      const req = { cookies: { [SESSION_COOKIE_NAME]: 'stale' } } as unknown as Record<
+        string,
+        unknown
+      >
+
+      await expect(
+        optionalGuard(sessionsService).canActivate(makeContext(req as Partial<Request>)),
+      ).resolves.toBe(true)
+
+      expect(req.session).toBeUndefined()
+      expect(req.userId).toBeUndefined()
+    })
+
+    it('attaches the session and user id when the cookie is valid (so CsrfGuard then applies)', async () => {
+      const sessionsService = makeSessionsServiceMock()
+      const session = fakeSession()
+      sessionsService.validate.mockResolvedValue({ session, renewed: false })
+      const req = { cookies: { [SESSION_COOKIE_NAME]: 'valid' } } as unknown as Record<
+        string,
+        unknown
+      >
+
+      await expect(
+        optionalGuard(sessionsService).canActivate(makeContext(req as Partial<Request>)),
+      ).resolves.toBe(true)
+
+      expect(req.session).toBe(session)
+      expect(req.userId).toBe(7)
+    })
   })
 })

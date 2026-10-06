@@ -46,8 +46,11 @@ docker compose down           # stop; named volumes (db data, uploads) persist
 docker compose down -v        # stop and also wipe db/upload volumes
 ```
 
-`GOOGLE_CLIENT_ID` and `ALLOWED_EMAILS` must be set (shell or a git-ignored root `.env`) before
-`docker compose up` will start the backend — see "Backend authentication" below.
+`GOOGLE_CLIENT_ID` and `ALLOWED_EMAILS` (and `LEGACY_OWNER_EMAIL` when several addresses are
+allowed) come from your shell or an uncommitted root `.env` (copy the root `.env.example`). Compose
+defaults them to empty, so `docker compose config/build/down/ps` work without a `.env`; the
+backend itself fails fast at boot with a clear config error (see `docker compose logs backend`)
+until the required ones are set — see "Backend authentication" below.
 
 Services:
 
@@ -176,39 +179,54 @@ rationale lives in the auth PR descriptions; this section is the operational sum
   (`server/src/auth/google-token-verifier.service.ts`, a thin adapter over `google-auth-library`)
   checks the signature, `aud` (must equal `GOOGLE_CLIENT_ID`), `iss` and `exp`, and requires
   `email_verified`. A bad token or unverified e-mail is `401`; a verified e-mail that is not in
-  `ALLOWED_EMAILS` is `403`. If Google itself can't be reached (network error, cert fetch failure,
-  upstream 5xx) the failure is logged and answered with `503` so the client can retry instead of
+  `ALLOWED_EMAILS` is `403`. If Google itself can't be reached (a listed Node network error code
+  such as `ECONNREFUSED`/`ETIMEDOUT`/`ENOTFOUND`/`EAI_AGAIN`, a cert fetch failure, an upstream 5xx) the failure is logged and answered with `503` so the client can retry instead of
   treating it as a rejected sign-in. On success the same httpOnly session + CSRF cookies as before
   are set.
   `GET /auth/me` (protected) returns `{ id, email, name, picture }` for the session's user, and
-  `POST /auth/logout` is `@Public()` and
-  **always answers 200 and clears both cookies**, revoking the session only when a token is
-  present: a client with an expired or revoked session must still be able to clear its stale
-  cookies. It skips the CSRF check because with no live session there is nothing to protect (a
-  forged cross-site logout can only sign the user out).
+  `GET /auth/me` also re-issues both session cookies, so a client that missed an earlier
+  `Set-Cookie` resyncs at least once per app launch.
+- **`POST /auth/logout`** is `@OptionalSession()` (not `@Public()`): with **no, expired or revoked
+  session it answers 200 and clears both cookies** (nothing to protect, and a client with a dead
+  session must still be able to clear its stale cookies); with a **valid session the CSRF header
+  (`X-CSRF-Token`, constant-time compared) is required**, otherwise `403` and the session is kept,
+  so a cross-site POST can't revoke someone's session. Frontend contract: send `X-CSRF-Token`
+  from the `logbook_csrf` cookie when you have it. Without a live session logout is always 200. A
+  `403` means the session is live but the header was missing/stale: call `GET /auth/me` (which
+  re-issues the cookies), then retry once with the fresh cookie value.
 - **The allowlist is enforced on every request**, not just at sign-in: the session is loaded
   together with its user row (one join), and a user whose e-mail is no longer in `ALLOWED_EMAILS`
-  gets `401` and the session is deleted. Removing an address therefore takes effect on that
-  user's next request. Sessions renew (slide) only when less than half the TTL remains, and the
-  cookies are re-issued only on that request.
+  gets `401` and the session is deleted. The check uses the e-mail *stored on the user row*, which
+  is refreshed (with name/picture, keyed by Google `sub`) on every successful sign-in. So removing
+  an address from `ALLOWED_EMAILS` takes effect on that user's next request, but an address Google
+  has changed since the user's last sign-in is only noticed at the next sign-in. Sessions renew
+  (slide) only when less than half the TTL remains, and the session cookies are re-issued on that
+  request and on `GET /auth/me`.
 - **`GOOGLE_CLIENT_ID`** (required, no default) — the OAuth 2.0 *Web application* client ID from
   Google Cloud Console. It is public (the frontend ships it too), not a secret, but specific to
-  your Google project, so `docker-compose.yml` reads it from the shell / a git-ignored root `.env`
-  (`${GOOGLE_CLIENT_ID:?...}`) instead of committing a value; compose refuses to start without it.
+  your Google project, so `docker-compose.yml` reads it from the shell / an uncommitted root `.env`
+  (`${GOOGLE_CLIENT_ID:-}`) instead of committing a value; the backend refuses to boot without it.
 - **`ALLOWED_EMAILS`** (required, at least one address) — comma-separated, case-insensitive
   allowlist, parsed once in `loadConfig`. Same compose treatment as `GOOGLE_CLIENT_ID`.
+- **`LEGACY_OWNER_EMAIL`** (optional with exactly one allowed address, otherwise required) — who
+  inherits the entries/attachments that existed before accounts (`userId IS NULL`). Unset with a
+  single allowlisted address means that address; with several allowlisted addresses and no owner
+  the app throws at config load (guessing "whoever signs in first" could hand the data to the
+  wrong person). It must be one of `ALLOWED_EMAILS`.
 - **Users and data ownership**: accounts live in a `users` table keyed by Google's stable `sub`
   claim (never the e-mail, which can change or be recycled); e-mail/name/picture are refreshed
   from each verified token. `entries`, `attachments` and `sessions` carry a `userId` foreign key;
   every entries/attachments query is filtered by the session's user, and an id belonging to
-  another user answers `404` (not `403`) so ids can't be probed. **The first user to sign in
-  inherits every pre-existing `entries`/`attachments` row with `userId IS NULL`**, in the same
-  transaction that creates their account; later users never take rows from them. User creation takes a Postgres advisory transaction
-  lock, so concurrent first sign-ins can't both claim the rows and a double sign-in of the same
-  new account reuses one user instead of failing on the unique `googleSub`. Attachment access
-  follows the *parent entry's* owner (a join on `entries.userId`), not the attachment's own
-  nullable `userId`. Numeric env vars (`PORT` 1-65535, `SESSION_TTL_DAYS`,
-  `MAX_UPLOAD_SIZE_BYTES`) are validated as positive integers at boot. Migration
+  another user answers `404` (not `403`) so ids can't be probed. **Only the legacy owner
+  (`LEGACY_OWNER_EMAIL`) inherits every pre-existing `entries`/`attachments` row with
+  `userId IS NULL`**, in the same transaction that creates their account, whenever they first sign
+  in; no other user ever takes those rows. User creation takes a Postgres advisory transaction
+  lock, so a double sign-in of the same new account reuses one user instead of failing on the
+  unique `googleSub`. Attachment access follows the *parent entry's* owner (a join on
+  `entries.userId`, tombstoned entries excluded, so an attachment of a deleted entry answers `404`
+  like upload does), not the attachment's own nullable `userId`; attachment deletes are a single
+  scoped statement. Numeric env vars are validated at boot (`PORT` 0-65535, where 0 means an
+  ephemeral port; `SESSION_TTL_DAYS` and `MAX_UPLOAD_SIZE_BYTES` positive integers). Migration
   `GoogleUsers` deletes existing sessions (they were password sessions with no user), so everyone
   signs in again once after upgrading, and nulls any pre-existing `userId` on entries/attachments
   before adding the foreign keys. Its `down` cannot restore the deleted sessions or ownership.

@@ -20,6 +20,7 @@ export const TEST_STRANGER_EMAIL = 'stranger@example.com'
 export const TEST_AUTH_ENV = {
   GOOGLE_CLIENT_ID: TEST_GOOGLE_CLIENT_ID,
   ALLOWED_EMAILS: `${TEST_USER_A_EMAIL},${TEST_USER_B_EMAIL}`,
+  LEGACY_OWNER_EMAIL: TEST_USER_A_EMAIL,
 }
 
 const TEST_TOKEN_PREFIX = 'test-token:'

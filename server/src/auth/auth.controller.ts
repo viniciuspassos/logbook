@@ -5,7 +5,9 @@ import type { AppConfig } from '../config/configuration'
 import { clearSessionCookies, getSessionCookie, setSessionCookies } from './cookies'
 import { CurrentUserId } from './current-user.decorator'
 import { GoogleLoginDto } from './dto/google-login.dto'
+import { OptionalSession } from './optional-session.decorator'
 import { Public } from './public.decorator'
+import type { RequestWithSession } from './request-with-session'
 import { AuthService, type AuthProfile } from './auth.service'
 
 export interface AuthStatusResponse {
@@ -36,22 +38,44 @@ export class AuthController {
     return { status: 'ok' }
   }
 
+  /**
+   * Besides returning the profile, re-issues both session cookies. The app
+   * calls this at every launch, so a client that missed an earlier Set-Cookie
+   * (the guard only re-issues them when the expiry slides) resyncs at least
+   * once per launch instead of letting its cookies expire before the server
+   * session does.
+   */
   @Get('me')
-  me(@CurrentUserId() userId: number): Promise<AuthProfile> {
+  async me(
+    @CurrentUserId() userId: number,
+    @Req() req: RequestWithSession,
+    @Res({ passthrough: true }) res: Response,
+  ): Promise<AuthProfile> {
+    const sessionToken = getSessionCookie(req)
+    if (req.session && sessionToken) {
+      setSessionCookies(
+        res,
+        {
+          sessionToken,
+          csrfToken: req.session.csrfToken,
+          expiresAt: req.session.expiresAt,
+        },
+        { secure: this.cookieSecure() },
+      )
+    }
     return this.authService.getProfile(userId)
   }
 
   /**
-   * `@Public()` on purpose: logout must work with no valid session, or a
-   * client whose session expired/was revoked (including by an allowlist
-   * removal) gets a 401 and its stale cookies are never cleared. It always
-   * answers 200 and clears both cookies, and revokes the session only when a
-   * token is present. Skipping the CSRF check is safe here: with no (or an
-   * already-dead) session there is nothing to protect, and the worst a forged
-   * cross-site logout can do is sign the user out, which they can undo by
-   * signing in again.
+   * `@OptionalSession()`, not `@Public()`: logout must work with no valid
+   * session (a client whose session expired/was revoked, including by an
+   * allowlist removal, would otherwise get a 401 and never clear its stale
+   * cookies), but a caller that DOES have a live session still goes through
+   * CsrfGuard, so a cross-site POST can't revoke a victim's session. With no
+   * session (none, expired or revoked) it just clears the cookies — nothing
+   * to protect — and always answers 200.
    */
-  @Public()
+  @OptionalSession()
   @Post('logout')
   @HttpCode(HttpStatus.OK)
   async logout(
