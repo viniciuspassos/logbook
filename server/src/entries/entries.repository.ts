@@ -27,12 +27,12 @@ export type EntryUpdateResult =
 export class EntriesRepository {
   constructor(@InjectRepository(Entry) private readonly orm: Repository<Entry>) {}
 
-  findAll(): Promise<Entry[]> {
-    return this.orm.find({ where: { deletedAt: IsNull() }, order: { id: 'DESC' } })
+  findAll(userId: number): Promise<Entry[]> {
+    return this.orm.find({ where: { userId, deletedAt: IsNull() }, order: { id: 'DESC' } })
   }
 
-  findById(id: number): Promise<Entry | null> {
-    return this.orm.findOneBy({ id, deletedAt: IsNull() })
+  findById(id: number, userId: number): Promise<Entry | null> {
+    return this.orm.findOneBy({ id, userId, deletedAt: IsNull() })
   }
 
   async create(
@@ -65,8 +65,8 @@ export class EntriesRepository {
    * driver-conditional code path.
    *
    * Outcomes:
-   *  - `not-found` (no write) if the entry doesn't exist or is already
-   *    tombstoned at the initial read;
+   *  - `not-found` (no write) if the entry doesn't exist, belongs to another
+   *    user, or is already tombstoned at the initial read;
    *  - `conflict` with the current row (no write applied) if the initial
    *    read already shows a version mismatch, *or* if the conditional
    *    UPDATE affects zero rows because a racing writer won between our
@@ -77,9 +77,9 @@ export class EntriesRepository {
    *    `UpdateResult` doesn't carry the updated column values back, so a
    *    follow-up read is needed regardless of how the write happened.
    */
-  async update(id: number, dto: UpdateEntryDto): Promise<EntryUpdateResult> {
+  async update(id: number, dto: UpdateEntryDto, userId: number): Promise<EntryUpdateResult> {
     return this.orm.manager.transaction(async (manager) => {
-      const existing = await manager.findOneBy(Entry, { id, deletedAt: IsNull() })
+      const existing = await manager.findOneBy(Entry, { id, userId, deletedAt: IsNull() })
       if (!existing) {
         return { outcome: 'not-found' }
       }
@@ -105,21 +105,21 @@ export class EntriesRepository {
 
       const result = await manager.update(
         Entry,
-        { id, version: baseVersion, deletedAt: IsNull() },
+        { id, userId, version: baseVersion, deletedAt: IsNull() },
         columnChanges,
       )
 
       if ((result.affected ?? 0) === 0) {
         // Lost the race: something else wrote (or tombstoned) this row
         // between our read above and the conditional UPDATE just now.
-        const current = await manager.findOneBy(Entry, { id })
+        const current = await manager.findOneBy(Entry, { id, userId })
         if (!current || current.deletedAt) {
           return { outcome: 'not-found' }
         }
         return { outcome: 'conflict', current }
       }
 
-      const entry = await manager.findOneByOrFail(Entry, { id })
+      const entry = await manager.findOneByOrFail(Entry, { id, userId })
       return { outcome: 'updated', entry }
     })
   }
@@ -145,9 +145,9 @@ export class EntriesRepository {
    * entry-existence check on upload; adding the reverse edge would make
    * that a circular module dependency).
    */
-  async removeCascade(id: number): Promise<Attachment[] | null> {
+  async removeCascade(id: number, userId: number): Promise<Attachment[] | null> {
     return this.orm.manager.transaction(async (manager) => {
-      const entry = await manager.findOneBy(Entry, { id, deletedAt: IsNull() })
+      const entry = await manager.findOneBy(Entry, { id, userId, deletedAt: IsNull() })
       if (!entry) {
         return null
       }

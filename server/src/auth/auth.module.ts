@@ -6,7 +6,9 @@ import type { AppConfig } from '../config/configuration'
 import { AuthController } from './auth.controller'
 import { AuthService } from './auth.service'
 import { CsrfGuard } from './csrf.guard'
-import { PasswordHasherService } from './password-hasher.service'
+import { UsersModule } from '../users/users.module'
+import { UsersService } from '../users/users.service'
+import { GoogleTokenVerifier } from './google-token-verifier.service'
 import { Session } from './session.entity'
 import { SessionAuthGuard } from './session-auth.guard'
 import { SessionsRepository } from './sessions.repository'
@@ -21,10 +23,10 @@ import { SessionsService } from './sessions.service'
  * already attached `request.session`.
  */
 @Module({
-  imports: [TypeOrmModule.forFeature([Session])],
+  imports: [TypeOrmModule.forFeature([Session]), UsersModule],
   controllers: [AuthController],
   providers: [
-    PasswordHasherService,
+    GoogleTokenVerifier,
     SessionsRepository,
     {
       provide: SessionsService,
@@ -36,14 +38,15 @@ import { SessionsService } from './sessions.service'
     },
     {
       provide: AuthService,
-      inject: [PasswordHasherService, SessionsService, ConfigService],
+      inject: [GoogleTokenVerifier, UsersService, SessionsService, ConfigService],
       useFactory: (
-        passwordHasher: PasswordHasherService,
+        tokenVerifier: GoogleTokenVerifier,
+        usersService: UsersService,
         sessionsService: SessionsService,
         configService: ConfigService,
       ) =>
-        new AuthService(passwordHasher, sessionsService, {
-          authPasswordHash: configService.getOrThrow<AppConfig>('app').authPasswordHash,
+        new AuthService(tokenVerifier, usersService, sessionsService, {
+          allowedEmails: configService.getOrThrow<AppConfig>('app').allowedEmails,
         }),
     },
     { provide: APP_GUARD, useClass: SessionAuthGuard },

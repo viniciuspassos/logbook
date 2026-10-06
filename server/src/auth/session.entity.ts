@@ -1,4 +1,12 @@
-import { Column, CreateDateColumn, Entity, PrimaryGeneratedColumn } from 'typeorm'
+import {
+  Column,
+  CreateDateColumn,
+  Entity,
+  JoinColumn,
+  ManyToOne,
+  PrimaryGeneratedColumn,
+} from 'typeorm'
+import { User } from '../users/user.entity'
 
 /**
  * A server-side session row backing the httpOnly session cookie. Chosen over
@@ -16,6 +24,14 @@ import { Column, CreateDateColumn, Entity, PrimaryGeneratedColumn } from 'typeor
 export class Session {
   @PrimaryGeneratedColumn()
   id!: number
+
+  /** The signed-in user this session belongs to; deleting the user deletes their sessions. */
+  @Column({ type: 'int' })
+  userId!: number
+
+  @ManyToOne(() => User, { nullable: false, onDelete: 'CASCADE' })
+  @JoinColumn({ name: 'userId' })
+  user?: User
 
   @Column({ unique: true })
   tokenHash!: string

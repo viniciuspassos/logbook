@@ -8,6 +8,8 @@ import type { UpdateEntryDto } from './dto/update-entry.dto'
 import type { Attachment } from '../attachments/attachment.entity'
 import type { FileStorage } from '../storage/storage.interface'
 
+const USER_ID = 7
+
 function fakeEntry(overrides: Partial<Entry> = {}): Entry {
   return {
     id: 1,
@@ -81,7 +83,7 @@ describe('EntriesService', () => {
     repo.findAll.mockResolvedValue(entries)
     const service = new EntriesService(repo, makeFileStorageMock())
 
-    await expect(service.findAll()).resolves.toBe(entries)
+    await expect(service.findAll(USER_ID)).resolves.toBe(entries)
   })
 
   it('findOne returns the entry when it exists', async () => {
@@ -90,7 +92,7 @@ describe('EntriesService', () => {
     repo.findById.mockResolvedValue(entry)
     const service = new EntriesService(repo, makeFileStorageMock())
 
-    await expect(service.findOne(1)).resolves.toBe(entry)
+    await expect(service.findOne(1, USER_ID)).resolves.toBe(entry)
   })
 
   it('findOne throws NotFoundException when the entry does not exist', async () => {
@@ -98,7 +100,7 @@ describe('EntriesService', () => {
     repo.findById.mockResolvedValue(null)
     const service = new EntriesService(repo, makeFileStorageMock())
 
-    await expect(service.findOne(404)).rejects.toBeInstanceOf(NotFoundException)
+    await expect(service.findOne(404, USER_ID)).rejects.toBeInstanceOf(NotFoundException)
   })
 
   it('create delegates to the repository with the DTO fields', async () => {
@@ -108,9 +110,9 @@ describe('EntriesService', () => {
     repo.create.mockResolvedValue(created)
     const service = new EntriesService(repo, makeFileStorageMock())
 
-    const result = await service.create(dto)
+    const result = await service.create(USER_ID, dto)
 
-    expect(repo.create).toHaveBeenCalledWith(dto)
+    expect(repo.create).toHaveBeenCalledWith({ ...dto, userId: USER_ID })
     expect(result).toBe(created)
   })
 
@@ -121,9 +123,9 @@ describe('EntriesService', () => {
     const service = new EntriesService(repo, makeFileStorageMock())
     const dto = { version: 1, title: 'New title' } as UpdateEntryDto
 
-    const result = await service.update(1, dto)
+    const result = await service.update(1, USER_ID, dto)
 
-    expect(repo.update).toHaveBeenCalledWith(1, dto)
+    expect(repo.update).toHaveBeenCalledWith(1, dto, USER_ID)
     expect(result).toBe(updated)
   })
 
@@ -133,7 +135,7 @@ describe('EntriesService', () => {
     const service = new EntriesService(repo, makeFileStorageMock())
 
     await expect(
-      service.update(404, { version: 1 } as UpdateEntryDto),
+      service.update(404, USER_ID, { version: 1 } as UpdateEntryDto),
     ).rejects.toBeInstanceOf(NotFoundException)
   })
 
@@ -144,10 +146,10 @@ describe('EntriesService', () => {
     const service = new EntriesService(repo, makeFileStorageMock())
 
     const dto = { version: 3, title: 'Stale local edit' } as UpdateEntryDto
-    await expect(service.update(1, dto)).rejects.toBeInstanceOf(EntryVersionConflictException)
+    await expect(service.update(1, USER_ID, dto)).rejects.toBeInstanceOf(EntryVersionConflictException)
 
     try {
-      await service.update(1, dto)
+      await service.update(1, USER_ID, dto)
       fail('expected update to throw')
     } catch (error) {
       expect(error).toBeInstanceOf(EntryVersionConflictException)
@@ -164,9 +166,9 @@ describe('EntriesService', () => {
     repo.removeCascade.mockResolvedValue([])
     const service = new EntriesService(repo, fileStorage)
 
-    await expect(service.remove(1)).resolves.toBeUndefined()
+    await expect(service.remove(1, USER_ID)).resolves.toBeUndefined()
 
-    expect(repo.removeCascade).toHaveBeenCalledWith(1)
+    expect(repo.removeCascade).toHaveBeenCalledWith(1, USER_ID)
     expect(fileStorage.delete).not.toHaveBeenCalled()
   })
 
@@ -176,7 +178,7 @@ describe('EntriesService', () => {
     repo.removeCascade.mockResolvedValue(null)
     const service = new EntriesService(repo, fileStorage)
 
-    await expect(service.remove(404)).rejects.toBeInstanceOf(NotFoundException)
+    await expect(service.remove(404, USER_ID)).rejects.toBeInstanceOf(NotFoundException)
     expect(fileStorage.delete).not.toHaveBeenCalled()
   })
 
@@ -191,7 +193,7 @@ describe('EntriesService', () => {
     fileStorage.delete.mockResolvedValue(undefined)
     const service = new EntriesService(repo, fileStorage)
 
-    await service.remove(1)
+    await service.remove(1, USER_ID)
 
     expect(fileStorage.delete).toHaveBeenCalledWith('key-10')
     expect(fileStorage.delete).toHaveBeenCalledWith('key-11')
@@ -212,7 +214,7 @@ describe('EntriesService', () => {
     const warnSpy = jest.spyOn(Logger.prototype, 'warn').mockImplementation(() => undefined)
     const service = new EntriesService(repo, fileStorage)
 
-    await expect(service.remove(1)).resolves.toBeUndefined()
+    await expect(service.remove(1, USER_ID)).resolves.toBeUndefined()
 
     expect(fileStorage.delete).toHaveBeenCalledWith('key-10')
     expect(fileStorage.delete).toHaveBeenCalledWith('key-11')

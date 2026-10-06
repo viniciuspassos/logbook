@@ -3,6 +3,8 @@ import { AttachmentsController } from './attachments.controller'
 import type { AttachmentsService } from './attachments.service'
 import type { Attachment } from './attachment.entity'
 
+const USER_ID = 7
+
 function fakeAttachment(overrides: Partial<Attachment> = {}): Attachment {
   return {
     id: 1,
@@ -37,8 +39,8 @@ describe('AttachmentsController', () => {
     service.getMetadata.mockResolvedValue(row)
     const controller = new AttachmentsController(service)
 
-    await expect(controller.metadata(1)).resolves.toBe(row)
-    expect(service.getMetadata).toHaveBeenCalledWith(1)
+    await expect(controller.metadata(1, USER_ID)).resolves.toBe(row)
+    expect(service.getMetadata).toHaveBeenCalledWith(1, USER_ID)
   })
 
   it('file streams the bytes using the contentType/disposition the service derived from the actual bytes', async () => {
@@ -54,8 +56,9 @@ describe('AttachmentsController', () => {
     const controller = new AttachmentsController(service)
     const res = makeResMock()
 
-    await controller.file(1, res)
+    await controller.file(1, USER_ID, res)
 
+    expect(service.getFile).toHaveBeenCalledWith(1, USER_ID)
     expect(res.setHeader).toHaveBeenCalledWith('X-Content-Type-Options', 'nosniff')
     expect(res.setHeader).toHaveBeenCalledWith('Content-Type', 'image/jpeg')
     expect(res.setHeader).toHaveBeenCalledWith(
@@ -82,7 +85,7 @@ describe('AttachmentsController', () => {
     const controller = new AttachmentsController(service)
     const res = makeResMock()
 
-    await controller.file(1, res)
+    await controller.file(1, USER_ID, res)
 
     expect(res.setHeader).toHaveBeenCalledWith('X-Content-Type-Options', 'nosniff')
     expect(res.setHeader).toHaveBeenCalledWith('Content-Type', 'application/octet-stream')
@@ -107,7 +110,7 @@ describe('AttachmentsController', () => {
     const controller = new AttachmentsController(service)
     const res = makeResMock()
 
-    await controller.file(1, res)
+    await controller.file(1, USER_ID, res)
 
     const dispositionCall = res.setHeader.mock.calls.find(
       ([headerName]) => headerName === 'Content-Disposition',
@@ -122,8 +125,8 @@ describe('AttachmentsController', () => {
     service.remove.mockResolvedValue(undefined)
     const controller = new AttachmentsController(service)
 
-    await controller.remove(1)
+    await controller.remove(1, USER_ID)
 
-    expect(service.remove).toHaveBeenCalledWith(1)
+    expect(service.remove).toHaveBeenCalledWith(1, USER_ID)
   })
 })

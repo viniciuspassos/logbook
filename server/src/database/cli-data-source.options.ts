@@ -12,7 +12,7 @@ import { migrationsGlob } from './migrations-path.util'
  * Deliberately takes a plain `databaseUrl` string rather than the app's
  * `AppConfig`: the CLI only ever needs a connection string to
  * generate/run/revert migrations, and requiring the rest of `AppConfig`
- * (e.g. `AUTH_PASSWORD_HASH`) would force a contributor to set unrelated
+ * (e.g. `GOOGLE_CLIENT_ID`) would force a contributor to set unrelated
  * auth config just to run `migration:generate`.
  */
 export function buildCliDataSourceOptions(databaseUrl: string): DataSourceOptions {

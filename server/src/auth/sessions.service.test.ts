@@ -4,11 +4,13 @@ import type { Session } from './session.entity'
 import { hashToken } from './token.util'
 
 const TTL_DAYS = 30
+const USER_ID = 7
 const DAY_MS = 24 * 60 * 60 * 1000
 
 function fakeSession(overrides: Partial<Session> = {}): Session {
   return {
     id: 1,
+    userId: USER_ID,
     tokenHash: 'some-hash',
     csrfToken: 'csrf-token',
     expiresAt: new Date(Date.now() + TTL_DAYS * DAY_MS),
@@ -39,15 +41,16 @@ describe('SessionsService', () => {
   })
 
   describe('create', () => {
-    it('creates a session row with a token hash and an expiry TTL days out', async () => {
+    it('creates a session row for the user with a token hash and an expiry TTL days out', async () => {
       const repo = makeRepoMock()
       const created = fakeSession()
       repo.create.mockResolvedValue(created)
       const service = new SessionsService(repo, { sessionTtlDays: TTL_DAYS })
 
-      const result = await service.create()
+      const result = await service.create(USER_ID)
 
       expect(repo.create).toHaveBeenCalledWith({
+        userId: USER_ID,
         tokenHash: hashToken(result.sessionToken),
         csrfToken: result.csrfToken,
         expiresAt: new Date(NOW.getTime() + TTL_DAYS * DAY_MS),
@@ -62,8 +65,8 @@ describe('SessionsService', () => {
       repo.create.mockResolvedValue(fakeSession())
       const service = new SessionsService(repo, { sessionTtlDays: TTL_DAYS })
 
-      const first = await service.create()
-      const second = await service.create()
+      const first = await service.create(USER_ID)
+      const second = await service.create(USER_ID)
 
       expect(first.sessionToken).not.toBe(second.sessionToken)
       expect(first.csrfToken).not.toBe(second.csrfToken)

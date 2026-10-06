@@ -3,6 +3,8 @@ import { EntryAttachmentsController } from './entry-attachments.controller'
 import type { AttachmentsService } from './attachments.service'
 import type { Attachment } from './attachment.entity'
 
+const USER_ID = 7
+
 function fakeAttachment(overrides: Partial<Attachment> = {}): Attachment {
   return {
     id: 1,
@@ -47,12 +49,12 @@ describe('EntryAttachmentsController', () => {
     const controller = new EntryAttachmentsController(service)
     const file = fakeMulterFile()
 
-    const result = await controller.upload(10, file)
+    const result = await controller.upload(10, USER_ID, file)
 
     // Deep-equal, so this also proves the client-declared file.mimetype is
     // never forwarded to the service (#19) — an extra `mimeType` property
     // on the call argument would fail this assertion.
-    expect(service.uploadForEntry).toHaveBeenCalledWith(10, {
+    expect(service.uploadForEntry).toHaveBeenCalledWith(10, USER_ID, {
       buffer: file.buffer,
       originalFilename: file.originalname,
     })
@@ -66,9 +68,9 @@ describe('EntryAttachmentsController', () => {
     const controller = new EntryAttachmentsController(service)
     const file = fakeMulterFile({ mimetype: 'text/html' })
 
-    await controller.upload(10, file)
+    await controller.upload(10, USER_ID, file)
 
-    expect(service.uploadForEntry).toHaveBeenCalledWith(10, {
+    expect(service.uploadForEntry).toHaveBeenCalledWith(10, USER_ID, {
       buffer: file.buffer,
       originalFilename: file.originalname,
     })
@@ -78,7 +80,7 @@ describe('EntryAttachmentsController', () => {
     const service = makeServiceMock()
     const controller = new EntryAttachmentsController(service)
 
-    await expect(controller.upload(10, undefined)).rejects.toBeInstanceOf(
+    await expect(controller.upload(10, USER_ID, undefined)).rejects.toBeInstanceOf(
       BadRequestException,
     )
     expect(service.uploadForEntry).not.toHaveBeenCalled()
@@ -90,7 +92,7 @@ describe('EntryAttachmentsController', () => {
     service.listForEntry.mockResolvedValue(rows)
     const controller = new EntryAttachmentsController(service)
 
-    await expect(controller.list(10)).resolves.toBe(rows)
-    expect(service.listForEntry).toHaveBeenCalledWith(10)
+    await expect(controller.list(10, USER_ID)).resolves.toBe(rows)
+    expect(service.listForEntry).toHaveBeenCalledWith(10, USER_ID)
   })
 })

@@ -1,19 +1,20 @@
-import { Body, Controller, HttpCode, HttpStatus, Post, Req, Res } from '@nestjs/common'
+import { Body, Controller, Get, HttpCode, HttpStatus, Post, Req, Res } from '@nestjs/common'
 import { ConfigService } from '@nestjs/config'
 import type { Request, Response } from 'express'
 import type { AppConfig } from '../config/configuration'
 import { clearSessionCookies, getSessionCookie, setSessionCookies } from './cookies'
-import { LoginDto } from './dto/login.dto'
+import { CurrentUserId } from './current-user.decorator'
+import { GoogleLoginDto } from './dto/google-login.dto'
 import { Public } from './public.decorator'
-import { AuthService } from './auth.service'
+import { AuthService, type AuthProfile } from './auth.service'
 
 export interface AuthStatusResponse {
   status: 'ok'
 }
 
 /**
- * Thin HTTP layer: routes + validation (LoginDto) + cookie plumbing,
- * delegating the actual credential check and session lifecycle to
+ * Thin HTTP layer: routes + validation (GoogleLoginDto) + cookie plumbing,
+ * delegating the actual token check and session lifecycle to
  * AuthService/SessionsService. No database access happens here.
  */
 @Controller('auth')
@@ -24,12 +25,20 @@ export class AuthController {
   ) {}
 
   @Public()
-  @Post('login')
+  @Post('google')
   @HttpCode(HttpStatus.OK)
-  async login(@Body() dto: LoginDto, @Res({ passthrough: true }) res: Response): Promise<AuthStatusResponse> {
-    const created = await this.authService.login(dto.password)
+  async loginWithGoogle(
+    @Body() dto: GoogleLoginDto,
+    @Res({ passthrough: true }) res: Response,
+  ): Promise<AuthStatusResponse> {
+    const created = await this.authService.loginWithGoogle(dto.idToken)
     setSessionCookies(res, created, { secure: this.cookieSecure() })
     return { status: 'ok' }
+  }
+
+  @Get('me')
+  me(@CurrentUserId() userId: number): Promise<AuthProfile> {
+    return this.authService.getProfile(userId)
   }
 
   @Post('logout')

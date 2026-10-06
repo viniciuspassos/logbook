@@ -47,8 +47,8 @@ export class AttachmentsService {
     @Inject(FILE_STORAGE) private readonly fileStorage: FileStorage,
   ) {}
 
-  async uploadForEntry(entryId: number, file: UploadedFile): Promise<Attachment> {
-    await this.assertEntryExists(entryId)
+  async uploadForEntry(entryId: number, userId: number, file: UploadedFile): Promise<Attachment> {
+    await this.assertEntryExists(entryId, userId)
 
     // The client-declared Content-Type (Multer's file.mimetype) is never
     // read here — it's attacker-controlled and trivially spoofed. The only
@@ -69,6 +69,7 @@ export class AttachmentsService {
 
     return this.attachmentsRepository.create({
       entryId,
+      userId,
       originalFilename: file.originalFilename,
       storageKey: stored.key,
       mimeType: detectedMimeType,
@@ -76,17 +77,17 @@ export class AttachmentsService {
     })
   }
 
-  async listForEntry(entryId: number): Promise<Attachment[]> {
-    await this.assertEntryExists(entryId)
-    return this.attachmentsRepository.findByEntryId(entryId)
+  async listForEntry(entryId: number, userId: number): Promise<Attachment[]> {
+    await this.assertEntryExists(entryId, userId)
+    return this.attachmentsRepository.findByEntryId(entryId, userId)
   }
 
-  async getMetadata(id: number): Promise<Attachment> {
-    return this.requireAttachment(id)
+  async getMetadata(id: number, userId: number): Promise<Attachment> {
+    return this.requireAttachment(id, userId)
   }
 
-  async getFile(id: number): Promise<AttachmentFile> {
-    const attachment = await this.requireAttachment(id)
+  async getFile(id: number, userId: number): Promise<AttachmentFile> {
+    const attachment = await this.requireAttachment(id, userId)
     try {
       const buffer = await this.fileStorage.read(attachment.storageKey)
       // Re-sniff the actual stored bytes rather than trusting the DB's
@@ -122,9 +123,9 @@ export class AttachmentsService {
    * retry fails identically. A stranded file is a harmless disk artifact
    * that #22's storage work can sweep; an undeletable row is not.
    */
-  async remove(id: number): Promise<void> {
-    const attachment = await this.requireAttachment(id)
-    await this.attachmentsRepository.remove(id)
+  async remove(id: number, userId: number): Promise<void> {
+    const attachment = await this.requireAttachment(id, userId)
+    await this.attachmentsRepository.remove(id, userId)
 
     try {
       await this.fileStorage.delete(attachment.storageKey)
@@ -137,16 +138,16 @@ export class AttachmentsService {
     }
   }
 
-  private async requireAttachment(id: number): Promise<Attachment> {
-    const attachment = await this.attachmentsRepository.findById(id)
+  private async requireAttachment(id: number, userId: number): Promise<Attachment> {
+    const attachment = await this.attachmentsRepository.findById(id, userId)
     if (!attachment) {
       throw new NotFoundException(`Attachment ${id} not found`)
     }
     return attachment
   }
 
-  private async assertEntryExists(entryId: number): Promise<void> {
-    const entry = await this.entriesRepository.findById(entryId)
+  private async assertEntryExists(entryId: number, userId: number): Promise<void> {
+    const entry = await this.entriesRepository.findById(entryId, userId)
     if (!entry) {
       throw new NotFoundException(`Entry ${entryId} not found`)
     }

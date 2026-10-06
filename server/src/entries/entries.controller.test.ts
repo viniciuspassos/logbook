@@ -3,6 +3,8 @@ import type { EntriesService } from './entries.service'
 import type { Entry } from './entry.entity'
 import type { CreateEntryDto } from './dto/create-entry.dto'
 
+const USER_ID = 7
+
 function fakeEntry(overrides: Partial<Entry> = {}): Entry {
   return {
     id: 1,
@@ -49,7 +51,7 @@ describe('EntriesController', () => {
     service.findAll.mockResolvedValue(entries)
     const controller = new EntriesController(service)
 
-    await expect(controller.findAll()).resolves.toBe(entries)
+    await expect(controller.findAll(USER_ID)).resolves.toBe(entries)
   })
 
   it('findOne delegates to the service with a numeric id', async () => {
@@ -58,9 +60,9 @@ describe('EntriesController', () => {
     service.findOne.mockResolvedValue(entry)
     const controller = new EntriesController(service)
 
-    const result = await controller.findOne(1)
+    const result = await controller.findOne(1, USER_ID)
 
-    expect(service.findOne).toHaveBeenCalledWith(1)
+    expect(service.findOne).toHaveBeenCalledWith(1, USER_ID)
     expect(result).toBe(entry)
   })
 
@@ -71,9 +73,9 @@ describe('EntriesController', () => {
     service.create.mockResolvedValue(created)
     const controller = new EntriesController(service)
 
-    const result = await controller.create(dto)
+    const result = await controller.create(dto, USER_ID)
 
-    expect(service.create).toHaveBeenCalledWith(dto)
+    expect(service.create).toHaveBeenCalledWith(USER_ID, dto)
     expect(result).toBe(created)
   })
 
@@ -83,9 +85,12 @@ describe('EntriesController', () => {
     service.update.mockResolvedValue(updated)
     const controller = new EntriesController(service)
 
-    const result = await controller.update(1, { version: 1, title: 'New title' })
+    const result = await controller.update(1, { version: 1, title: 'New title' }, USER_ID)
 
-    expect(service.update).toHaveBeenCalledWith(1, { version: 1, title: 'New title' })
+    expect(service.update).toHaveBeenCalledWith(1, USER_ID, {
+      version: 1,
+      title: 'New title',
+    })
     expect(result).toBe(updated)
   })
 
@@ -94,8 +99,8 @@ describe('EntriesController', () => {
     service.remove.mockResolvedValue(undefined)
     const controller = new EntriesController(service)
 
-    await controller.remove(1)
+    await controller.remove(1, USER_ID)
 
-    expect(service.remove).toHaveBeenCalledWith(1)
+    expect(service.remove).toHaveBeenCalledWith(1, USER_ID)
   })
 })

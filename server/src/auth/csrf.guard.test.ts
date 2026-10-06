@@ -21,6 +21,7 @@ function makeContext(req: Partial<RequestWithSession>): ExecutionContext {
 function fakeSession(overrides: Partial<Session> = {}): Session {
   return {
     id: 1,
+    userId: 7,
     tokenHash: 'hash',
     csrfToken: 'expected-csrf-token',
     expiresAt: new Date('2026-08-01T00:00:00.000Z'),

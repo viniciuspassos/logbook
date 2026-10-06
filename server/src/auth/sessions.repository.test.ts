@@ -5,6 +5,7 @@ import type { Session } from './session.entity'
 function fakeSession(overrides: Partial<Session> = {}): Session {
   return {
     id: 1,
+    userId: 7,
     tokenHash: 'hash-of-token',
     csrfToken: 'csrf-token',
     expiresAt: new Date('2026-08-01T00:00:00.000Z'),
@@ -55,12 +56,14 @@ describe('SessionsRepository', () => {
     const repo = new SessionsRepository(ormRepo)
 
     const result = await repo.create({
+      userId: 7,
       tokenHash: 'hash-of-token',
       csrfToken: 'csrf-token',
       expiresAt: saved.expiresAt,
     })
 
     expect(ormRepo.create).toHaveBeenCalledWith({
+      userId: 7,
       tokenHash: 'hash-of-token',
       csrfToken: 'csrf-token',
       expiresAt: saved.expiresAt,

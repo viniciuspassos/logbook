@@ -3,9 +3,13 @@ import {
   CreateDateColumn,
   DeleteDateColumn,
   Entity,
+  Index,
+  JoinColumn,
+  ManyToOne,
   PrimaryGeneratedColumn,
   UpdateDateColumn,
 } from 'typeorm'
+import { User } from '../users/user.entity'
 
 export const ADVENTURE_SHAPES = ['circle', 'triangle', 'diamond'] as const
 export type AdventureShape = (typeof ADVENTURE_SHAPES)[number]
@@ -104,13 +108,19 @@ export class Entry {
   mapY!: number
 
   /**
-   * Reserved for a future multi-user migration (see server/src/auth for the
-   * current single-user auth model). Always null today — nothing writes it —
-   * but having the column now means that migration needs no backfill against
-   * live data.
+   * Owner (users.id). Every read/write is scoped by it — a row another user
+   * owns is indistinguishable from a missing one (404). Nullable only for
+   * rows that predate accounts; the first user to sign in inherits them (see
+   * UsersRepository.createClaimingLegacyRowsIfFirst), after which new rows
+   * always carry an owner.
    */
+  @Index()
   @Column({ type: 'int', nullable: true })
   userId?: number | null
+
+  @ManyToOne(() => User, { nullable: true })
+  @JoinColumn({ name: 'userId' })
+  user?: User | null
 
   /**
    * Optimistic-concurrency counter (#24). Starts at 1 on create and is

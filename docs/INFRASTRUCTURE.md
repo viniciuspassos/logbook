@@ -46,6 +46,9 @@ docker compose down           # stop; named volumes (db data, uploads) persist
 docker compose down -v        # stop and also wipe db/upload volumes
 ```
 
+`GOOGLE_CLIENT_ID` and `ALLOWED_EMAILS` must be set (shell or a git-ignored root `.env`) before
+`docker compose up` will start the backend — see "Backend authentication" below.
+
 Services:
 
 - **`db`** — official `postgres:16.4-bookworm` image, credentials `logbook`/`logbook`/`logbook`
@@ -129,7 +132,7 @@ entity has to generate and commit a migration, the same way they'd write a test 
   by `npm run migration:*` (via `typeorm-ts-node-commonjs`, see `server/package.json`), not by the
   running app. It runs outside Nest's DI entirely, so it loads `server/.env` itself (via `dotenv`)
   and only needs `DATABASE_URL` — not the full `AppConfig` the app needs (which also requires
-  `AUTH_PASSWORD_HASH`, unrelated to migrations). It explicitly lists every entity
+  `GOOGLE_CLIENT_ID`/`ALLOWED_EMAILS`, unrelated to migrations). It explicitly lists every entity
   (`server/src/database/entities.ts`) because it has no Nest module graph to discover them from;
   the running app instead uses `autoLoadEntities: true` via each module's own
   `TypeOrmModule.forFeature()` registration.
@@ -163,19 +166,34 @@ entity has to generate and commit a migration, the same way they'd write a test 
 ## Backend authentication (`server/src/auth/`)
 
 Now that the server is canonical (see `docs/ARCHITECTURE.md` → "Source of truth"), every
-entries/attachments route requires a session. Single-user, httpOnly session cookie — full design
-rationale lives in the auth PR description; this section is the operational summary.
+entries/attachments route requires a session. **Sign in with Google is the only login method**
+(the earlier shared-password login, `AUTH_PASSWORD_HASH` and `npm run hash-password` are gone), and
+every row is scoped to the signed-in user. The session is an httpOnly cookie — full design
+rationale lives in the auth PR descriptions; this section is the operational summary.
 
-- **`AUTH_PASSWORD_HASH`** (required, no default outside Docker Compose) — a scrypt hash of the
-  single-user login password, generated with `npm run hash-password -- "<password>"` inside
-  `server/` and pasted into `server/.env`. The plaintext password is never stored anywhere,
-  including env vars — only its hash. `docker-compose.yml` bakes in a default hash (of
-  `logbook-dev-password`) purely for `docker compose up` to work out of the box, the same way it
-  bakes in the default Postgres `logbook`/`logbook` credentials — replace it for anything beyond
-  throwaway local use. Note the hash format is `$`-delimited (`scrypt$<cost>$<saltHex>$<hashHex>`),
-  which needs every `$` doubled to `$$` when set as a literal in `docker-compose.yml`'s
-  `environment:` block — Compose otherwise treats a single `$` as the start of a variable
-  reference and silently mangles the value.
+- **Sign-in flow**: the browser gets an ID token from Google Identity Services and sends it to
+  `POST /auth/google` (`{ "idToken": "..." }`). `GoogleTokenVerifier`
+  (`server/src/auth/google-token-verifier.service.ts`, a thin adapter over `google-auth-library`)
+  checks the signature, `aud` (must equal `GOOGLE_CLIENT_ID`), `iss` and `exp`, and requires
+  `email_verified`. A bad token or unverified e-mail is `401`; a verified e-mail that is not in
+  `ALLOWED_EMAILS` is `403`. On success the same httpOnly session + CSRF cookies as before are set.
+  `GET /auth/me` (protected) returns `{ id, email, name, picture }` for the session's user, and
+  `POST /auth/logout` is unchanged.
+- **`GOOGLE_CLIENT_ID`** (required, no default) — the OAuth 2.0 *Web application* client ID from
+  Google Cloud Console. It is public (the frontend ships it too), not a secret, but specific to
+  your Google project, so `docker-compose.yml` reads it from the shell / a git-ignored root `.env`
+  (`${GOOGLE_CLIENT_ID:?...}`) instead of committing a value; compose refuses to start without it.
+- **`ALLOWED_EMAILS`** (required, at least one address) — comma-separated, case-insensitive
+  allowlist, parsed once in `loadConfig`. Same compose treatment as `GOOGLE_CLIENT_ID`.
+- **Users and data ownership**: accounts live in a `users` table keyed by Google's stable `sub`
+  claim (never the e-mail, which can change or be recycled); e-mail/name/picture are refreshed
+  from each verified token. `entries`, `attachments` and `sessions` carry a `userId` foreign key;
+  every entries/attachments query is filtered by the session's user, and an id belonging to
+  another user answers `404` (not `403`) so ids can't be probed. **The first user to sign in
+  inherits every pre-existing `entries`/`attachments` row with `userId IS NULL`**, in the same
+  transaction that creates their account; later users never take rows from them. Migration
+  `GoogleUsers` deletes existing sessions (they were password sessions with no user), so everyone
+  signs in again once after upgrading.
 - **`SESSION_TTL_DAYS`** (optional, default `30`) — how long a session cookie lives before
   expiring. It slides forward on use (renewed once less than half the TTL remains) rather than on
   a fixed schedule, so a session doesn't get a full database write on every single request. The
@@ -194,7 +212,7 @@ rationale lives in the auth PR description; this section is the operational summ
   non-httpOnly `logbook_csrf` cookie, echoed back in an `X-CSRF-Token` header on every mutating
   request and checked against the session's stored copy) is layered on top and doesn't depend on
   that decision. See `server/src/auth/csrf.guard.ts` for the implementation.
-- **`/health` and `POST /auth/login`** are the only public routes (`@Public()`), via a global guard
+- **`/health` and `POST /auth/google`** are the only public routes (`@Public()`), via a global guard
   registered in `AuthModule` — every other route is protected by default rather than opted in
   per-controller, so a new controller added later doesn't ship unauthenticated by omission.
 

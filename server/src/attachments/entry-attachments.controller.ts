@@ -9,6 +9,7 @@ import {
   UseInterceptors,
 } from '@nestjs/common'
 import { FileInterceptor } from '@nestjs/platform-express'
+import { CurrentUserId } from '../auth/current-user.decorator'
 import { AttachmentsService } from './attachments.service'
 import type { Attachment } from './attachment.entity'
 
@@ -26,6 +27,7 @@ export class EntryAttachmentsController {
   @UseInterceptors(FileInterceptor('file'))
   async upload(
     @Param('entryId', ParseIntPipe) entryId: number,
+    @CurrentUserId() userId: number,
     @UploadedFile() file?: Express.Multer.File,
   ): Promise<Attachment> {
     if (!file) {
@@ -34,14 +36,17 @@ export class EntryAttachmentsController {
     // file.mimetype is the client-declared Content-Type and is deliberately
     // never forwarded — AttachmentsService derives the real type from the
     // file's own bytes (#19).
-    return this.attachmentsService.uploadForEntry(entryId, {
+    return this.attachmentsService.uploadForEntry(entryId, userId, {
       buffer: file.buffer,
       originalFilename: file.originalname,
     })
   }
 
   @Get()
-  list(@Param('entryId', ParseIntPipe) entryId: number): Promise<Attachment[]> {
-    return this.attachmentsService.listForEntry(entryId)
+  list(
+    @Param('entryId', ParseIntPipe) entryId: number,
+    @CurrentUserId() userId: number,
+  ): Promise<Attachment[]> {
+    return this.attachmentsService.listForEntry(entryId, userId)
   }
 }

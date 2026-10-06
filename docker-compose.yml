@@ -55,17 +55,16 @@ services:
       # src/lib/sync/attachmentValidation.ts. Overriding it lower here makes the
       # client queue photos the server will always reject with 413 (#92).
 
-      # Dev-only default credential, committed here the same way the
-      # Postgres user/password above are — this is local/opt-in infra only,
-      # not a hosted deployment (see the file header). Hashes the password
-      # "logbook-dev-password"; log in locally with that. Generate your own
-      # with `npm run hash-password -- "<password>"` for anything beyond
-      # throwaway local use, and override this var rather than editing it
-      # in place if you do.
-      # `$$` escapes a literal `$` — Compose interpolates single `$` as a
-      # shell-style variable reference, which would otherwise mangle this
-      # `$`-delimited hash format (see src/auth/password-hasher.service.ts).
-      AUTH_PASSWORD_HASH: "scrypt$$16384$$02e6cd9dd6b706bead3e739e83d73e71$$6b74546315b091b7565f7d9029a90846810970100d632e700e6cdb40261b4de7997457fefdb3d1765b8c269bf05bece95f5d19c78af4597683f4db2c9362ae23"
+      # Sign in with Google is the only login method. Both values are
+      # deployment-specific, so they come from your shell or from a
+      # git-ignored `.env` file next to this compose file — never commit real
+      # values. `docker compose up` refuses to start until both are set.
+      #   GOOGLE_CLIENT_ID: the OAuth "Web application" client ID from Google
+      #     Cloud Console (public, but specific to your project).
+      #   ALLOWED_EMAILS: comma-separated e-mail addresses allowed to sign in.
+      # See docs/INFRASTRUCTURE.md -> "Backend authentication".
+      GOOGLE_CLIENT_ID: ${GOOGLE_CLIENT_ID:?Set GOOGLE_CLIENT_ID to your Google OAuth web client ID (see docs/INFRASTRUCTURE.md)}
+      ALLOWED_EMAILS: ${ALLOWED_EMAILS:?Set ALLOWED_EMAILS to a comma-separated list of e-mail addresses allowed to sign in}
     volumes:
       # Named volume so uploaded files survive container restarts/recreation
       # (server/.env.example flags the bare default `./uploads` as non-durable).

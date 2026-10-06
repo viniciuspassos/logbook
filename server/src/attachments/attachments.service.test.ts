@@ -19,6 +19,8 @@ const HTML_PAYLOAD_BYTES = Buffer.from(
   'utf-8',
 )
 
+const USER_ID = 7
+
 function fakeEntry(overrides: Partial<Entry> = {}): Entry {
   return {
     id: 10,
@@ -91,7 +93,7 @@ describe('AttachmentsService', () => {
     attachmentsRepository.create.mockResolvedValue(created)
     const service = new AttachmentsService(attachmentsRepository, entriesRepository, fileStorage)
 
-    const result = await service.uploadForEntry(10, {
+    const result = await service.uploadForEntry(10, USER_ID, {
       buffer: JPEG_BYTES,
       originalFilename: 'summit.jpg',
     })
@@ -103,11 +105,13 @@ describe('AttachmentsService', () => {
     })
     expect(attachmentsRepository.create).toHaveBeenCalledWith({
       entryId: 10,
+      userId: USER_ID,
       originalFilename: 'summit.jpg',
       storageKey: 'uuid-summit.jpg',
       mimeType: 'image/jpeg',
       sizeBytes: JPEG_BYTES.byteLength,
     })
+    expect(entriesRepository.findById).toHaveBeenCalledWith(10, USER_ID)
     expect(result).toBe(created)
   })
 
@@ -117,7 +121,7 @@ describe('AttachmentsService', () => {
     const service = new AttachmentsService(attachmentsRepository, entriesRepository, fileStorage)
 
     await expect(
-      service.uploadForEntry(999, {
+      service.uploadForEntry(999, USER_ID, {
         buffer: JPEG_BYTES,
         originalFilename: 'x.jpg',
       }),
@@ -131,7 +135,7 @@ describe('AttachmentsService', () => {
     const service = new AttachmentsService(attachmentsRepository, entriesRepository, fileStorage)
 
     await expect(
-      service.uploadForEntry(10, {
+      service.uploadForEntry(10, USER_ID, {
         buffer: HTML_PAYLOAD_BYTES,
         originalFilename: 'summit.png',
       }),
@@ -146,7 +150,7 @@ describe('AttachmentsService', () => {
     const service = new AttachmentsService(attachmentsRepository, entriesRepository, fileStorage)
 
     await expect(
-      service.uploadForEntry(10, {
+      service.uploadForEntry(10, USER_ID, {
         buffer: Buffer.from('not an image at all'),
         originalFilename: 'totally-legit.jpeg',
       }),
@@ -161,7 +165,8 @@ describe('AttachmentsService', () => {
     attachmentsRepository.findByEntryId.mockResolvedValue(rows)
     const service = new AttachmentsService(attachmentsRepository, entriesRepository, fileStorage)
 
-    await expect(service.listForEntry(10)).resolves.toBe(rows)
+    await expect(service.listForEntry(10, USER_ID)).resolves.toBe(rows)
+    expect(attachmentsRepository.findByEntryId).toHaveBeenCalledWith(10, USER_ID)
   })
 
   it('listForEntry throws NotFoundException when the entry does not exist', async () => {
@@ -169,7 +174,7 @@ describe('AttachmentsService', () => {
     entriesRepository.findById.mockResolvedValue(null)
     const service = new AttachmentsService(attachmentsRepository, entriesRepository, fileStorage)
 
-    await expect(service.listForEntry(999)).rejects.toBeInstanceOf(NotFoundException)
+    await expect(service.listForEntry(999, USER_ID)).rejects.toBeInstanceOf(NotFoundException)
   })
 
   it('getMetadata returns the attachment when found', async () => {
@@ -178,7 +183,8 @@ describe('AttachmentsService', () => {
     attachmentsRepository.findById.mockResolvedValue(row)
     const service = new AttachmentsService(attachmentsRepository, entriesRepository, fileStorage)
 
-    await expect(service.getMetadata(1)).resolves.toBe(row)
+    await expect(service.getMetadata(1, USER_ID)).resolves.toBe(row)
+    expect(attachmentsRepository.findById).toHaveBeenCalledWith(1, USER_ID)
   })
 
   it('getMetadata throws NotFoundException when missing', async () => {
@@ -186,7 +192,7 @@ describe('AttachmentsService', () => {
     attachmentsRepository.findById.mockResolvedValue(null)
     const service = new AttachmentsService(attachmentsRepository, entriesRepository, fileStorage)
 
-    await expect(service.getMetadata(999)).rejects.toBeInstanceOf(NotFoundException)
+    await expect(service.getMetadata(999, USER_ID)).rejects.toBeInstanceOf(NotFoundException)
   })
 
   it('getFile returns metadata plus the file bytes, with contentType/disposition derived from the actual bytes (not the stored mimeType)', async () => {
@@ -196,7 +202,7 @@ describe('AttachmentsService', () => {
     fileStorage.read.mockResolvedValue(JPEG_BYTES)
     const service = new AttachmentsService(attachmentsRepository, entriesRepository, fileStorage)
 
-    const result = await service.getFile(1)
+    const result = await service.getFile(1, USER_ID)
 
     expect(fileStorage.read).toHaveBeenCalledWith(row.storageKey)
     expect(result).toEqual({
@@ -217,7 +223,7 @@ describe('AttachmentsService', () => {
     fileStorage.read.mockResolvedValue(HTML_PAYLOAD_BYTES)
     const service = new AttachmentsService(attachmentsRepository, entriesRepository, fileStorage)
 
-    const result = await service.getFile(1)
+    const result = await service.getFile(1, USER_ID)
 
     expect(result.contentType).toBe('application/octet-stream')
     expect(result.disposition).toBe('attachment')
@@ -228,7 +234,7 @@ describe('AttachmentsService', () => {
     attachmentsRepository.findById.mockResolvedValue(null)
     const service = new AttachmentsService(attachmentsRepository, entriesRepository, fileStorage)
 
-    await expect(service.getFile(999)).rejects.toBeInstanceOf(NotFoundException)
+    await expect(service.getFile(999, USER_ID)).rejects.toBeInstanceOf(NotFoundException)
   })
 
   it('getFile throws NotFoundException when the row exists but the stored bytes are missing', async () => {
@@ -237,7 +243,7 @@ describe('AttachmentsService', () => {
     fileStorage.read.mockRejectedValue(new StorageFileNotFoundError('uuid-summit.jpg'))
     const service = new AttachmentsService(attachmentsRepository, entriesRepository, fileStorage)
 
-    await expect(service.getFile(1)).rejects.toBeInstanceOf(NotFoundException)
+    await expect(service.getFile(1, USER_ID)).rejects.toBeInstanceOf(NotFoundException)
   })
 
   // Behavior change (#35): this used to delete the stored file *before* the
@@ -261,9 +267,9 @@ describe('AttachmentsService', () => {
     })
     const service = new AttachmentsService(attachmentsRepository, entriesRepository, fileStorage)
 
-    await service.remove(1)
+    await service.remove(1, USER_ID)
 
-    expect(attachmentsRepository.remove).toHaveBeenCalledWith(1)
+    expect(attachmentsRepository.remove).toHaveBeenCalledWith(1, USER_ID)
     expect(fileStorage.delete).toHaveBeenCalledWith(row.storageKey)
     expect(calls).toEqual(['row', 'file'])
   })
@@ -279,9 +285,9 @@ describe('AttachmentsService', () => {
 
     // A disk error must never make an attachment undeletable: the row is
     // gone and the caller sees success, with the stranded file logged.
-    await expect(service.remove(7)).resolves.toBeUndefined()
+    await expect(service.remove(7, USER_ID)).resolves.toBeUndefined()
 
-    expect(attachmentsRepository.remove).toHaveBeenCalledWith(7)
+    expect(attachmentsRepository.remove).toHaveBeenCalledWith(7, USER_ID)
     expect(warnSpy).toHaveBeenCalledWith(expect.stringContaining('key-7'))
     warnSpy.mockRestore()
   })
@@ -291,7 +297,7 @@ describe('AttachmentsService', () => {
     attachmentsRepository.findById.mockResolvedValue(null)
     const service = new AttachmentsService(attachmentsRepository, entriesRepository, fileStorage)
 
-    await expect(service.remove(999)).rejects.toBeInstanceOf(NotFoundException)
+    await expect(service.remove(999, USER_ID)).rejects.toBeInstanceOf(NotFoundException)
     expect(fileStorage.delete).not.toHaveBeenCalled()
   })
 })

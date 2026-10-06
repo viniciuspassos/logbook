@@ -6,8 +6,10 @@ export interface AppConfig {
   databaseUrl: string
   uploadDir: string
   maxUploadSizeBytes: number
-  /** scrypt hash of the single-user login password, see auth/password-hasher.service.ts. */
-  authPasswordHash: string
+  /** OAuth Web client ID a Google ID token's `aud` must equal, see auth/google-token-verifier.service.ts. */
+  googleClientId: string
+  /** Lowercased e-mail addresses allowed to sign in; anyone else gets 403. */
+  allowedEmails: string[]
   /** Session lifetime, extended (sliding) on use — see auth/sessions.service.ts. */
   sessionTtlDays: number
   /** Whether the `Secure` cookie attribute is set on session/CSRF cookies. */
@@ -24,6 +26,13 @@ const DEFAULT_PORT = 3000
 const DEFAULT_MAX_UPLOAD_SIZE_BYTES = 25 * 1024 * 1024
 const DEFAULT_SESSION_TTL_DAYS = 30
 
+function parseAllowedEmails(raw: string | undefined): string[] {
+  return (raw ?? '')
+    .split(',')
+    .map((email) => email.trim().toLowerCase())
+    .filter((email) => email.length > 0)
+}
+
 /**
  * Parses and validates process.env into a typed AppConfig. Pure function (no
  * global process.env access unless the caller omits `env`) so it's trivial to
@@ -37,11 +46,18 @@ export function loadConfig(env: Env = process.env): AppConfig {
     )
   }
 
-  const authPasswordHash = env.AUTH_PASSWORD_HASH
-  if (!authPasswordHash) {
+  const googleClientId = env.GOOGLE_CLIENT_ID
+  if (!googleClientId) {
     throw new Error(
-      'AUTH_PASSWORD_HASH environment variable is required (see server/.env.example). ' +
-        'Generate one with `npm run hash-password -- <password>`.',
+      'GOOGLE_CLIENT_ID environment variable is required (see server/.env.example).',
+    )
+  }
+
+  const allowedEmails = parseAllowedEmails(env.ALLOWED_EMAILS)
+  if (allowedEmails.length === 0) {
+    throw new Error(
+      'ALLOWED_EMAILS environment variable is required: a comma-separated list of ' +
+        'e-mail addresses allowed to sign in (see server/.env.example).',
     )
   }
 
@@ -55,7 +71,8 @@ export function loadConfig(env: Env = process.env): AppConfig {
     maxUploadSizeBytes: env.MAX_UPLOAD_SIZE_BYTES
       ? Number(env.MAX_UPLOAD_SIZE_BYTES)
       : DEFAULT_MAX_UPLOAD_SIZE_BYTES,
-    authPasswordHash,
+    googleClientId,
+    allowedEmails,
     sessionTtlDays: env.SESSION_TTL_DAYS
       ? Number(env.SESSION_TTL_DAYS)
       : DEFAULT_SESSION_TTL_DAYS,

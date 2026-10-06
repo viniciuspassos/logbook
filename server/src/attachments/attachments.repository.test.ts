@@ -2,6 +2,8 @@ import type { Repository } from 'typeorm'
 import { AttachmentsRepository } from './attachments.repository'
 import type { Attachment } from './attachment.entity'
 
+const USER_ID = 7
+
 function fakeAttachment(overrides: Partial<Attachment> = {}): Attachment {
   return {
     id: 1,
@@ -32,10 +34,10 @@ describe('AttachmentsRepository', () => {
     ormRepo.find.mockResolvedValue(rows)
     const repo = new AttachmentsRepository(ormRepo)
 
-    const result = await repo.findByEntryId(10)
+    const result = await repo.findByEntryId(10, USER_ID)
 
     expect(ormRepo.find).toHaveBeenCalledWith({
-      where: { entryId: 10 },
+      where: { entryId: 10, userId: USER_ID },
       order: { id: 'DESC' },
     })
     expect(result).toBe(rows)
@@ -47,8 +49,8 @@ describe('AttachmentsRepository', () => {
     ormRepo.findOneBy.mockResolvedValue(row)
     const repo = new AttachmentsRepository(ormRepo)
 
-    await expect(repo.findById(1)).resolves.toBe(row)
-    expect(ormRepo.findOneBy).toHaveBeenCalledWith({ id: 1 })
+    await expect(repo.findById(1, USER_ID)).resolves.toBe(row)
+    expect(ormRepo.findOneBy).toHaveBeenCalledWith({ id: 1, userId: USER_ID })
   })
 
   it('findById returns null when not found', async () => {
@@ -56,7 +58,7 @@ describe('AttachmentsRepository', () => {
     ormRepo.findOneBy.mockResolvedValue(null)
     const repo = new AttachmentsRepository(ormRepo)
 
-    await expect(repo.findById(999)).resolves.toBeNull()
+    await expect(repo.findById(999, USER_ID)).resolves.toBeNull()
   })
 
   it('create builds and saves a new attachment row', async () => {
@@ -80,8 +82,8 @@ describe('AttachmentsRepository', () => {
     ormRepo.delete.mockResolvedValue({ affected: 1, raw: {} })
     const repo = new AttachmentsRepository(ormRepo)
 
-    await expect(repo.remove(1)).resolves.toBe(true)
-    expect(ormRepo.delete).toHaveBeenCalledWith(1)
+    await expect(repo.remove(1, USER_ID)).resolves.toBe(true)
+    expect(ormRepo.delete).toHaveBeenCalledWith({ id: 1, userId: USER_ID })
   })
 
   it('remove returns false when nothing was deleted', async () => {
@@ -89,6 +91,6 @@ describe('AttachmentsRepository', () => {
     ormRepo.delete.mockResolvedValue({ affected: 0, raw: {} })
     const repo = new AttachmentsRepository(ormRepo)
 
-    await expect(repo.remove(999)).resolves.toBe(false)
+    await expect(repo.remove(999, USER_ID)).resolves.toBe(false)
   })
 })

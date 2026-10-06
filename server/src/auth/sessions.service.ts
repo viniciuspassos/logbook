@@ -33,12 +33,13 @@ export class SessionsService {
     private readonly options: SessionsServiceOptions,
   ) {}
 
-  async create(): Promise<CreatedSession> {
+  async create(userId: number): Promise<CreatedSession> {
     const sessionToken = generateToken()
     const csrfToken = generateToken()
     const expiresAt = this.newExpiry()
 
     await this.sessionsRepository.create({
+      userId,
       tokenHash: hashToken(sessionToken),
       csrfToken,
       expiresAt,

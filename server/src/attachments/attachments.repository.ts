@@ -10,12 +10,12 @@ export class AttachmentsRepository {
     @InjectRepository(Attachment) private readonly orm: Repository<Attachment>,
   ) {}
 
-  findByEntryId(entryId: number): Promise<Attachment[]> {
-    return this.orm.find({ where: { entryId }, order: { id: 'DESC' } })
+  findByEntryId(entryId: number, userId: number): Promise<Attachment[]> {
+    return this.orm.find({ where: { entryId, userId }, order: { id: 'DESC' } })
   }
 
-  findById(id: number): Promise<Attachment | null> {
-    return this.orm.findOneBy({ id })
+  findById(id: number, userId: number): Promise<Attachment | null> {
+    return this.orm.findOneBy({ id, userId })
   }
 
   async create(data: Omit<Attachment, 'id' | 'createdAt'>): Promise<Attachment> {
@@ -23,8 +23,8 @@ export class AttachmentsRepository {
     return this.orm.save(draft)
   }
 
-  async remove(id: number): Promise<boolean> {
-    const result = await this.orm.delete(id)
+  async remove(id: number, userId: number): Promise<boolean> {
+    const result = await this.orm.delete({ id, userId })
     return (result.affected ?? 0) > 0
   }
 }

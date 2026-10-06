@@ -3,19 +3,27 @@ import { loadConfig } from './configuration'
 describe('loadConfig', () => {
   const baseEnv = {
     DATABASE_URL: 'postgres://user:pass@localhost:5432/logbook',
-    AUTH_PASSWORD_HASH: 'scrypt$16384$abcd$ef01',
+    GOOGLE_CLIENT_ID: 'client-id.apps.googleusercontent.com',
+    ALLOWED_EMAILS: 'me@example.com',
   }
 
   it('throws if DATABASE_URL is missing', () => {
-    expect(() => loadConfig({ AUTH_PASSWORD_HASH: baseEnv.AUTH_PASSWORD_HASH })).toThrow(
-      /DATABASE_URL/,
-    )
+    const { DATABASE_URL: _omitted, ...rest } = baseEnv
+    expect(() => loadConfig(rest)).toThrow(/DATABASE_URL/)
   })
 
-  it('throws if AUTH_PASSWORD_HASH is missing', () => {
-    expect(() => loadConfig({ DATABASE_URL: baseEnv.DATABASE_URL })).toThrow(
-      /AUTH_PASSWORD_HASH/,
-    )
+  it('throws if GOOGLE_CLIENT_ID is missing', () => {
+    const { GOOGLE_CLIENT_ID: _omitted, ...rest } = baseEnv
+    expect(() => loadConfig(rest)).toThrow(/GOOGLE_CLIENT_ID/)
+  })
+
+  it('throws if ALLOWED_EMAILS is missing', () => {
+    const { ALLOWED_EMAILS: _omitted, ...rest } = baseEnv
+    expect(() => loadConfig(rest)).toThrow(/ALLOWED_EMAILS/)
+  })
+
+  it('throws if ALLOWED_EMAILS contains no addresses', () => {
+    expect(() => loadConfig({ ...baseEnv, ALLOWED_EMAILS: ' , ,' })).toThrow(/ALLOWED_EMAILS/)
   })
 
   it('applies defaults when optional vars are absent', () => {
@@ -27,7 +35,8 @@ describe('loadConfig', () => {
       databaseUrl: baseEnv.DATABASE_URL,
       uploadDir: expect.stringContaining('uploads'),
       maxUploadSizeBytes: 25 * 1024 * 1024,
-      authPasswordHash: baseEnv.AUTH_PASSWORD_HASH,
+      googleClientId: baseEnv.GOOGLE_CLIENT_ID,
+      allowedEmails: ['me@example.com'],
       sessionTtlDays: 30,
       cookieSecure: false,
     })
@@ -49,10 +58,20 @@ describe('loadConfig', () => {
       databaseUrl: baseEnv.DATABASE_URL,
       uploadDir: '/data/uploads',
       maxUploadSizeBytes: 2048,
-      authPasswordHash: baseEnv.AUTH_PASSWORD_HASH,
+      googleClientId: baseEnv.GOOGLE_CLIENT_ID,
+      allowedEmails: ['me@example.com'],
       sessionTtlDays: 7,
       cookieSecure: true,
     })
+  })
+
+  it('trims and lowercases a comma-separated ALLOWED_EMAILS list, dropping blanks', () => {
+    const config = loadConfig({
+      ...baseEnv,
+      ALLOWED_EMAILS: ' Me@Example.com, friend@example.com ,,',
+    })
+
+    expect(config.allowedEmails).toEqual(['me@example.com', 'friend@example.com'])
   })
 
   it('treats NODE_ENV=production as requiring secure cookies', () => {
