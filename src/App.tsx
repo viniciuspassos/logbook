@@ -106,7 +106,7 @@ function App() {
 
   return (
     <>
-    {auth.needsSignIn && <SignInBanner onSignIn={() => setReauthOpen(true)} />}
+    {auth.needsSignIn && <SignInBanner onSignIn={() => setReauthOpen(true)} onDismiss={auth.dismissSignInPrompt} />}
     {auth.needsSignIn && reauthOpen && (
       <div className="reauth">
         <LoginScreen

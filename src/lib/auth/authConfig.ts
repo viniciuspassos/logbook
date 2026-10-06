@@ -49,15 +49,20 @@ function parseMethod(value: unknown): GoogleMethod | null {
 }
 
 /**
- * Validates a `GET /auth/config` body. Unknown or malformed *methods* are
- * dropped; a body that isn't `{ methods: [...] }` at all is `null`, meaning
- * "unknown" (never "none": a garbled answer must not switch login off).
+ * Validates a `GET /auth/config` body. Only a well-formed `{ methods: [] }`
+ * means login is off. Unusable *methods* are dropped, but if methods are listed
+ * and none survives (a google method with no client ID, only types we don't
+ * know), or the body isn't `{ methods: [...] }` at all, the answer is `null`,
+ * meaning "unknown": a garbled or too-new answer must never switch login off
+ * (and is never cached as if it had).
  */
 export function parseAuthConfig(value: unknown): AuthConfig | null {
   if (typeof value !== 'object' || value === null) return null
   const { methods } = value as { methods?: unknown }
   if (!Array.isArray(methods)) return null
-  return { methods: methods.map(parseMethod).filter((method): method is GoogleMethod => method !== null) }
+  const usable = methods.map(parseMethod).filter((method): method is GoogleMethod => method !== null)
+  if (methods.length > 0 && usable.length === 0) return null
+  return { methods: usable }
 }
 
 /** The Google client ID the server gave, if it offers Google login. */

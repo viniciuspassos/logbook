@@ -12,7 +12,7 @@ import {
 import { checkLocalOwner, claimLocalData, hasLocalData } from '../db/localOwner.ts'
 import { getAuthConfig, getMe, loginWithGoogle, logout as logoutRequest } from '../sync/authApi.ts'
 import { SyncAuthError } from '../sync/errors.ts'
-import { drainOutbox, pauseDrains, resumeDrains, type DrainSummary } from '../sync/outboxRunner.ts'
+import { drainOutbox, pauseDrains, resumeDrains } from '../sync/outboxRunner.ts'
 import { UNKNOWN_CONFIG, knownConfig, type AuthConfig, type ConfigState } from './authConfig.ts'
 import type { AuthProfile, Session } from '../../types/auth.ts'
 
@@ -34,6 +34,10 @@ import type { AuthProfile, Session } from '../../types/auth.ts'
 /** Why drains are held back, so the two guards can't release each other (see outboxRunner.ts). */
 export const ACCOUNT_PAUSE = 'account'
 export const AUTH_MODE_PAUSE = 'auth-mode'
+/** Held in `google` mode until /auth/me answered and the owner check passed, so nothing uploads under an unmatched session. */
+export const STARTUP_VERIFY_PAUSE = 'startup-verify'
+/** Held from sign-out until the next sign-in: a live cookie must not let an `online` drain upload. */
+export const SIGNED_OUT_PAUSE = 'signed-out'
 
 export const LOADING: Session = { state: 'loading', profile: null, unverified: false, pendingSwitch: null }
 export const SIGNED_OUT: Session = { state: 'signedOut', profile: null, unverified: false, pendingSwitch: null }
@@ -44,11 +48,6 @@ export function verifiedSession(profile: AuthProfile | null): Session {
 
 export function unverifiedSession(profile: AuthProfile | null): Session {
   return { state: 'signedIn', profile, unverified: true, pendingSwitch: null }
-}
-
-/** A drain that got an answer from the server (even a 401), as opposed to one that never left the device. */
-export function drainReachedServer(summary: DrainSummary): boolean {
-  return !['unreachable', 'unsupported', 'aborted'].includes(summary.stoppedReason)
 }
 
 /**
@@ -63,6 +62,8 @@ export async function settleProfile(profile: AuthProfile, signal?: AbortSignal):
     await pauseDrains(ACCOUNT_PAUSE)
     return { ...SIGNED_OUT, pendingSwitch: profile }
   }
+  // Confirmed as the owner: the only point at which the account guard lifts.
+  resumeDrains(ACCOUNT_PAUSE)
   if (!signal?.aborted) await putCachedIdentity(profile)
   return verifiedSession(profile)
 }
@@ -140,10 +141,12 @@ async function fetchProfileWithRetry(): Promise<AuthProfile | null> {
  * session is live server-side, so the user opens unverified rather than being
  * stuck at the gate; the profile is filled in later by `verifySession`.
  *
- * Drains are paused *before* the new session exists and stay paused if the
- * account turns out to be a different one (`pendingSwitch`), so the previous
- * account's queue can't be uploaded under it, not even in the gap before the
- * ownership check.
+ * Drains are paused *before* the new session exists and are released only by
+ * a successful ownership check (`settleProfile`). They stay paused for a
+ * different account (`pendingSwitch`) and for an unverified result (the
+ * profile couldn't be fetched, so there is nothing to check yet; a later
+ * `verifySession` releases them), so the previous account's queue can't be
+ * uploaded under a session that hasn't been matched to the device.
  */
 export async function signInWithIdToken(idToken: string): Promise<Session> {
   await pauseDrains(ACCOUNT_PAUSE)
@@ -151,13 +154,14 @@ export async function signInWithIdToken(idToken: string): Promise<Session> {
   try {
     await loginWithGoogle(idToken)
     await clearPendingLogout()
+    // A session exists now, so the sign-out pause has done its job.
+    resumeDrains(SIGNED_OUT_PAUSE)
     const profile = await fetchProfileWithRetry()
     session = profile ? await settleProfile(profile) : unverifiedSession(null)
   } catch (error) {
     resumeDrains(ACCOUNT_PAUSE)
     throw error
   }
-  if (session.pendingSwitch === null) resumeDrains(ACCOUNT_PAUSE)
   return session
 }
 
@@ -167,6 +171,7 @@ export async function adoptAccount(profile: AuthProfile): Promise<Session> {
   await putCachedIdentity(profile)
   await clearPendingLogout()
   resumeDrains(ACCOUNT_PAUSE)
+  resumeDrains(SIGNED_OUT_PAUSE)
   return verifiedSession(profile)
 }
 
@@ -192,12 +197,17 @@ async function drainBeforeSignOut(): Promise<void> {
 
 /**
  * Signs out durably. With `flushFirst` it tries to push the queue while the
- * session is still valid (so unsynced entries reach the right account).
+ * session is still valid (so unsynced entries reach the right account), then
+ * pauses every drain.
  * The marker is written before anything else can fail, and removed only once
  * the server confirms the logout.
  */
 export async function signOut(flushFirst: boolean): Promise<void> {
   if (flushFirst) await drainBeforeSignOut()
+  // After the flush, before anything is cleared: with the cookie still alive
+  // (offline sign-out), an `online` drain would otherwise upload for a user
+  // who signed out. Lifted by the next sign-in.
+  await pauseDrains(SIGNED_OUT_PAUSE)
   await setPendingLogout()
   await clearCachedIdentity()
   await retryServerLogout()
@@ -273,4 +283,21 @@ export async function resolveAuthConfig(signal: AbortSignal, apply: (state: Conf
   if (signal.aborted) return
   if (fresh) apply(knownConfig(fresh))
   else if (!cached) apply(UNKNOWN_CONFIG)
+}
+
+/**
+ * A drain was refused with a 403 (not an expired session; e.g. the CSRF cookie
+ * is stale). `GET /auth/me` re-syncs the cookies; then the drain is retried
+ * once. `'expired'` means /auth/me itself said 401, so the session really is
+ * gone; `'refused'` means it is still being refused (or the server can't be
+ * reached), which is a sync problem, not a sign-in one.
+ */
+export async function healRefusedDrain(): Promise<'recovered' | 'refused' | 'expired'> {
+  try {
+    await getMe()
+  } catch (error) {
+    return error instanceof SyncAuthError && error.status === 401 ? 'expired' : 'refused'
+  }
+  const summary = await drainOutbox()
+  return summary.stoppedReason === 'auth' ? 'refused' : 'recovered'
 }

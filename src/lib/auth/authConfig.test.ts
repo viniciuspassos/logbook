@@ -26,14 +26,26 @@ describe('parseAuthConfig', () => {
     expect(parsed).toEqual({ methods: [{ type: 'google', clientId: 'id' }] })
   })
 
-  it('treats a server that lists only unknown methods as having none we can use', () => {
-    expect(parseAuthConfig({ methods: [{ type: 'passkey' }] })).toEqual({ methods: [] })
+  it('keeps the usable method when it comes with a malformed google one', () => {
+    expect(parseAuthConfig({ methods: [{ type: 'google' }, { type: 'google', clientId: 'ok' }] })).toEqual({
+      methods: [{ type: 'google', clientId: 'ok' }],
+    })
   })
 
-  it('ignores a google method without a usable client ID', () => {
-    expect(parseAuthConfig({ methods: [{ type: 'google' }, { type: 'google', clientId: '  ' }, { type: 'google', clientId: 5 }] })).toEqual({
-      methods: [],
-    })
+  it('is unknown (null), never "off", when methods are listed but none is usable (only unknown types)', () => {
+    expect(parseAuthConfig({ methods: [{ type: 'passkey' }] })).toBeNull()
+  })
+
+  it.each([
+    ['no client ID', { type: 'google' }],
+    ['a blank client ID', { type: 'google', clientId: '  ' }],
+    ['a non-string client ID', { type: 'google', clientId: 5 }],
+  ])('is unknown (null), not "off", when the only google method has %s', (_label, method) => {
+    expect(parseAuthConfig({ methods: [method] })).toBeNull()
+  })
+
+  it('is unknown (null) when every listed method is garbage', () => {
+    expect(parseAuthConfig({ methods: ['x', null, 3, {}] })).toBeNull()
   })
 
   it('trims the client ID', () => {

@@ -32,6 +32,31 @@ describe('loginWithGoogle', () => {
     expect(init?.body).toBe(JSON.stringify({ idToken: 'google-id-token' }))
   })
 
+  it('sends X-Logbook-Client: web (login-CSRF protection) and a JSON content type', async () => {
+    const fetchMock = installFetch()
+    fetchMock.mockResolvedValue(jsonResponse(200, { status: 'ok' }))
+
+    await loginWithGoogle('google-id-token')
+
+    const headers = fetchMock.mock.calls[0][1]?.headers as Record<string, string>
+    expect(headers['X-Logbook-Client']).toBe('web')
+    expect(headers['Content-Type']).toBe('application/json')
+  })
+
+  it('does not send that header on any other auth call', async () => {
+    const fetchMock = installFetch()
+    fetchMock.mockResolvedValue(jsonResponse(200, { id: 'u', email: 'a@b.co', name: null, picture: null }))
+    await getMe()
+    fetchMock.mockResolvedValue(jsonResponse(200, { methods: [] }))
+    await getAuthConfig()
+    fetchMock.mockResolvedValue(jsonResponse(200, { status: 'ok' }))
+    await logout()
+
+    for (const [, init] of fetchMock.mock.calls) {
+      expect((init?.headers as Record<string, string>)['X-Logbook-Client']).toBeUndefined()
+    }
+  })
+
   it('rejects with the status when the token is rejected (401) or the account is not allowed (403)', async () => {
     const fetchMock = installFetch()
     fetchMock.mockResolvedValueOnce(jsonResponse(401, { message: 'Invalid token' }))
@@ -112,9 +137,9 @@ describe('getAuthConfig', () => {
     await expect(getAuthConfig()).resolves.toEqual({ methods: [] })
   })
 
-  it('ignores method types it does not know', async () => {
+  it('is unknown (null), not "off", when it lists only methods it does not know', async () => {
     installFetch().mockResolvedValue(jsonResponse(200, { methods: [{ type: 'passkey' }] }))
-    await expect(getAuthConfig()).resolves.toEqual({ methods: [] })
+    await expect(getAuthConfig()).resolves.toBeNull()
   })
 
   it('passes the abort signal through', async () => {

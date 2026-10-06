@@ -147,7 +147,7 @@ describe('renderGoogleSignInButton', () => {
     const script = gsiScript()
     expect(script).not.toBeNull()
     const gis = installGoogle()
-    script?.onload?.(new Event('load'))
+    script?.dispatchEvent(new Event('load'))
 
     await expect(pending).resolves.toEqual({ status: 'rendered' })
     expect(gis.renderButton).toHaveBeenCalled()
@@ -159,20 +159,20 @@ describe('renderGoogleSignInButton', () => {
 
     expect(document.head.querySelectorAll('script')).toHaveLength(1)
     installGoogle()
-    gsiScript()?.onload?.(new Event('load'))
+    gsiScript()?.dispatchEvent(new Event('load'))
     await Promise.all([first, second])
   })
 
   it('is unavailable (offline) when the script fails to load, and a retry injects a fresh tag', async () => {
     const pending = renderGoogleSignInButton(document.createElement('div'), { clientId: CLIENT_ID, onCredential: jest.fn() })
-    gsiScript()?.onerror?.(new Event('error'))
+    gsiScript()?.dispatchEvent(new Event('error'))
 
     await expect(pending).resolves.toEqual({ status: 'unavailable', reason: 'offline' })
     expect(gsiScript()).toBeNull()
 
     const retry = renderGoogleSignInButton(document.createElement('div'), { clientId: CLIENT_ID, onCredential: jest.fn() })
     expect(gsiScript()).not.toBeNull()
-    gsiScript()?.onerror?.(new Event('error'))
+    gsiScript()?.dispatchEvent(new Event('error'))
     await retry
   })
 
@@ -180,45 +180,118 @@ describe('renderGoogleSignInButton', () => {
     beforeEach(() => jest.useFakeTimers())
     afterEach(() => jest.useRealTimers())
 
-    it('gives up after the load timeout: unavailable (offline), stale tag removed', async () => {
-      const pending = renderGoogleSignInButton(document.createElement('div'), { clientId: CLIENT_ID, onCredential: jest.fn() })
+    function render(onCredential = jest.fn()) {
+      return renderGoogleSignInButton(document.createElement('div'), { clientId: CLIENT_ID, onCredential })
+    }
+
+    it('gives up after the load timeout: unavailable (offline), and the tag stays, since its request may still finish', async () => {
+      const pending = render()
       expect(gsiScript()).not.toBeNull()
 
       await jest.advanceTimersByTimeAsync(SCRIPT_LOAD_TIMEOUT_MS)
 
       await expect(pending).resolves.toEqual({ status: 'unavailable', reason: 'offline' })
-      expect(gsiScript()).toBeNull()
+      expect(gsiScript()).not.toBeNull()
     })
 
-    it('lets a retry inject a fresh script instead of reusing the dead load', async () => {
-      const first = renderGoogleSignInButton(document.createElement('div'), { clientId: CLIENT_ID, onCredential: jest.fn() })
+    it('lets a retry reuse the pending tag (no second script), with a fresh timeout', async () => {
+      const first = render()
       await jest.advanceTimersByTimeAsync(SCRIPT_LOAD_TIMEOUT_MS)
       await first
 
-      const retry = renderGoogleSignInButton(document.createElement('div'), { clientId: CLIENT_ID, onCredential: jest.fn() })
+      const retry = render()
+      expect(document.head.querySelectorAll('script')).toHaveLength(1)
       const gis = installGoogle()
-      expect(gsiScript()).not.toBeNull()
-      gsiScript()?.onload?.(new Event('load'))
+      gsiScript()?.dispatchEvent(new Event('load'))
 
       await expect(retry).resolves.toEqual({ status: 'rendered' })
-      expect(gis.renderButton).toHaveBeenCalled()
+      expect(gis.renderButton).toHaveBeenCalledTimes(1)
+    })
+
+    it('times out the retry too if the reused tag is still stalled', async () => {
+      await jest.advanceTimersByTimeAsync(0)
+      const first = render()
+      await jest.advanceTimersByTimeAsync(SCRIPT_LOAD_TIMEOUT_MS)
+      await first
+
+      const retry = render()
+      await jest.advanceTimersByTimeAsync(SCRIPT_LOAD_TIMEOUT_MS)
+
+      await expect(retry).resolves.toEqual({ status: 'unavailable', reason: 'offline' })
+      expect(document.head.querySelectorAll('script')).toHaveLength(1)
+    })
+
+    it('uses the global when the stalled request finishes after the timeout, with no new tag', async () => {
+      const first = render()
+      await jest.advanceTimersByTimeAsync(SCRIPT_LOAD_TIMEOUT_MS)
+      await first
+
+      const gis = installGoogle()
+      gsiScript()?.dispatchEvent(new Event('load'))
+      const retry = render()
+
+      await expect(retry).resolves.toEqual({ status: 'rendered' })
+      expect(gis.renderButton).toHaveBeenCalledTimes(1)
+      expect(document.head.querySelectorAll('script')).toHaveLength(1)
+    })
+
+    it('removes a stalled tag that later errors, so the next retry injects a fresh one', async () => {
+      const first = render()
+      await jest.advanceTimersByTimeAsync(SCRIPT_LOAD_TIMEOUT_MS)
+      await first
+
+      gsiScript()?.dispatchEvent(new Event('error'))
+      expect(gsiScript()).toBeNull()
+
+      const retry = render()
+      expect(gsiScript()).not.toBeNull()
+      gsiScript()?.dispatchEvent(new Event('error'))
+      await retry
+    })
+
+    it('delivers a credential once, even if the script fires load twice', async () => {
+      const onCredential = jest.fn()
+      const pending = render(onCredential)
+      const gis = installGoogle()
+      gsiScript()?.dispatchEvent(new Event('load'))
+      gsiScript()?.dispatchEvent(new Event('load'))
+      await pending
+
+      gis.initialize.mock.calls[0][0].callback({ credential: 'tok' })
+
+      expect(gis.initialize).toHaveBeenCalledTimes(1)
+      expect(onCredential).toHaveBeenCalledTimes(1)
     })
 
     it('does not fire the timeout after a normal load', async () => {
-      const pending = renderGoogleSignInButton(document.createElement('div'), { clientId: CLIENT_ID, onCredential: jest.fn() })
+      const pending = render()
       installGoogle()
-      gsiScript()?.onload?.(new Event('load'))
+      gsiScript()?.dispatchEvent(new Event('load'))
       await pending
 
       expect(jest.getTimerCount()).toBe(0)
     })
   })
 
+  it('re-initializes GIS when the client ID changes, and only then', async () => {
+    const gis = installGoogle()
+    const div = () => document.createElement('div')
+    await renderGoogleSignInButton(div(), { clientId: 'one', onCredential: jest.fn() })
+    await renderGoogleSignInButton(div(), { clientId: 'one', onCredential: jest.fn() })
+    expect(gis.initialize).toHaveBeenCalledTimes(1)
+
+    await renderGoogleSignInButton(div(), { clientId: 'two', onCredential: jest.fn() })
+
+    expect(gis.initialize).toHaveBeenCalledTimes(2)
+    expect(gis.initialize).toHaveBeenLastCalledWith(expect.objectContaining({ client_id: 'two' }))
+  })
+
   it('is unavailable when the script loads but defines no google global', async () => {
     const pending = renderGoogleSignInButton(document.createElement('div'), { clientId: CLIENT_ID, onCredential: jest.fn() })
-    gsiScript()?.onload?.(new Event('load'))
+    gsiScript()?.dispatchEvent(new Event('load'))
 
     await expect(pending).resolves.toEqual({ status: 'unavailable', reason: 'offline' })
+    expect(gsiScript()).toBeNull()
   })
 
   it('is cancelled when the signal is already aborted', async () => {
@@ -244,7 +317,7 @@ describe('renderGoogleSignInButton', () => {
     await expect(pending).resolves.toEqual({ status: 'cancelled' })
 
     const gis = installGoogle()
-    gsiScript()?.onload?.(new Event('load'))
+    gsiScript()?.dispatchEvent(new Event('load'))
     await Promise.resolve()
     expect(gis.renderButton).not.toHaveBeenCalled()
   })

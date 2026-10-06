@@ -39,7 +39,21 @@
   background: var(--lb-accent-fill);
   cursor: pointer;
 }
-.signin-banner__button:focus-visible {
+/* The quiet option beside the primary one; still a 44px target. */
+.signin-banner__dismiss {
+  flex: none;
+  min-height: 44px;
+  padding: 0 var(--lb-space-2);
+  border: none;
+  font: inherit;
+  font-weight: 600;
+  color: var(--lb-accent-ink);
+  background: none;
+  cursor: pointer;
+}
+
+.signin-banner__button:focus-visible,
+.signin-banner__dismiss:focus-visible {
   outline: 2px solid var(--lb-accent-ink);
   outline-offset: 2px;
 }

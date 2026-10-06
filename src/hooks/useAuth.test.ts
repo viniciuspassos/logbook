@@ -1,6 +1,12 @@
 import { act, renderHook, waitFor } from '@testing-library/react'
 import { useAuth, type UseAuthOptions } from './useAuth.ts'
-import { AUTH_MODE_PAUSE, LOCAL_PROBE_TIMEOUT_MS, RESTORE_TIMEOUT_MS } from '../lib/auth/sessionFlows.ts'
+import {
+  AUTH_MODE_PAUSE,
+  LOCAL_PROBE_TIMEOUT_MS,
+  RESTORE_TIMEOUT_MS,
+  SIGNED_OUT_PAUSE,
+  STARTUP_VERIFY_PAUSE,
+} from '../lib/auth/sessionFlows.ts'
 import { onBackOnline } from '../lib/sync/connectivity.ts'
 import type { AuthConfig } from '../lib/auth/authConfig.ts'
 import { getAuthConfig, getMe, loginWithGoogle, logout } from '../lib/sync/authApi.ts'
@@ -16,7 +22,7 @@ import {
   setPendingLogout,
 } from '../lib/db/identityStore.ts'
 import { checkLocalOwner, claimLocalData, hasLocalData } from '../lib/db/localOwner.ts'
-import { drainOutbox, pauseDrains, resumeDrains, subscribeToDrains, type DrainSummary } from '../lib/sync/outboxRunner.ts'
+import { drainOutbox, pauseDrains, resumeDrains } from '../lib/sync/outboxRunner.ts'
 import { SyncAuthError, SyncHttpError, SyncNetworkError } from '../lib/sync/errors.ts'
 import type { AuthProfile } from '../types/auth.ts'
 
@@ -36,15 +42,12 @@ const googleConfig: AuthConfig = { methods: [{ type: 'google', clientId: 'cid.ap
 const noLogin: AuthConfig = { methods: [] }
 
 let onlineListeners: Array<() => void> = []
-let drainListeners: Array<(summary: DrainSummary) => void> = []
-
-function emitDrain(summary: DrainSummary) {
-  act(() => drainListeners.forEach((listener) => listener(summary)))
+function goOnline() {
+  act(() => onlineListeners.forEach((listener) => listener()))
 }
 
 beforeEach(() => {
   jest.resetAllMocks()
-  drainListeners = []
   onlineListeners = []
   mocked(onBackOnline).mockImplementation((listener: () => void) => {
     onlineListeners.push(listener)
@@ -56,12 +59,6 @@ beforeEach(() => {
   mocked(getCachedAuthConfig).mockResolvedValue(null)
   mocked(putCachedAuthConfig).mockResolvedValue(undefined)
   mocked(pauseDrains).mockResolvedValue(undefined)
-  mocked(subscribeToDrains).mockImplementation((listener: (summary: DrainSummary) => void) => {
-    drainListeners.push(listener)
-    return () => {
-      drainListeners = drainListeners.filter((l) => l !== listener)
-    }
-  })
   mocked(hasPendingLogout).mockResolvedValue(false)
   mocked(getCachedIdentity).mockResolvedValue(null)
   mocked(getMe).mockResolvedValue(ada)
@@ -267,35 +264,43 @@ describe('useAuth: verifying an unverified session', () => {
     mocked(getMe).mockRejectedValue(new SyncNetworkError())
     const hook = renderHook(() => useAuth())
     await waitFor(() => expect(hook.result.current.unverified).toBe(true))
-    await waitFor(() => expect(drainListeners).toHaveLength(1))
+    await waitFor(() => expect(onlineListeners).toHaveLength(1))
     return hook
   }
 
-  it('confirms the profile once a drain reaches the server', async () => {
+  it('confirms the profile when connectivity returns and the server answers', async () => {
     const { result } = await renderUnverified()
     mocked(getMe).mockResolvedValue(grace)
 
-    emitDrain({ processed: 0, stoppedReason: 'empty' })
+    goOnline()
 
     await waitFor(() => expect(result.current.unverified).toBe(false))
     expect(result.current.profile).toEqual(grace)
   })
 
-  it('ignores a drain that never left the device', async () => {
-    const { result } = await renderUnverified()
-    mocked(getMe).mockClear()
-
-    emitDrain({ processed: 0, stoppedReason: 'unreachable' })
-
-    expect(getMe).not.toHaveBeenCalled()
+  it('also retries on its own backoff timer, with no online event and no drain (drains are held back)', async () => {
+    jest.useFakeTimers()
+    mocked(getCachedIdentity).mockResolvedValue(grace)
+    mocked(getMe).mockRejectedValue(new SyncNetworkError())
+    const { result } = renderHook(() => useAuth())
+    await act(async () => {
+      await jest.advanceTimersByTimeAsync(0)
+    })
     expect(result.current.unverified).toBe(true)
+    mocked(getMe).mockResolvedValue(grace)
+
+    await act(async () => {
+      await jest.advanceTimersByTimeAsync(15_000)
+    })
+
+    expect(result.current.unverified).toBe(false)
   })
 
   it('asks the user to sign in again, without a gate, when the server says 401', async () => {
     const { result } = await renderUnverified()
     mocked(getMe).mockRejectedValue(new SyncAuthError(401, null))
 
-    emitDrain({ processed: 0, stoppedReason: 'auth' })
+    goOnline()
 
     await waitFor(() => expect(result.current.needsSignIn).toBe(true))
     expect(result.current.state).toBe('signedIn')
@@ -306,10 +311,10 @@ describe('useAuth: verifying an unverified session', () => {
     mocked(hasLocalData).mockResolvedValue(true)
     const hook = renderHook(() => useAuth())
     await waitFor(() => expect(hook.result.current.unverified).toBe(true))
-    await waitFor(() => expect(drainListeners).toHaveLength(1))
+    await waitFor(() => expect(onlineListeners).toHaveLength(1))
     mocked(getMe).mockRejectedValue(new SyncAuthError(401, null))
 
-    emitDrain({ processed: 0, stoppedReason: 'error', error: 'x' })
+    goOnline()
 
     await waitFor(() => expect(hook.result.current.state).toBe('signedOut'))
   })
@@ -319,10 +324,10 @@ describe('useAuth: verifying an unverified session', () => {
     mocked(hasLocalData).mockResolvedValue(true)
     const hook = renderHook(() => useAuth())
     await waitFor(() => expect(hook.result.current.unverified).toBe(true))
-    await waitFor(() => expect(drainListeners).toHaveLength(1))
+    await waitFor(() => expect(onlineListeners).toHaveLength(1))
     mocked(getMe).mockRejectedValue(new SyncHttpError(503, null, 'down'))
 
-    emitDrain({ processed: 0, stoppedReason: 'empty' })
+    goOnline()
     await act(async () => {})
 
     expect(hook.result.current.state).toBe('signedIn')
@@ -330,21 +335,22 @@ describe('useAuth: verifying an unverified session', () => {
     expect(hook.result.current.needsSignIn).toBe(false)
   })
 
-  it('stays unverified if the server still cannot be reached', async () => {
+  it('stays unverified, still retrying, if the server still cannot be reached', async () => {
     const { result } = await renderUnverified()
 
-    emitDrain({ processed: 0, stoppedReason: 'error', error: 'x' })
+    goOnline()
     await act(async () => {})
 
     expect(result.current.unverified).toBe(true)
     expect(result.current.needsSignIn).toBe(false)
+    expect(onlineListeners).toHaveLength(1)
   })
 
   it('drops a verification result that a sign-out has superseded', async () => {
     const { result } = await renderUnverified()
     let resolveMe: ((profile: AuthProfile) => void) | undefined
     mocked(getMe).mockReturnValue(new Promise((resolve) => (resolveMe = resolve)))
-    emitDrain({ processed: 0, stoppedReason: 'empty' })
+    goOnline()
 
     await act(async () => {
       await result.current.logout()
@@ -636,14 +642,131 @@ describe('useAuth: logout', () => {
 })
 
 describe('useAuth: noteAuthRequired', () => {
-  it('raises needsSignIn without leaving the app (a background 401 must not unmount a capture in progress)', async () => {
+  it('raises needsSignIn on a 401 without leaving the app (a background 401 must not unmount a capture in progress)', async () => {
     const { result } = await renderSignedIn()
 
-    act(() => result.current.noteAuthRequired())
+    act(() => result.current.noteAuthRequired(401))
 
     expect(result.current.needsSignIn).toBe(true)
     expect(result.current.state).toBe('signedIn')
     expect(clearCachedIdentity).not.toHaveBeenCalled()
+  })
+
+  it('treats a report with no status like a 401', async () => {
+    const { result } = await renderSignedIn()
+    act(() => result.current.noteAuthRequired())
+    expect(result.current.needsSignIn).toBe(true)
+  })
+
+  it('ignores it once signed out: there is nothing to sign in again to', async () => {
+    const { result } = await renderSignedIn()
+    await act(async () => {
+      await result.current.logout()
+    })
+
+    act(() => result.current.noteAuthRequired(401))
+
+    expect(result.current.needsSignIn).toBe(false)
+  })
+
+  it('lets the user dismiss the prompt, and shows it again on the next 401', async () => {
+    const { result } = await renderSignedIn()
+    act(() => result.current.noteAuthRequired(401))
+
+    act(() => result.current.dismissSignInPrompt())
+    expect(result.current.needsSignIn).toBe(false)
+
+    act(() => result.current.noteAuthRequired(401))
+    expect(result.current.needsSignIn).toBe(true)
+  })
+
+  describe('a 403 (a refusal, not an expired session)', () => {
+    it('never raises the sign-in prompt; it re-syncs the cookies with /auth/me and retries the drain once', async () => {
+      const { result } = await renderSignedIn()
+      mocked(getMe).mockClear()
+      mocked(drainOutbox).mockClear()
+
+      await act(async () => result.current.noteAuthRequired(403))
+
+      expect(getMe).toHaveBeenCalledTimes(1)
+      expect(drainOutbox).toHaveBeenCalledTimes(1)
+      expect(result.current.needsSignIn).toBe(false)
+    })
+
+    it('heals only once: a refusal that persists is left to the sync status line, not looped on', async () => {
+      const { result } = await renderSignedIn()
+      mocked(drainOutbox).mockResolvedValue({ processed: 0, stoppedReason: 'auth', authStatus: 403 })
+      await act(async () => result.current.noteAuthRequired(403))
+      mocked(getMe).mockClear()
+      mocked(drainOutbox).mockClear()
+
+      await act(async () => result.current.noteAuthRequired(403))
+
+      expect(getMe).not.toHaveBeenCalled()
+      expect(drainOutbox).not.toHaveBeenCalled()
+      expect(result.current.needsSignIn).toBe(false)
+    })
+
+    it('does not start a second heal while one is running', async () => {
+      const { result } = await renderSignedIn()
+      let finish: (() => void) | undefined
+      mocked(getMe).mockClear()
+      mocked(getMe).mockReturnValue(new Promise((resolve) => (finish = () => resolve(ada))))
+
+      act(() => result.current.noteAuthRequired(403))
+      act(() => result.current.noteAuthRequired(403))
+      expect(getMe).toHaveBeenCalledTimes(1)
+
+      await act(async () => finish?.())
+    })
+
+    it('allows a new heal later, once the failed one has had time to pass', async () => {
+      jest.useFakeTimers()
+      const { result } = renderHook(() => useAuth())
+      await act(async () => {
+        await jest.advanceTimersByTimeAsync(0)
+      })
+      mocked(drainOutbox).mockResolvedValue({ processed: 0, stoppedReason: 'auth', authStatus: 403 })
+      await act(async () => result.current.noteAuthRequired(403))
+      mocked(getMe).mockClear()
+
+      await act(async () => {
+        await jest.advanceTimersByTimeAsync(60_000)
+      })
+      await act(async () => result.current.noteAuthRequired(403))
+
+      expect(getMe).toHaveBeenCalledTimes(1)
+    })
+
+    it('raises the prompt if /auth/me shows the session really is gone (401)', async () => {
+      const { result } = await renderSignedIn()
+      mocked(getMe).mockRejectedValue(new SyncAuthError(401, null))
+
+      await act(async () => result.current.noteAuthRequired(403))
+
+      expect(result.current.needsSignIn).toBe(true)
+    })
+
+    it('treats a network failure during the heal as a failed heal, with no prompt', async () => {
+      const { result } = await renderSignedIn()
+      mocked(getMe).mockRejectedValue(new SyncNetworkError())
+
+      await act(async () => result.current.noteAuthRequired(403))
+
+      expect(result.current.needsSignIn).toBe(false)
+    })
+
+    it('is ignored while signed out', async () => {
+      const { result } = await renderSignedIn()
+      await act(async () => {
+        await result.current.logout()
+      })
+      mocked(getMe).mockClear()
+
+      await act(async () => result.current.noteAuthRequired(403))
+
+      expect(getMe).not.toHaveBeenCalled()
+    })
   })
 })
 
@@ -685,6 +808,12 @@ describe('useAuth: the server decides which login (GET /auth/config)', () => {
       expect(drainOutbox).not.toHaveBeenCalled()
     })
 
+    it('lifts a leftover signed-out hold, since there is no login to sign back in to', async () => {
+      const { result } = renderHook(() => useAuth())
+      await waitFor(() => expect(result.current.mode).toBe('none'))
+      expect(resumeDrains).toHaveBeenCalledWith(SIGNED_OUT_PAUSE)
+    })
+
     it('ignores a background 401: there is nothing to sign in to', async () => {
       const { result } = renderHook(() => useAuth())
       await waitFor(() => expect(result.current.mode).toBe('none'))
@@ -716,14 +845,74 @@ describe('useAuth: the server decides which login (GET /auth/config)', () => {
   })
 
   describe('when the server wants Google ("google")', () => {
-    it('holds drains back while the mode is still loading, then releases them and drains', async () => {
+    it('holds drains back from the very start, and releases them only after /auth/me AND the owner check', async () => {
+      const order: string[] = []
+      mocked(pauseDrains).mockImplementation(async (reason: string) => void order.push(`pause:${reason}`))
+      mocked(resumeDrains).mockImplementation((reason: string) => void order.push(`resume:${reason}`))
+      mocked(drainOutbox).mockImplementation(async () => {
+        order.push('drain')
+        return { processed: 0, stoppedReason: 'empty' }
+      })
+      mocked(checkLocalOwner).mockImplementation(async () => {
+        order.push('owner-check')
+        return 'ok'
+      })
+
       const { result } = renderHook(() => useAuth())
-      expect(pauseDrains).toHaveBeenCalledWith(AUTH_MODE_PAUSE)
+      await waitFor(() => expect(result.current.profile).toEqual(ada))
+      await waitFor(() => expect(order).toContain('drain'))
 
-      await waitFor(() => expect(result.current.mode).toBe('google'))
+      expect(order[0]).toBe('pause:' + AUTH_MODE_PAUSE)
+      expect(order.indexOf('pause:' + STARTUP_VERIFY_PAUSE)).toBeLessThan(order.indexOf('resume:' + AUTH_MODE_PAUSE))
+      expect(order.indexOf('owner-check')).toBeLessThan(order.indexOf('resume:' + STARTUP_VERIFY_PAUSE))
+      expect(order.indexOf('resume:' + STARTUP_VERIFY_PAUSE)).toBeLessThan(order.indexOf('drain'))
+    })
 
-      expect(resumeDrains).toHaveBeenCalledWith(AUTH_MODE_PAUSE)
+    it('does not drain, nor release the startup pause, while /auth/me cannot be reached', async () => {
+      mocked(getCachedIdentity).mockResolvedValue(grace)
+      mocked(getMe).mockRejectedValue(new SyncNetworkError())
+      const { result } = renderHook(() => useAuth())
+      await waitFor(() => expect(result.current.unverified).toBe(true))
+      await act(async () => {})
+
+      expect(pauseDrains).toHaveBeenCalledWith(STARTUP_VERIFY_PAUSE)
+      expect(resumeDrains).not.toHaveBeenCalledWith(STARTUP_VERIFY_PAUSE)
+      expect(drainOutbox).not.toHaveBeenCalled()
+    })
+
+    it('keeps drains paused for a different account (pending switch)', async () => {
+      mocked(checkLocalOwner).mockResolvedValue('mismatch')
+      const { result } = renderHook(() => useAuth())
+      await waitFor(() => expect(result.current.pendingSwitch).toEqual(ada))
+      await act(async () => {})
+
+      expect(resumeDrains).not.toHaveBeenCalledWith(STARTUP_VERIFY_PAUSE)
+      expect(drainOutbox).not.toHaveBeenCalled()
+    })
+
+    it('releases them once a later verification succeeds', async () => {
+      mocked(getCachedIdentity).mockResolvedValue(grace)
+      mocked(getMe).mockRejectedValue(new SyncNetworkError())
+      const { result } = renderHook(() => useAuth())
+      await waitFor(() => expect(result.current.unverified).toBe(true))
+      await waitFor(() => expect(onlineListeners).toHaveLength(1))
+      mocked(getMe).mockResolvedValue(grace)
+
+      goOnline()
+
+      await waitFor(() => expect(resumeDrains).toHaveBeenCalledWith(STARTUP_VERIFY_PAUSE))
       await waitFor(() => expect(drainOutbox).toHaveBeenCalled())
+    })
+
+    it('holds drains again after signing out, and lifts the hold when mode goes local-only', async () => {
+      const { result } = await renderSignedIn()
+      mocked(pauseDrains).mockClear()
+
+      await act(async () => {
+        await result.current.logout()
+      })
+
+      expect(pauseDrains).toHaveBeenCalledWith(STARTUP_VERIFY_PAUSE)
     })
 
     it('shows the gate with no known identity (the existing rules apply)', async () => {
@@ -747,7 +936,7 @@ describe('useAuth: the server decides which login (GET /auth/config)', () => {
 
     it('counts a background 401 as "sign in again" (the banner)', async () => {
       const { result } = await renderSignedIn()
-      act(() => result.current.noteAuthRequired())
+      act(() => result.current.noteAuthRequired(401))
       expect(result.current.needsSignIn).toBe(true)
     })
   })
@@ -763,6 +952,7 @@ describe('useAuth: the server decides which login (GET /auth/config)', () => {
       expect(result.current).toMatchObject({ state: 'signedIn', profile: null, needsSignIn: false })
       expect(getMe).not.toHaveBeenCalled()
       expect(pauseDrains).toHaveBeenCalledWith(AUTH_MODE_PAUSE)
+      expect(resumeDrains).not.toHaveBeenCalledWith(SIGNED_OUT_PAUSE)
     })
 
     it('switches to the gate when the server later says Google, as for any never-verified session', async () => {

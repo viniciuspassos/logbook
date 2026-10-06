@@ -15,10 +15,8 @@ import { syncStatusLabel } from '../lib/sync/syncStatus.ts'
 import type { Entry } from '../types/entry.ts'
 
 export interface UseSyncOutboxOptions {
-  /** A drain discovered the session is gone (a 401/403 mid-queue). */
-  onAuthRequired?: () => void
-  /** A drain actually got a mutating call through, so the session is good. */
-  onAuthConfirmed?: () => void
+  /** A drain was refused by the server (401: session gone; 403: a refusal), with that status. */
+  onAuthRequired?: (status?: number) => void
   /** The server has login off (local-only mode): the status line says sync is off. */
   syncOff?: boolean
 }
@@ -43,11 +41,11 @@ export interface UseSyncOutboxOptions {
  *
  * Auth *state* itself is owned by useAuth.ts, not here — this hook only
  * forwards what a drain happens to discover about the session (via the
- * optional `onAuthRequired`/`onAuthConfirmed` callbacks) since draining is
+ * optional `onAuthRequired` callback) since draining is
  * the only place that ever finds out.
  */
 export function useSyncOutbox(options: UseSyncOutboxOptions = {}) {
-  const { onAuthRequired, onAuthConfirmed, syncOff = false } = options
+  const { onAuthRequired, syncOff = false } = options
   const [lastDrain, setLastDrain] = useState<DrainSummary | null>(null)
 
   // Every drain, wherever it started (mount, save, photo upload, sign-in, the
@@ -60,10 +58,9 @@ export function useSyncOutbox(options: UseSyncOutboxOptions = {}) {
         // An aborted pass says nothing new about the queue or the session.
         if (summary.stoppedReason === 'aborted') return
         setLastDrain(summary)
-        if (summary.stoppedReason === 'auth') onAuthRequired?.()
-        else if (summary.processed > 0) onAuthConfirmed?.()
+        if (summary.stoppedReason === 'auth') onAuthRequired?.(summary.authStatus)
       }),
-    [onAuthRequired, onAuthConfirmed],
+    [onAuthRequired],
   )
 
   useEffect(() => {

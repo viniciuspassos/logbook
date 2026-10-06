@@ -15,7 +15,8 @@ export function syncStatusLabel(lastDrain: DrainSummary | null, syncOff = false)
     case 'empty':
       return 'Saved locally · synced'
     case 'auth':
-      return 'Saved locally · sign in to sync'
+      // A 403 isn't an expired session (e.g. CSRF), so don't send the user to sign in for it.
+      return lastDrain.authStatus === 403 ? 'Saved locally · sync failed' : 'Saved locally · sign in to sync'
     case 'error':
       return 'Saved locally · sync failed'
     case 'rejected':

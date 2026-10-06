@@ -31,6 +31,8 @@ export function loginWithGoogle(idToken: string): Promise<AuthStatusResponse> {
   return syncRequest<AuthStatusResponse>('/auth/google', {
     method: 'POST',
     body: { idToken },
+    // Login-CSRF protection: the server rejects POST /auth/google without it.
+    headers: { 'X-Logbook-Client': 'web' },
   })
 }
 

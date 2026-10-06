@@ -1,4 +1,4 @@
-import { act, render, screen } from '@testing-library/react'
+import { act, render, screen, within } from '@testing-library/react'
 import userEvent from '@testing-library/user-event'
 import App from './App.tsx'
 import { entries } from './data/entries.ts'
@@ -292,7 +292,7 @@ describe('App', () => {
       await act(async () => options.onCredential('id-token'))
 
       expect(screen.queryByText('Sign in again to resume syncing.')).not.toBeInTheDocument()
-      expect(screen.queryByRole('button', { name: 'Not now' })).not.toBeInTheDocument()
+      expect(screen.queryByText('Record climbs and jumps, even with no signal.')).not.toBeInTheDocument()
       await act(async () => {})
     })
 
@@ -311,8 +311,35 @@ describe('App', () => {
       emitDrain({ processed: 0, stoppedReason: 'auth' })
 
       expect(await screen.findByText('Sign in again to resume syncing.')).toBeInTheDocument()
-      expect(screen.queryByRole('button', { name: 'Not now' })).not.toBeInTheDocument()
+      expect(screen.queryByText('Record climbs and jumps, even with no signal.')).not.toBeInTheDocument()
       await act(async () => {})
+    })
+
+    it('lets the user dismiss the banner with "Not now", and shows it again on the next 401', async () => {
+      const user = userEvent.setup()
+      ;(getMe as jest.Mock).mockResolvedValue(ada)
+      render(<App />)
+      await screen.findByRole('button', { name: /new entry/i })
+      emitDrain({ processed: 0, stoppedReason: 'auth', authStatus: 401 })
+      await screen.findByText('Sign in again to resume syncing.')
+
+      await user.click(screen.getByRole('button', { name: 'Not now' }))
+      expect(screen.queryByText('Sign in again to resume syncing.')).not.toBeInTheDocument()
+
+      emitDrain({ processed: 0, stoppedReason: 'auth', authStatus: 401 })
+      expect(await screen.findByText('Sign in again to resume syncing.')).toBeInTheDocument()
+      await act(async () => {})
+    })
+
+    it('does not show the sign-in banner for a 403 (a refusal, not an expired session)', async () => {
+      ;(getMe as jest.Mock).mockResolvedValue(ada)
+      render(<App />)
+      await screen.findByRole('button', { name: /new entry/i })
+
+      emitDrain({ processed: 0, stoppedReason: 'auth', authStatus: 403 })
+      await act(async () => {})
+
+      expect(screen.queryByText('Sign in again to resume syncing.')).not.toBeInTheDocument()
     })
 
     it('lets the user dismiss the sign-in screen opened from the banner', async () => {
@@ -323,9 +350,10 @@ describe('App', () => {
       emitDrain({ processed: 0, stoppedReason: 'auth' })
 
       await user.click(await screen.findByRole('button', { name: 'Sign in' }))
-      await user.click(screen.getByRole('button', { name: 'Not now' }))
+      expect(screen.getByText('Record climbs and jumps, even with no signal.')).toBeInTheDocument()
+      await user.click(within(document.querySelector('.reauth') as HTMLElement).getByRole('button', { name: 'Not now' }))
 
-      expect(screen.queryByRole('button', { name: 'Not now' })).not.toBeInTheDocument()
+      expect(screen.queryByText('Record climbs and jumps, even with no signal.')).not.toBeInTheDocument()
       expect(screen.getByText('Sign in again to resume syncing.')).toBeInTheDocument()
       await act(async () => {})
     })

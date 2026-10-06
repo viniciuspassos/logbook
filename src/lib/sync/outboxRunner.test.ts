@@ -302,7 +302,7 @@ describe('drainOutbox', () => {
 
     const summary = await drainOutbox()
 
-    expect(summary).toEqual({ processed: 0, stoppedReason: 'auth', error: 'Authentication required.' })
+    expect(summary).toEqual({ processed: 0, stoppedReason: 'auth', error: 'Authentication required.', authStatus: 401 })
     expect(recordFailureMock).toHaveBeenCalledWith(1, 'Authentication required.')
   })
 
@@ -312,7 +312,7 @@ describe('drainOutbox', () => {
 
     const summary = await drainOutbox()
 
-    expect(summary.stoppedReason).toBe('auth')
+    expect(summary).toMatchObject({ stoppedReason: 'auth', authStatus: 403 })
   })
 
   it('stops mid-drain when the signal is aborted before a record is processed', async () => {

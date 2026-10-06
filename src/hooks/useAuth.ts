@@ -9,14 +9,17 @@ import {
   type SetStateAction,
 } from 'react'
 import { useAuthConfig } from './useAuthConfig.ts'
+import { useBackoffRetry } from './useBackoffRetry.ts'
 import type { AuthMode } from '../lib/auth/authConfig.ts'
 import {
   AUTH_MODE_PAUSE,
   LOADING,
   RESTORE_TIMEOUT_MS,
   SIGNED_OUT,
+  SIGNED_OUT_PAUSE,
+  STARTUP_VERIFY_PAUSE,
   adoptAccount,
-  drainReachedServer,
+  healRefusedDrain,
   resolveStuckStartup,
   restoreSession,
   signInWithIdToken,
@@ -25,7 +28,7 @@ import {
   verifySession,
 } from '../lib/auth/sessionFlows.ts'
 import { SyncAuthError, SyncHttpError, SyncNetworkError } from '../lib/sync/errors.ts'
-import { drainOutbox, pauseDrains, resumeDrains, subscribeToDrains } from '../lib/sync/outboxRunner.ts'
+import { drainOutbox, pauseDrains, resumeDrains } from '../lib/sync/outboxRunner.ts'
 import type { AuthProfile, AuthState, Session } from '../types/auth.ts'
 
 export type { AuthState } from '../types/auth.ts'
@@ -88,8 +91,15 @@ export interface UseAuthResult {
   /** Declines an account switch: signs the new account back out. */
   cancelSwitch: () => Promise<void>
   logout: () => Promise<void>
-  /** Call when a background request elsewhere discovers the session is gone (401/403). */
-  noteAuthRequired: () => void
+  /**
+   * Call when a background request is refused by the server, with its status.
+   * A 401 (or no status) raises `needsSignIn`; a 403 is a refusal rather than
+   * an expired session, so it triggers one self-heal instead. Ignored unless
+   * signed in.
+   */
+  noteAuthRequired: (status?: number) => void
+  /** Hides the "sign in again" prompt until the next 401. */
+  dismissSignInPrompt: () => void
   clearError: () => void
 }
 
@@ -164,25 +174,27 @@ interface VerifyDeps {
   setNeedsSignIn: (needed: boolean) => void
 }
 
-/** While unverified, confirm the session as soon as a sync attempt reaches the server again. */
+/**
+ * While a Google session is unverified, retry `GET /auth/me` (+ the owner
+ * check) on a backoff timer and whenever connectivity returns. Not on drain
+ * events: drains are held back until this succeeds.
+ */
 function useVerifyWhenReachable({ awaiting, hasProfile, epochRef, setSession, setNeedsSignIn }: VerifyDeps) {
-  useEffect(() => {
-    if (!awaiting) return
-    const verify = async () => {
-      const epoch = epochRef.current
-      const result = await verifySession()
-      if (epoch !== epochRef.current) return
-      if (result === 'expired') {
-        // A session that was verified before only needs a banner. One that
-        // never was (no cached identity) has no standing: show the gate.
-        if (hasProfile) setNeedsSignIn(true)
-        else setSession(SIGNED_OUT)
-      } else if (result) setSession(result)
+  useBackoffRetry(awaiting, async () => {
+    const epoch = epochRef.current
+    const result = await verifySession()
+    if (epoch !== epochRef.current) return true
+    if (result === 'expired') {
+      // A session that was verified before only needs a banner. One that
+      // never was (no cached identity) has no standing: show the gate.
+      if (hasProfile) setNeedsSignIn(true)
+      else setSession(SIGNED_OUT)
+      return true
     }
-    return subscribeToDrains((summary) => {
-      if (drainReachedServer(summary)) void verify()
-    })
-  }, [awaiting, hasProfile, epochRef, setSession, setNeedsSignIn])
+    if (!result) return false
+    setSession(result)
+    return true
+  })
 }
 
 interface Lifecycle {
@@ -225,8 +237,10 @@ function useAccountActions(deps: AccountDeps) {
           setSession(next)
           if (next.state !== 'signedIn') return
           setNeedsSignIn(false)
-          // Anything the outbox queued while signed out can now go through.
-          void drainOutbox()
+          // Anything the outbox queued while signed out can go through, but
+          // only once the account is matched to this device (verified); an
+          // unverified sign-in is released later by its verification.
+          if (!next.unverified) void drainOutbox()
         },
         messageForSignInError,
       ),
@@ -280,22 +294,76 @@ function useLocalOnlySession(
 }
 
 /**
- * Keeps the outbox quiet unless the server wants Google: until the mode is
- * known, and for `none`/`unknown`, every drain is a no-op (under its own
- * reason, so the account guard can't release it); `google` releases it and
- * drains once. `dev:mocked` is left exactly as it was.
+ * Keeps the outbox quiet until it is safe. Under `none`/`unknown`, and until
+ * the mode is known, every drain is a no-op (reason `auth-mode`). Under
+ * `google` they stay held (reason `startup-verify`, taken before the first
+ * drain can run) until the session is verified: `/auth/me` answered AND the
+ * local-owner check passed. So a live cookie for account B can never upload
+ * account A's queue, and an unreachable server just keeps drains paused until
+ * verification succeeds. `dev:mocked` is left exactly as it was.
  */
-function useDrainGuard(mode: AuthMode) {
+function useDrainGuard(mode: AuthMode, ownerVerified: boolean) {
+  // Declared in this order on purpose: effects run in order, so the verify
+  // hold is taken before the auth-mode hold is let go of.
+  useEffect(() => {
+    if (mode !== 'google') return
+    if (ownerVerified) resumeDrains(STARTUP_VERIFY_PAUSE)
+    else void pauseDrains(STARTUP_VERIFY_PAUSE)
+  }, [mode, ownerVerified])
+
   useEffect(() => {
     if (mode === 'mock') return
     if (mode === 'google') {
       resumeDrains(AUTH_MODE_PAUSE)
-      void drainOutbox()
-    } else {
-      void pauseDrains(AUTH_MODE_PAUSE)
+      return
     }
-    return () => resumeDrains(AUTH_MODE_PAUSE)
+    // With no login at all, a leftover sign-out hold has nothing to wait for.
+    if (mode === 'none') resumeDrains(SIGNED_OUT_PAUSE)
+    void pauseDrains(AUTH_MODE_PAUSE)
   }, [mode])
+
+  useEffect(() => {
+    if (mode === 'google' && ownerVerified) void drainOutbox()
+  }, [mode, ownerVerified])
+
+  useEffect(
+    () => () => {
+      resumeDrains(AUTH_MODE_PAUSE)
+      resumeDrains(STARTUP_VERIFY_PAUSE)
+    },
+    [],
+  )
+}
+
+/** How long a failed self-heal blocks another one. */
+const HEAL_RETRY_AFTER_MS = 60_000
+
+/**
+ * A 403 on a drain is a refusal (e.g. a stale CSRF cookie), not an expired
+ * session: heal once (`GET /auth/me` re-syncs cookies, the drain is retried),
+ * never loop, and never show the sign-in prompt for it unless /auth/me proves
+ * the session is gone. A failed heal blocks further ones for a minute.
+ */
+function useRefusalHealing(setNeedsSignIn: (needed: boolean) => void): () => void {
+  const stateRef = useRef<'idle' | 'busy' | 'failed'>('idle')
+  const resetTimer = useRef<ReturnType<typeof setTimeout> | undefined>(undefined)
+  useEffect(() => () => clearTimeout(resetTimer.current), [])
+
+  return useCallback(() => {
+    if (stateRef.current !== 'idle') return
+    stateRef.current = 'busy'
+    void healRefusedDrain().then((outcome) => {
+      if (outcome === 'expired') setNeedsSignIn(true)
+      if (outcome === 'recovered') {
+        stateRef.current = 'idle'
+        return
+      }
+      stateRef.current = 'failed'
+      resetTimer.current = setTimeout(() => {
+        stateRef.current = 'idle'
+      }, HEAL_RETRY_AFTER_MS)
+    })
+  }, [setNeedsSignIn])
 }
 
 export function useAuth(options: UseAuthOptions = {}): UseAuthResult {
@@ -314,7 +382,7 @@ export function useAuth(options: UseAuthOptions = {}): UseAuthResult {
     restoreRef.current?.abort()
   }, [])
 
-  useDrainGuard(mode)
+  useDrainGuard(mode, mode === 'google' && session.state === 'signedIn' && !session.unverified && session.profile !== null)
   useRestoreOnMount(mode === 'google', setSession, restoreRef)
   useLocalOnlySession(mode, setSession, setNeedsSignIn, supersede)
   useVerifyWhenReachable({
@@ -335,10 +403,22 @@ export function useAuth(options: UseAuthOptions = {}): UseAuthResult {
     onLocalDataReset: options.onLocalDataReset,
   })
 
-  // Only a Google session can expire; with no login there is nothing to sign in to.
-  const noteAuthRequired = useCallback(() => {
-    if (mode === 'google') setNeedsSignIn(true)
-  }, [mode])
+  const sessionRef = useRef(session)
+  useEffect(() => {
+    sessionRef.current = session
+  }, [session])
+  const heal = useRefusalHealing(setNeedsSignIn)
+  // Only a signed-in Google session can expire: with no login, or once signed
+  // out, there is nothing to sign in again to.
+  const noteAuthRequired = useCallback(
+    (status?: number) => {
+      if (mode !== 'google' || sessionRef.current.state !== 'signedIn') return
+      if (status === 403) heal()
+      else setNeedsSignIn(true)
+    },
+    [mode, heal],
+  )
+  const dismissSignInPrompt = useCallback(() => setNeedsSignIn(false), [])
   const clearError = useCallback(() => setError(null), [])
 
   return {
@@ -356,6 +436,7 @@ export function useAuth(options: UseAuthOptions = {}): UseAuthResult {
     cancelSwitch: logout,
     logout,
     noteAuthRequired,
+    dismissSignInPrompt,
     clearError,
   }
 }

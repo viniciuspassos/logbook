@@ -51,6 +51,7 @@ function makeAuth(overrides: Partial<UseAuthResult> = {}): UseAuthResult {
     cancelSwitch: jest.fn(),
     logout: jest.fn(),
     noteAuthRequired: jest.fn(),
+    dismissSignInPrompt: jest.fn(),
     clearError: jest.fn(),
     ...overrides,
   }

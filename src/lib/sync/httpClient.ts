@@ -25,6 +25,8 @@ export interface RequestOptions {
    *  sent as-is so the browser can set the multipart boundary itself. */
   body?: unknown
   signal?: AbortSignal
+  /** Extra request headers for the few calls that need them (e.g. the login-CSRF marker). */
+  headers?: Record<string, string>
 }
 
 function isRecord(value: unknown): value is Record<string, unknown> {
@@ -87,7 +89,7 @@ async function performFetch(path: string, options: RequestOptions): Promise<Resp
   }
 
   const method = options.method ?? 'GET'
-  const headers: Record<string, string> = {}
+  const headers: Record<string, string> = { ...options.headers }
   const body = buildBody(options.body, headers)
 
   if (MUTATING_METHODS.has(method)) {

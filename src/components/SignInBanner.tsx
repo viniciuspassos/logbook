@@ -2,6 +2,8 @@ import './SignInBanner.css'
 
 export interface SignInBannerProps {
   onSignIn: () => void
+  /** Hides the banner until the next 401. */
+  onDismiss: () => void
 }
 
 /**
@@ -10,12 +12,15 @@ export interface SignInBannerProps {
  * away an in-progress capture draft); entries keep saving locally and the
  * outbox waits. Announced politely, since it appears without user action.
  */
-export function SignInBanner({ onSignIn }: SignInBannerProps) {
+export function SignInBanner({ onSignIn, onDismiss }: SignInBannerProps) {
   return (
     <div className="signin-banner" role="status" aria-live="polite">
       <span className="signin-banner__text">Sign in again to resume syncing.</span>
       <button type="button" className="signin-banner__button" onClick={onSignIn}>
         Sign in
+      </button>
+      <button type="button" className="signin-banner__dismiss" onClick={onDismiss}>
+        Not now
       </button>
     </div>
   )

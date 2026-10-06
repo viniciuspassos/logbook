@@ -57,6 +57,12 @@ export interface DrainSummary {
    */
   stoppedReason: 'unsupported' | 'unreachable' | 'empty' | 'error' | 'auth' | 'aborted' | 'rejected'
   error?: string
+  /**
+   * With `'auth'`: the HTTP status the server answered. 401 means the session
+   * is gone; 403 is a refusal that isn't an expired session (e.g. a CSRF
+   * problem), so callers must not treat it as "sign in again".
+   */
+  authStatus?: number
 }
 
 function errorMessage(error: unknown): string {
@@ -188,8 +194,10 @@ async function attemptRecord(
       return null
     }
     await recordAttemptFailure(record.queueId, message).catch(() => {})
-    const stoppedReason = error instanceof SyncAuthError ? 'auth' : 'error'
-    return { processed: state.processed, stoppedReason, error: message }
+    if (error instanceof SyncAuthError) {
+      return { processed: state.processed, stoppedReason: 'auth', error: message, authStatus: error.status }
+    }
+    return { processed: state.processed, stoppedReason: 'error', error: message }
   }
 }
 

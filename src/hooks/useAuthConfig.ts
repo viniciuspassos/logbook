@@ -15,7 +15,7 @@ import {
   resolveStuckConfig,
 } from '../lib/auth/sessionFlows.ts'
 import { shouldUseMockData } from '../lib/config/mockData.ts'
-import { onBackOnline } from '../lib/sync/connectivity.ts'
+import { useBackoffRetry } from './useBackoffRetry.ts'
 
 export interface AuthModeState {
   mode: AuthMode
@@ -51,21 +51,14 @@ function useStartupConfig(
   }, [mock, update, setState])
 }
 
-/** While the config is unknown, ask the server again each time connectivity returns. */
-function useRetryWhenOnline(unknown: boolean, update: (next: ConfigState) => void) {
-  useEffect(() => {
-    if (!unknown) return
-    const controller = new AbortController()
-    const stop = onBackOnline(() => {
-      void refreshAuthConfig(controller.signal).then((config) => {
-        if (config && !controller.signal.aborted) update(knownConfig(config))
-      })
-    })
-    return () => {
-      controller.abort()
-      stop()
-    }
-  }, [unknown, update])
+/** While the config is unknown, ask the server again: on a backoff timer and whenever connectivity returns. */
+function useRetryWhileUnknown(unknown: boolean, update: (next: ConfigState) => void) {
+  useBackoffRetry(unknown, async (signal) => {
+    const config = await refreshAuthConfig(signal)
+    if (!config || signal.aborted) return false
+    update(knownConfig(config))
+    return true
+  })
 }
 
 /**
@@ -86,7 +79,7 @@ export function useAuthConfig(): AuthModeState {
   )
 
   useStartupConfig(mock, update, setState)
-  useRetryWhenOnline(!mock && state.status === 'unknown', update)
+  useRetryWhileUnknown(!mock && state.status === 'unknown', update)
 
   if (mock) return { mode: 'mock', googleClientId: null }
   return {

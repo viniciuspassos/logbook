@@ -2,9 +2,11 @@ import {
   LOADING,
   SIGNED_OUT,
   adoptAccount,
-  drainReachedServer,
   ACCOUNT_PAUSE,
   AUTH_MODE_PAUSE,
+  SIGNED_OUT_PAUSE,
+  STARTUP_VERIFY_PAUSE,
+  healRefusedDrain,
   LOCAL_PROBE_TIMEOUT_MS,
   SIGN_OUT_FLUSH_TIMEOUT_MS,
   probeLocalData,
@@ -73,20 +75,6 @@ describe('session constructors', () => {
   })
 })
 
-describe('drainReachedServer', () => {
-  it.each([
-    ['empty', true],
-    ['auth', true],
-    ['error', true],
-    ['rejected', true],
-    ['unreachable', false],
-    ['unsupported', false],
-    ['aborted', false],
-  ] as const)('%s -> %s', (stoppedReason, expected) => {
-    expect(drainReachedServer({ processed: 0, stoppedReason })).toBe(expected)
-  })
-})
-
 describe('settleProfile', () => {
   it('caches the profile and returns a verified session for the device owner', async () => {
     const session = await settleProfile(ada)
@@ -107,9 +95,16 @@ describe('settleProfile', () => {
     expect(pauseDrains).toHaveBeenCalledWith(ACCOUNT_PAUSE)
   })
 
-  it('leaves drains alone for the device owner', async () => {
+  it('releases the account guard once the account is confirmed as the device owner', async () => {
     await settleProfile(ada)
     expect(pauseDrains).not.toHaveBeenCalled()
+    expect(resumeDrains).toHaveBeenCalledWith(ACCOUNT_PAUSE)
+  })
+
+  it('does not release it on a mismatch', async () => {
+    mocked(checkLocalOwner).mockResolvedValue('mismatch')
+    await settleProfile(grace)
+    expect(resumeDrains).not.toHaveBeenCalled()
   })
 
   it('does not cache when the signal has aborted', async () => {
@@ -285,35 +280,59 @@ describe('signInWithIdToken', () => {
   it('returns the pending switch for a different account, and leaves drains paused', async () => {
     mocked(checkLocalOwner).mockResolvedValue('mismatch')
     expect(await signInWithIdToken('tok')).toEqual({ ...SIGNED_OUT, pendingSwitch: ada })
-    expect(resumeDrains).not.toHaveBeenCalled()
+    expect(resumeDrains).not.toHaveBeenCalledWith(ACCOUNT_PAUSE)
   })
 
-  it('pauses drains before the new session exists, then resumes them once the account is the owner', async () => {
+  it('pauses drains before the new session exists, then releases them only after the owner check', async () => {
     const order: string[] = []
-    mocked(pauseDrains).mockImplementation(async () => void order.push('pause'))
+    mocked(pauseDrains).mockImplementation(async (reason: string) => void order.push(`pause:${reason}`))
     mocked(loginWithGoogle).mockImplementation(async () => {
       order.push('login')
       return { status: 'ok' }
     })
-    mocked(resumeDrains).mockImplementation(() => void order.push('resume'))
+    mocked(checkLocalOwner).mockImplementation(async () => {
+      order.push('owner-check')
+      return 'ok'
+    })
+    mocked(resumeDrains).mockImplementation((reason: string) => void order.push(`resume:${reason}`))
 
     await signInWithIdToken('tok')
 
-    expect(order).toEqual(['pause', 'login', 'resume'])
-    expect(pauseDrains).toHaveBeenCalledWith(ACCOUNT_PAUSE)
-    expect(resumeDrains).toHaveBeenCalledWith(ACCOUNT_PAUSE)
+    expect(order[0]).toBe('pause:' + ACCOUNT_PAUSE)
+    expect(order.indexOf('login')).toBeLessThan(order.indexOf('owner-check'))
+    expect(order.indexOf('resume:' + ACCOUNT_PAUSE)).toBeGreaterThan(order.indexOf('owner-check'))
   })
 
-  it('resumes drains when /auth/google fails', async () => {
+  it('lifts the signed-out pause once /auth/google accepts the sign-in', async () => {
+    await signInWithIdToken('tok')
+    expect(resumeDrains).toHaveBeenCalledWith(SIGNED_OUT_PAUSE)
+  })
+
+  it('resumes the account guard (and nothing else) when /auth/google fails', async () => {
     mocked(loginWithGoogle).mockRejectedValue(new SyncNetworkError())
     await expect(signInWithIdToken('tok')).rejects.toBeInstanceOf(SyncNetworkError)
-    expect(resumeDrains).toHaveBeenCalled()
+    expect(resumeDrains).toHaveBeenCalledWith(ACCOUNT_PAUSE)
+    expect(resumeDrains).not.toHaveBeenCalledWith(SIGNED_OUT_PAUSE)
   })
 
-  it('resumes drains for an unverified sign-in (the profile could not be fetched)', async () => {
+  it('keeps drains paused when /auth/google worked but the profile could not be fetched (no owner check yet)', async () => {
+    mocked(getMe).mockRejectedValue(new SyncNetworkError())
+
+    const session = await signInWithIdToken('tok')
+
+    expect(session).toEqual(unverifiedSession(null))
+    expect(checkLocalOwner).not.toHaveBeenCalled()
+    expect(resumeDrains).not.toHaveBeenCalledWith(ACCOUNT_PAUSE)
+  })
+
+  it('releases them later, when verification finally gets the profile and the owner matches', async () => {
     mocked(getMe).mockRejectedValue(new SyncNetworkError())
     await signInWithIdToken('tok')
-    expect(resumeDrains).toHaveBeenCalled()
+    mocked(getMe).mockResolvedValue(ada)
+
+    expect(await verifySession()).toEqual(verifiedSession(ada))
+
+    expect(resumeDrains).toHaveBeenCalledWith(ACCOUNT_PAUSE)
   })
 })
 
@@ -328,9 +347,9 @@ describe('adoptAccount', () => {
   it('resumes drains only after the old data is gone', async () => {
     const order: string[] = []
     mocked(claimLocalData).mockImplementation(async () => void order.push('claim'))
-    mocked(resumeDrains).mockImplementation(() => void order.push('resume'))
+    mocked(resumeDrains).mockImplementation((reason: string) => void order.push(`resume:${reason}`))
     await adoptAccount(grace)
-    expect(order).toEqual(['claim', 'resume'])
+    expect(order).toEqual(['claim', 'resume:' + ACCOUNT_PAUSE, 'resume:' + SIGNED_OUT_PAUSE])
   })
 
   it('keeps drains paused when the old data cannot be cleared', async () => {
@@ -362,6 +381,30 @@ describe('signOut', () => {
     expect(clearPendingLogout).toHaveBeenCalled()
     expect(disableGoogleAutoSelect).toHaveBeenCalled()
     expect(drainOutbox).not.toHaveBeenCalled()
+  })
+
+  it('pauses drains (signed-out reason) before the marker, so an online event cannot upload on the live cookie', async () => {
+    const order: string[] = []
+    mocked(pauseDrains).mockImplementation(async (reason: string) => void order.push(`pause:${reason}`))
+    mocked(setPendingLogout).mockImplementation(async () => void order.push('marker'))
+    mocked(logout).mockRejectedValue(new SyncNetworkError())
+
+    await signOut(false)
+
+    expect(order).toEqual(['pause:' + SIGNED_OUT_PAUSE, 'marker'])
+  })
+
+  it('pauses only after the flush, so unsynced entries still get a chance to go up', async () => {
+    const order: string[] = []
+    mocked(drainOutbox).mockImplementation(async () => {
+      order.push('flush')
+      return { processed: 1, stoppedReason: 'empty' }
+    })
+    mocked(pauseDrains).mockImplementation(async () => void order.push('pause'))
+
+    await signOut(true)
+
+    expect(order).toEqual(['flush', 'pause'])
   })
 
   it('flushes the outbox first when asked, while the session is still valid', async () => {
@@ -564,5 +607,41 @@ describe('resolveStuckConfig', () => {
 describe('pause reasons', () => {
   it('names distinct reasons so the account guard and the auth-mode guard cannot release each other', () => {
     expect(ACCOUNT_PAUSE).not.toBe(AUTH_MODE_PAUSE)
+  })
+})
+
+describe('pause reasons are all distinct', () => {
+  it('names a separate reason per guard, so none can release another', () => {
+    const reasons = [ACCOUNT_PAUSE, AUTH_MODE_PAUSE, SIGNED_OUT_PAUSE, STARTUP_VERIFY_PAUSE]
+    expect(new Set(reasons).size).toBe(4)
+  })
+})
+
+describe('healRefusedDrain', () => {
+  it('re-syncs the cookies with /auth/me, retries the drain, and reports it recovered', async () => {
+    mocked(drainOutbox).mockResolvedValue({ processed: 1, stoppedReason: 'empty' })
+    expect(await healRefusedDrain()).toBe('recovered')
+    expect(getMe).toHaveBeenCalledTimes(1)
+    expect(drainOutbox).toHaveBeenCalledTimes(1)
+  })
+
+  it('reports "refused" when the retried drain is refused again', async () => {
+    mocked(drainOutbox).mockResolvedValue({ processed: 0, stoppedReason: 'auth', authStatus: 403 })
+    expect(await healRefusedDrain()).toBe('refused')
+  })
+
+  it('reports "expired" when /auth/me shows the session really is gone, without retrying the drain', async () => {
+    mocked(getMe).mockRejectedValue(new SyncAuthError(401, null))
+    expect(await healRefusedDrain()).toBe('expired')
+    expect(drainOutbox).not.toHaveBeenCalled()
+  })
+
+  it.each([
+    ['a network failure', new SyncNetworkError()],
+    ['a 403 from /auth/me', new SyncAuthError(403, null)],
+  ])('reports "refused" for %s, without retrying the drain', async (_label, failure) => {
+    mocked(getMe).mockRejectedValue(failure)
+    expect(await healRefusedDrain()).toBe('refused')
+    expect(drainOutbox).not.toHaveBeenCalled()
   })
 })

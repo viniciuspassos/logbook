@@ -109,6 +109,44 @@ describe('useAuthConfig: when the server cannot answer', () => {
     expect(onlineListeners).toHaveLength(0)
   })
 
+  it('also retries on a backoff timer while unknown, even with no online event', async () => {
+    jest.useFakeTimers()
+    mocked(getAuthConfig).mockResolvedValueOnce(null)
+    const { result } = renderHook(() => useAuthConfig())
+    await act(async () => {
+      await jest.advanceTimersByTimeAsync(0)
+    })
+    expect(result.current.mode).toBe('unknown')
+
+    mocked(getAuthConfig).mockResolvedValue(none)
+    await act(async () => {
+      await jest.advanceTimersByTimeAsync(15_000)
+    })
+
+    expect(result.current.mode).toBe('none')
+    expect(getAuthConfig).toHaveBeenCalledTimes(2)
+  })
+
+  it('stops retrying once the mode is known', async () => {
+    jest.useFakeTimers()
+    mocked(getAuthConfig).mockResolvedValueOnce(null)
+    renderHook(() => useAuthConfig())
+    await act(async () => {
+      await jest.advanceTimersByTimeAsync(0)
+    })
+    mocked(getAuthConfig).mockResolvedValue(google)
+    await act(async () => {
+      await jest.advanceTimersByTimeAsync(15_000)
+    })
+    const calls = mocked(getAuthConfig).mock.calls.length
+
+    await act(async () => {
+      await jest.advanceTimersByTimeAsync(20 * 60_000)
+    })
+
+    expect(mocked(getAuthConfig).mock.calls.length).toBe(calls)
+  })
+
   it('stays "unknown" if it is still unreachable when connectivity returns', async () => {
     mocked(getAuthConfig).mockResolvedValue(null)
     const { result } = renderHook(() => useAuthConfig())

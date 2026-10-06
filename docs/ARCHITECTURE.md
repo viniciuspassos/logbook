@@ -132,7 +132,7 @@ Google ID token (`POST /auth/google`), allowlists accounts, and starts a session
 - **The server decides which login.** Authentication is the backend's responsibility, so the
   frontend owns no flag and no client ID. `GET /auth/config` (public) answers `{ methods: [] }` or
   `{ methods: [{ type: 'google', clientId }] }`; the list shape leaves room for more login types
-  (unknown types are ignored, a malformed body counts as "unknown", never as "off"). `useAuthConfig`
+  (unknown types are ignored; only a well-formed `{ methods: [] }` means "off", while a body that is malformed, or lists methods none of which is usable, counts as "unknown" and is never cached as "off"). `useAuthConfig`
   resolves one **mode** in one place: `none` (login off: local-only), `google`, `unknown` (couldn't
   ask, nothing cached: local-only, re-asked on reconnect), plus `mock` for `dev:mocked`. The last
   good answer is cached in IndexedDB (`identityStore`), so the decision works offline.
@@ -144,6 +144,7 @@ Google ID token (`POST /auth/google`), allowlists accounts, and starts a session
   `App`, not a `useNavigation` overlay, because nothing else in the shell should be reachable
   behind it.
 - `src/lib/db/identityStore.ts` caches the last signed-in profile and the auth config in IndexedDB.
+- `POST /auth/google` carries the header `X-Logbook-Client: web` (login-CSRF protection; the server answers 403 without it). It is sent on that call only.
 
 **The server's auth config versus the gate.** Everything below applies in `google` mode only.
 In `none` and `unknown` mode the session is simply local: no gate, no banner, no Google script, no
@@ -177,10 +178,13 @@ user their data or their work. The logic lives in `src/lib/auth/sessionFlows.ts`
   gate them again mid-capture, so it would be worse), and if IndexedDB itself is what is stuck (another
   tab blocking the v3 upgrade) the gate is shown after a second short probe. `openLogbookDb` rejects
   on `blocked` and closes on `versionchange` so one old tab can't wedge the new one.
-- *A background 401 never gates.* An outbox drain or a photo upload that gets a 401 only sets
-  `needsSignIn`, shown as a non-blocking banner ("Sign in again to resume syncing") whose action opens
+- *A background 401 never gates.* An outbox drain or a photo upload that gets a 401 (and only a
+  401, while signed in) sets `needsSignIn`, shown as a non-blocking, dismissible banner ("Sign in again to resume syncing", with "Not now" until the next 401) whose action opens
   the sign-in screen *over* the still-mounted app. Unmounting the app would lose an in-progress
-  capture draft. Entries, photos and the outbox are untouched, and the cached identity is kept.
+  capture draft. Entries, photos and the outbox are untouched, and the cached identity is kept. A 403 is
+  a refusal rather than an expired session (e.g. a stale CSRF cookie): it never raises the banner; the
+  client heals once (`GET /auth/me` re-syncs the cookies, then the drain is retried) and otherwise
+  leaves it to the sync status line ("sync failed").
 - *Sign-out is durable.* `signOut` first flushes the outbox (while the session still works), then
   writes a `pendingLogout` marker, forgets the cached profile, and calls `POST /auth/logout`; the
   marker is removed only once the server confirms. Offline, the cookie survives, so startup honours
@@ -193,14 +197,22 @@ user their data or their work. The logic lives in `src/lib/auth/sessionFlows.ts`
   `pendingSwitch`: the sign-in screen asks, warning that unsynced entries are removed, and only then
   `claimLocalData` clears the three stores and records the new owner in a single transaction (all or
   nothing; if it fails the confirmation stays open with an error). Cancelling signs the new session
-  back out. The previous account's outbox is never drained under the new account's session:
-  `pauseDrains()` in `outboxRunner` turns every drain trigger into a no-op (they all go through
-  `drainOutbox`) and waits for an in-flight drain to stop. It is taken before `POST /auth/google`
-  (so there is no gap before the ownership check), kept through a pending or cancelled switch, and
-  released by `resumeDrains()` after a confirmed switch or the next same-account sign-in.
-  (One gap remains: at startup the mount-time drain starts alongside `GET /auth/me`, so if the
-  cookie already belongs to a different account than the local data, that first drain can race the
-  ownership check; the pause takes effect as soon as the mismatch is seen.)
+  back out.
+- *Drains stay paused until the owner is verified.* The previous account's outbox must never be
+  uploaded under a session that hasn't been matched to this device. `pauseDrains(reason)` in
+  `outboxRunner` turns every drain trigger (mount, save, upload, `online`) into a no-op, with
+  independent reasons so one guard can't release another:
+  `auth-mode` (mode loading/none/unknown), `startup-verify` (in `google` mode, held from the first
+  render until the session is verified: `GET /auth/me` answered AND the owner check passed; the
+  pause is installed synchronously, before `useSyncOutbox`'s mount drain can run), `account` (taken
+  before `POST /auth/google` and released only by a successful owner check, so a mismatch, or an
+  unverified sign-in whose `/auth/me` failed, stays paused) and `signed-out` (taken by sign-out after
+  its bounded flush and before the marker, held until the next sign-in or `none` mode, so an `online`
+  event after an offline sign-out can't upload on the still-live cookie). If `/auth/me` can't be
+  reached the app still opens (unverified) so the user can capture, drains stay paused, and
+  verification retries on a backoff timer (15s, 30s, 60s, then every 5 minutes) plus the `online`
+  event, releasing only after a successful owner check. The same retry loop re-asks for an `unknown`
+  auth config.
   Sign-out's final flush is bounded (a hung drain can't keep the user signed in), and so is the
   Google script load (a stalled request turns into the offline message with a retry).
 - *Races.* Sign-in and sign-out supersede a slow startup check (abort signal plus an epoch counter),
