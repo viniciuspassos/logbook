@@ -9,9 +9,11 @@ import { IDBFactory } from 'fake-indexeddb'
 import {
   clearCachedIdentity,
   clearPendingLogout,
+  getCachedAuthConfig,
   getCachedIdentity,
   getLocalOwnerId,
   hasPendingLogout,
+  putCachedAuthConfig,
   putCachedIdentity,
   putLocalOwnerId,
   setPendingLogout,
@@ -140,5 +142,39 @@ describe('local owner id', () => {
     await putLocalOwnerId('u1')
     await clearCachedIdentity()
     expect(await getLocalOwnerId()).toBe('u1')
+  })
+})
+
+describe('cached auth config', () => {
+  const google = { methods: [{ type: 'google' as const, clientId: 'id' }] }
+
+  it('is null before the server has ever answered', async () => {
+    expect(await getCachedAuthConfig()).toBeNull()
+  })
+
+  it('round-trips the last good config, including "login off"', async () => {
+    await putCachedAuthConfig(google)
+    expect(await getCachedAuthConfig()).toEqual(google)
+    await putCachedAuthConfig({ methods: [] })
+    expect(await getCachedAuthConfig()).toEqual({ methods: [] })
+  })
+
+  it('ignores a malformed stored record', async () => {
+    await putCachedAuthConfig({ methods: 'nope' } as never)
+    expect(await getCachedAuthConfig()).toBeNull()
+  })
+
+  it('survives a sign-out clearing the cached identity, and does not disturb it', async () => {
+    await putCachedIdentity(ada)
+    await putCachedAuthConfig(google)
+    await clearCachedIdentity()
+    expect(await getCachedAuthConfig()).toEqual(google)
+  })
+
+  it('degrades when IndexedDB is unavailable', async () => {
+    // @ts-expect-error simulating an environment without IndexedDB
+    delete globalThis.indexedDB
+    expect(await getCachedAuthConfig()).toBeNull()
+    await expect(putCachedAuthConfig(google)).resolves.toBeUndefined()
   })
 })

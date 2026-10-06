@@ -1,5 +1,6 @@
 import { syncRequest } from './httpClient.ts'
 import { SyncHttpError } from './errors.ts'
+import { parseAuthConfig, type AuthConfig } from '../auth/authConfig.ts'
 import type { AuthProfile } from '../../types/auth.ts'
 
 export interface AuthStatusResponse {
@@ -44,6 +45,21 @@ export async function getMe(signal?: AbortSignal): Promise<AuthProfile> {
     throw new SyncHttpError(200, body, 'Unexpected response from /auth/me.')
   }
   return body
+}
+
+/**
+ * GET /auth/config (public, no session): which login the server wants, as
+ * `{ methods: [] }` or `{ methods: [{ type: 'google', clientId }] }`. Never
+ * throws: an unreachable server, an older one without the route (404), a 5xx
+ * or a garbled body all resolve `null`, meaning "unknown", so callers fall back
+ * to their cached config instead of failing.
+ */
+export async function getAuthConfig(signal?: AbortSignal): Promise<AuthConfig | null> {
+  try {
+    return parseAuthConfig(await syncRequest<unknown>('/auth/config', { signal }))
+  } catch {
+    return null
+  }
 }
 
 /** POST /auth/logout. Clears both session cookies server-side on success. */

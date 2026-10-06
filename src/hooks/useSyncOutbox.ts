@@ -19,6 +19,8 @@ export interface UseSyncOutboxOptions {
   onAuthRequired?: () => void
   /** A drain actually got a mutating call through, so the session is good. */
   onAuthConfirmed?: () => void
+  /** The server has login off (local-only mode): the status line says sync is off. */
+  syncOff?: boolean
 }
 
 /**
@@ -45,7 +47,7 @@ export interface UseSyncOutboxOptions {
  * the only place that ever finds out.
  */
 export function useSyncOutbox(options: UseSyncOutboxOptions = {}) {
-  const { onAuthRequired, onAuthConfirmed } = options
+  const { onAuthRequired, onAuthConfirmed, syncOff = false } = options
   const [lastDrain, setLastDrain] = useState<DrainSummary | null>(null)
 
   // Every drain, wherever it started (mount, save, photo upload, sign-in, the
@@ -112,5 +114,5 @@ export function useSyncOutbox(options: UseSyncOutboxOptions = {}) {
     [queueThenDrain],
   )
 
-  return { queueEntryCreate, queueEntryWithPhotos, queueEntryCreates, queueEntryDeletion, syncStatus: syncStatusLabel(lastDrain) }
+  return { queueEntryCreate, queueEntryWithPhotos, queueEntryCreates, queueEntryDeletion, syncStatus: syncStatusLabel(lastDrain, syncOff) }
 }

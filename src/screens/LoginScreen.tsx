@@ -10,6 +10,8 @@ export interface LoginScreenProps {
   pending: boolean
   /** The last sign-in failure, in plain words. */
   error: string | null
+  /** The OAuth client ID the server gave (`GET /auth/config`). */
+  clientId: string | null
   /** Called with the signed Google ID token when the user picks an account. */
   onCredential: (idToken: string) => void
   /** A different account signed in and must confirm replacing this device's data. */
@@ -37,7 +39,7 @@ function statusFor(pending: boolean, error: string | null, buttonState: ButtonSt
 }
 
 /** Loads and renders Google's button into the returned slot; `retry` tries again after an offline failure. */
-function useGoogleButton(onCredential: (idToken: string) => void) {
+function useGoogleButton(clientId: string | null, onCredential: (idToken: string) => void) {
   const slotRef = useRef<HTMLDivElement>(null)
   const [buttonState, setButtonState] = useState<ButtonState>('loading')
   const [attempt, setAttempt] = useState(0)
@@ -55,7 +57,11 @@ function useGoogleButton(onCredential: (idToken: string) => void) {
     const slot = slotRef.current
     if (!slot) return
     const controller = new AbortController()
-    const options = { onCredential: (idToken: string) => onCredentialRef.current(idToken), signal: controller.signal }
+    const options = {
+      clientId,
+      onCredential: (idToken: string) => onCredentialRef.current(idToken),
+      signal: controller.signal,
+    }
     void renderGoogleSignInButton(slot, options).then((result) => {
       if (result.status === 'cancelled' || controller.signal.aborted) return
       if (result.status === 'rendered') setButtonState('ready')
@@ -65,7 +71,7 @@ function useGoogleButton(onCredential: (idToken: string) => void) {
       controller.abort()
       slot.replaceChildren()
     }
-  }, [attempt])
+  }, [attempt, clientId])
 
   const retry = () => {
     setButtonState('loading')
@@ -117,13 +123,14 @@ function SwitchConfirm({ account, pending, onConfirm, onCancel }: SwitchConfirmP
 export function LoginScreen({
   pending,
   error,
+  clientId,
   onCredential,
   pendingSwitch,
   onConfirmSwitch,
   onCancelSwitch,
   onDismiss,
 }: LoginScreenProps) {
-  const { slotRef, buttonState, retry } = useGoogleButton(onCredential)
+  const { slotRef, buttonState, retry } = useGoogleButton(clientId, onCredential)
   const message = statusFor(pending, error, buttonState)
   const isProblem = !pending && message !== ''
   const googleUsable = buttonState === 'loading' || buttonState === 'ready'

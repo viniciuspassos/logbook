@@ -37,6 +37,8 @@ function makeExports(overrides: Partial<ExportActions> = {}): ExportActions {
 
 function makeAuth(overrides: Partial<UseAuthResult> = {}): UseAuthResult {
   return {
+    mode: 'google',
+    googleClientId: 'cid.apps.googleusercontent.com',
     state: 'signedIn',
     unverified: false,
     needsSignIn: false,
@@ -205,5 +207,22 @@ describe('SettingsScreen', () => {
   it('announces sign-out progress in the Account section', async () => {
     await renderScreen({ auth: { pending: true } })
     expect(screen.getByText('Signing out…')).toBeInTheDocument()
+  })
+
+  it('says the app is local-only, with no sign-out, when the server has login off', async () => {
+    await renderScreen({ auth: { mode: 'none', profile: null } })
+    expect(screen.getByText('Local only · sign-in is off on this server')).toBeInTheDocument()
+    expect(screen.queryByRole('button', { name: /sign out/i })).not.toBeInTheDocument()
+  })
+
+  it('says the server could not be reached yet when the login type is unknown', async () => {
+    await renderScreen({ auth: { mode: 'unknown', profile: null } })
+    expect(screen.getByText('Local only · the server has not answered yet')).toBeInTheDocument()
+    expect(screen.queryByRole('button', { name: /sign out/i })).not.toBeInTheDocument()
+  })
+
+  it('keeps the account row under dev:mocked', async () => {
+    await renderScreen({ auth: { mode: 'mock' } })
+    expect(screen.getByRole('button', { name: /sign out/i })).toBeInTheDocument()
   })
 })

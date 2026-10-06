@@ -637,8 +637,37 @@ describe('drainOutbox with permanently rejected ops (#91)', () => {
   })
 })
 
-describe('pauseDrains / resumeDrains (no sync under the wrong account)', () => {
-  afterEach(() => resumeDrains())
+describe('pauseDrains / resumeDrains (no sync under the wrong account, or with no login)', () => {
+  afterEach(() => {
+    resumeDrains()
+    resumeDrains('account')
+    resumeDrains('auth-mode')
+  })
+
+  it('stays paused until every reason that paused it has been released', async () => {
+    await pauseDrains('account')
+    await pauseDrains('auth-mode')
+
+    resumeDrains('account')
+    expect((await drainOutbox()).stoppedReason).toBe('aborted')
+
+    resumeDrains('auth-mode')
+    expect((await drainOutbox()).stoppedReason).toBe('empty')
+  })
+
+  it('treats pausing twice for one reason as one pause', async () => {
+    await pauseDrains('account')
+    await pauseDrains('account')
+    resumeDrains('account')
+    expect((await drainOutbox()).stoppedReason).toBe('empty')
+  })
+
+  it('ignores releasing a reason that was never held', async () => {
+    await pauseDrains('account')
+    resumeDrains('auth-mode')
+    expect((await drainOutbox()).stoppedReason).toBe('aborted')
+  })
+
 
   it('blocks a direct drain: nothing is read, probed or sent, and listeners hear nothing', async () => {
     const listener = jest.fn()

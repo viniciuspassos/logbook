@@ -13,6 +13,7 @@ function makeProps(overrides: Partial<LoginScreenProps> = {}): LoginScreenProps 
   return {
     pending: false,
     error: null,
+    clientId: 'cid.apps.googleusercontent.com',
     onCredential: jest.fn(),
     pendingSwitch: null,
     onConfirmSwitch: jest.fn(),
@@ -226,5 +227,28 @@ describe('LoginScreen', () => {
       await renderScreen()
       expect(screen.queryByRole('button', { name: 'Not now' })).not.toBeInTheDocument()
     })
+  })
+
+  it('hands the client ID the server gave to the Google button', async () => {
+    await renderScreen(makeProps({ clientId: 'server.apps.googleusercontent.com' }))
+    expect(renderMock.mock.calls[0][1].clientId).toBe('server.apps.googleusercontent.com')
+  })
+
+  it('renders the button again only if the client ID changes', async () => {
+    const { rerender } = await renderScreen()
+    rerender(<LoginScreen {...makeProps()} />)
+    await act(async () => {})
+    expect(renderMock).toHaveBeenCalledTimes(1)
+
+    rerender(<LoginScreen {...makeProps({ clientId: 'other.apps.googleusercontent.com' })} />)
+    await act(async () => {})
+    expect(renderMock).toHaveBeenCalledTimes(2)
+  })
+
+  it('passes no client ID through as null, and says sign-in is not set up', async () => {
+    resolveWith({ status: 'unavailable', reason: 'no-client-id' })
+    await renderScreen(makeProps({ clientId: null }))
+    expect(renderMock.mock.calls[0][1].clientId).toBeNull()
+    expect(screen.getByRole('status')).toHaveTextContent("Sign-in isn't set up for this Logbook yet.")
   })
 })

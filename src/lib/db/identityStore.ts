@@ -1,4 +1,5 @@
 import { IDENTITY_STORE as STORE, openLogbookDb } from './database.ts'
+import { parseAuthConfig, type AuthConfig } from '../auth/authConfig.ts'
 import type { AuthProfile } from '../../types/auth.ts'
 
 /**
@@ -13,6 +14,8 @@ import type { AuthProfile } from '../../types/auth.ts'
  *   offline can't clear the server cookie, so the marker makes the next
  *   startup retry the server logout instead of letting `GET /auth/me`
  *   silently sign the user back in.
+ * - `authConfig`: the last good `GET /auth/config` answer, so the app can decide
+ *   offline whether this server wants a login at all.
  * - `owner`: the id of the account that owns this device's local entries,
  *   outbox and sync state (see localOwner.ts). It survives sign-out on
  *   purpose: signing back in as the same account keeps everything, signing in
@@ -23,12 +26,13 @@ import type { AuthProfile } from '../../types/auth.ts'
  * IndexedDB is unavailable or fails, rather than blocking the app from opening.
  */
 
-type RecordKey = 'current' | 'pendingLogout' | 'owner'
+type RecordKey = 'current' | 'pendingLogout' | 'owner' | 'authConfig'
 
 export interface IdentityRecord {
   key: RecordKey
   profile?: AuthProfile
   ownerId?: string
+  authConfig?: unknown
 }
 
 function isProfile(value: unknown): value is AuthProfile {
@@ -92,6 +96,16 @@ export function putCachedIdentity(profile: AuthProfile): Promise<void> {
 /** Forgets the cached profile (explicit sign-out). */
 export function clearCachedIdentity(): Promise<void> {
   return deleteRecord('current')
+}
+
+/** The last good auth config the server gave, or `null` if it has never answered (or storage fails). */
+export async function getCachedAuthConfig(): Promise<AuthConfig | null> {
+  return parseAuthConfig((await readRecord('authConfig'))?.authConfig)
+}
+
+/** Remembers the server's auth config so a later offline start can still decide. */
+export function putCachedAuthConfig(config: AuthConfig): Promise<void> {
+  return writeRecord({ key: 'authConfig', authConfig: config })
 }
 
 /** Whether the user signed out and the server-side logout hasn't been confirmed yet. */

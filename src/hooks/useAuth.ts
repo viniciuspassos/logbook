@@ -8,7 +8,10 @@ import {
   type MutableRefObject,
   type SetStateAction,
 } from 'react'
+import { useAuthConfig } from './useAuthConfig.ts'
+import type { AuthMode } from '../lib/auth/authConfig.ts'
 import {
+  AUTH_MODE_PAUSE,
   LOADING,
   RESTORE_TIMEOUT_MS,
   SIGNED_OUT,
@@ -21,9 +24,8 @@ import {
   verifiedSession,
   verifySession,
 } from '../lib/auth/sessionFlows.ts'
-import { shouldUseMockData } from '../lib/config/mockData.ts'
 import { SyncAuthError, SyncHttpError, SyncNetworkError } from '../lib/sync/errors.ts'
-import { drainOutbox, subscribeToDrains } from '../lib/sync/outboxRunner.ts'
+import { drainOutbox, pauseDrains, resumeDrains, subscribeToDrains } from '../lib/sync/outboxRunner.ts'
 import type { AuthProfile, AuthState, Session } from '../types/auth.ts'
 
 export type { AuthState } from '../types/auth.ts'
@@ -49,7 +51,13 @@ export type { AuthState } from '../types/auth.ts'
  * splash up forever. Sign-in and sign-out supersede a slow startup check, so
  * a stale result can never overwrite them or re-cache a signed-out identity.
  *
- * Under `npm run dev:mocked` (sample data, no backend) the gate is skipped.
+ * Whether there is a gate at all is the server's call (`GET /auth/config`,
+ * resolved by `useAuthConfig`): `google` runs everything above; `none` (login
+ * off on the server) and `unknown` (couldn't ask, nothing cached) open the app
+ * local-only, with no gate, no banner, no `GET /auth/me`, and every outbox
+ * drain held back so there is no 401 churn; `unknown` asks again on reconnect
+ * and switches to `google` or `none` as soon as the server answers. Under
+ * `npm run dev:mocked` (sample data, no backend) the gate is skipped too.
  */
 
 export interface UseAuthOptions {
@@ -58,6 +66,10 @@ export interface UseAuthOptions {
 }
 
 export interface UseAuthResult {
+  /** Which login the server wants: see `AuthMode`. */
+  mode: AuthMode
+  /** The OAuth client ID the server gave, in `google` mode. */
+  googleClientId: string | null
   state: AuthState
   /** The signed-in account, when known. */
   profile: AuthProfile | null
@@ -91,6 +103,8 @@ function messageForSignInError(error: unknown): string {
     return "Couldn't reach the Logbook server. Check your connection and try again."
   }
   if (error instanceof SyncHttpError) {
+    // The server turned Google off after this screen asked about it.
+    if (error.status === 404) return 'Google sign-in is turned off on this server.'
     return error.status >= 500
       ? 'The Logbook server had a problem. Try again in a moment.'
       : "Sign-in didn't go through. Try again."
@@ -111,11 +125,12 @@ interface AccountDeps {
 
 /** Startup check, with a timeout so a stuck one never leaves the splash up forever. */
 function useRestoreOnMount(
+  enabled: boolean,
   setSession: Dispatch<SetStateAction<Session>>,
   restoreRef: MutableRefObject<AbortController | null>,
 ) {
   useEffect(() => {
-    if (shouldUseMockData()) return
+    if (!enabled) return
     const controller = new AbortController()
     restoreRef.current = controller
     const apply = (next: Session) => {
@@ -138,7 +153,7 @@ function useRestoreOnMount(
       clearTimeout(timer)
       controller.abort()
     }
-  }, [setSession, restoreRef])
+  }, [enabled, setSession, restoreRef])
 }
 
 interface VerifyDeps {
@@ -245,8 +260,47 @@ function useAccountActions(deps: AccountDeps) {
   return { signInWithGoogle, logout, confirmSwitch }
 }
 
+/**
+ * With no login to do (`none`, or `unknown` while the server can't be asked)
+ * the session is simply local: signed in, nothing to verify, nothing pending.
+ * This also stands down a startup check or banner left over from `google`.
+ */
+function useLocalOnlySession(
+  mode: AuthMode,
+  setSession: (session: Session) => void,
+  setNeedsSignIn: (needed: boolean) => void,
+  supersede: () => void,
+) {
+  useEffect(() => {
+    if (mode !== 'none' && mode !== 'unknown') return
+    supersede()
+    setSession(verifiedSession(null))
+    setNeedsSignIn(false)
+  }, [mode, setSession, setNeedsSignIn, supersede])
+}
+
+/**
+ * Keeps the outbox quiet unless the server wants Google: until the mode is
+ * known, and for `none`/`unknown`, every drain is a no-op (under its own
+ * reason, so the account guard can't release it); `google` releases it and
+ * drains once. `dev:mocked` is left exactly as it was.
+ */
+function useDrainGuard(mode: AuthMode) {
+  useEffect(() => {
+    if (mode === 'mock') return
+    if (mode === 'google') {
+      resumeDrains(AUTH_MODE_PAUSE)
+      void drainOutbox()
+    } else {
+      void pauseDrains(AUTH_MODE_PAUSE)
+    }
+    return () => resumeDrains(AUTH_MODE_PAUSE)
+  }, [mode])
+}
+
 export function useAuth(options: UseAuthOptions = {}): UseAuthResult {
-  const [session, setSession] = useState<Session>(() => (shouldUseMockData() ? verifiedSession(null) : LOADING))
+  const { mode, googleClientId } = useAuthConfig()
+  const [session, setSession] = useState<Session>(() => (mode === 'mock' ? verifiedSession(null) : LOADING))
   const [needsSignIn, setNeedsSignIn] = useState(false)
   const [pending, setPending] = useState(false)
   const [error, setError] = useState<string | null>(null)
@@ -260,7 +314,9 @@ export function useAuth(options: UseAuthOptions = {}): UseAuthResult {
     restoreRef.current?.abort()
   }, [])
 
-  useRestoreOnMount(setSession, restoreRef)
+  useDrainGuard(mode)
+  useRestoreOnMount(mode === 'google', setSession, restoreRef)
+  useLocalOnlySession(mode, setSession, setNeedsSignIn, supersede)
   useVerifyWhenReachable({
     awaiting: session.state === 'signedIn' && session.unverified,
     hasProfile: session.profile !== null,
@@ -279,10 +335,15 @@ export function useAuth(options: UseAuthOptions = {}): UseAuthResult {
     onLocalDataReset: options.onLocalDataReset,
   })
 
-  const noteAuthRequired = useCallback(() => setNeedsSignIn(true), [])
+  // Only a Google session can expire; with no login there is nothing to sign in to.
+  const noteAuthRequired = useCallback(() => {
+    if (mode === 'google') setNeedsSignIn(true)
+  }, [mode])
   const clearError = useCallback(() => setError(null), [])
 
   return {
+    mode,
+    googleClientId,
     state: session.state,
     profile: session.profile,
     unverified: session.unverified,

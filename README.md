@@ -78,30 +78,31 @@ behind a Google sign-in screen, so you also need the one-time Google setup below
 
 ### Sign in with Google
 
-Logbook opens only for a signed-in user, and Google is the only way in. The sign-in screen
-(`src/screens/LoginScreen.tsx`) renders Google's own button; the backend verifies the ID token
-(`POST /auth/google`) and starts a session.
+Authentication is the **backend's** responsibility, so the app has no login flag and no client ID of
+its own. On start it asks the server which login it wants (`GET /auth/config`, public) and caches the
+last good answer:
 
-One-time setup:
+| Server answers | App mode | What you get |
+| --- | --- | --- |
+| `{ "methods": [] }` (login off) | `none` | Local-only: no sign-in screen, no banner, no Google script, no `/auth/me`, and the sync queue is held back. Settings says "Local only · sign-in is off on this server"; the timeline says sync is off. |
+| `{ "methods": [{ "type": "google", "clientId": "…" }] }` | `google` | A mandatory Google sign-in (below), using the client ID the server gave. |
+| nothing (offline, down, 5xx, old server) and nothing cached | `unknown` | The app opens local-only rather than trapping an offline user, and asks again when the connection returns, then switches to `google` or `none`. |
+
+The type of login is configured **on the server** (`GOOGLE_AUTH_ENABLED`, plus the client ID and
+allowlist; see `docs/INFRASTRUCTURE.md`). Nothing about it is set in the frontend build or `.env`.
+`npm run dev:mocked` keeps skipping all of this (sample data, no backend).
+
+With `google` on, Logbook opens only for a signed-in user. The sign-in screen
+(`src/screens/LoginScreen.tsx`) renders Google's own button; the backend verifies the ID token
+(`POST /auth/google`) and starts a session. One-time Google setup, for whoever runs the server:
 
 1. In the [Google Cloud console](https://console.cloud.google.com/apis/credentials), configure the
    OAuth consent screen, then create an **OAuth client ID** of type **Web application**.
 2. Under **Authorized JavaScript origins**, add every origin the app is served from, for example
    `http://localhost:5173` for `npm run dev` and your production origin. No redirect URIs are
    needed: the button hands an ID token back to the page, not through a redirect.
-3. Give the same client ID to both sides. The backend reads it from its environment (see
-   `docs/INFRASTRUCTURE.md`). The frontend reads it from a `window` global, so a static build can
-   be pointed at a client without a rebuild. Set it in a script that runs before the app bundle,
-   for example in `index.html`:
-
-   ```html
-   <script>
-     window.__LOGBOOK_GOOGLE_CLIENT_ID__ = '1234567890-abc.apps.googleusercontent.com'
-   </script>
-   ```
-
-   A client ID is public by design. Without it the sign-in screen says sign-in isn't set up
-   instead of showing a button.
+3. Give the client ID to the **server** (its environment); the app learns it from `GET /auth/config`.
+   A client ID is public by design.
 
 **Offline.** The first sign-in needs a connection (Google's script loads from Google). After that
 the signed-in profile is cached on the device, so reopening Logbook with no signal goes straight to
@@ -110,7 +111,8 @@ you're using the app, a "Sign in again to resume syncing" banner appears instead
 so a half-written entry survives; your local entries and the sync queue are left untouched. Signing
 out works offline too and is remembered until the server confirms it. Signing in as a different
 Google account on the same device asks first, because it removes the previous account's entries from
-that device. `npm run dev:mocked` skips the screen (sample data, no backend).
+that device. If the server later says login is off, the app goes local-only and leaves the cached
+profile and your entries untouched.
 
 ---
 
@@ -205,8 +207,8 @@ src/
     ai/                  # Chrome built-in AI wrappers: availability, extractEntry,
                          #   rewriteStory, searchEntries
     db/                  # entriesStore, outboxStore, syncStateStore, identityStore, localOwner — IndexedDB wrappers
-    auth/                # googleIdentity (Google Identity Services wrapper), config (client ID),
-                         #   sessionFlows (the sign-in gate's decisions)
+    auth/                # googleIdentity (Google Identity Services wrapper), authConfig (the
+                         #   server's login config), sessionFlows (the sign-in gate's decisions)
     backup/              # JSON snapshot export/import (File System Access)
     export/              # Markdown + printable-PDF formatters
     sync/                # Backend HTTP client (entriesApi, attachmentsApi, authApi, health)

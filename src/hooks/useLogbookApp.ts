@@ -52,6 +52,7 @@ export function useLogbookApp() {
   const auth = useAuth({ onLocalDataReset: localDataReset(nav.closeOverlay, replaceEntries) })
   const syncOutbox = useSyncOutbox({
     onAuthRequired: auth.noteAuthRequired,
+    syncOff: auth.mode === 'none',
   })
   const attachments = useEntryAttachments(nav.selectedEntry, {
     onAuthRequired: auth.noteAuthRequired,

@@ -1,5 +1,3 @@
-import { getGoogleClientId } from './config.ts'
-
 /**
  * Thin adapter over Google Identity Services (GIS) — the only module that
  * touches the `google` global or injects the GIS script, so screens and hooks
@@ -33,6 +31,8 @@ export interface GoogleSignInOptions {
   onCredential: (idToken: string) => void
   /** Aborting stops any pending load and silences later credentials. */
   signal?: AbortSignal
+  /** The OAuth client ID the backend gave (`GET /auth/config`); `null` when it gave none. */
+  clientId: string | null
 }
 
 /** How long the GIS script may take before the load counts as failed (offline, blocked, stalled). */
@@ -137,7 +137,7 @@ export async function renderGoogleSignInButton(
   container: HTMLElement,
   options: GoogleSignInOptions,
 ): Promise<GoogleButtonResult> {
-  const clientId = getGoogleClientId()
+  const { clientId } = options
   if (!clientId) return { status: 'unavailable', reason: 'no-client-id' }
 
   const loaded = await loadUnlessAborted(options.signal)

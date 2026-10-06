@@ -28,13 +28,10 @@ function gsiScript(): HTMLScriptElement | null {
   return document.head.querySelector<HTMLScriptElement>('script[src="https://accounts.google.com/gsi/client?hl=en"]')
 }
 
-beforeEach(() => {
-  window.__LOGBOOK_GOOGLE_CLIENT_ID__ = 'client-id.apps.googleusercontent.com'
-})
+const CLIENT_ID = 'client-id.apps.googleusercontent.com'
 
 afterEach(() => {
   delete (globalThis as GoogleGlobal).google
-  delete window.__LOGBOOK_GOOGLE_CLIENT_ID__
   document.head.innerHTML = ''
 })
 
@@ -70,9 +67,9 @@ describe('preferredButtonTheme', () => {
 })
 
 describe('renderGoogleSignInButton', () => {
-  it('is unavailable (no-client-id) without touching the network when no client ID is configured', async () => {
-    delete window.__LOGBOOK_GOOGLE_CLIENT_ID__
+  it('is unavailable (no-client-id) without touching the network when the server gave no client ID', async () => {
     const result = await renderGoogleSignInButton(document.createElement('div'), {
+      clientId: null,
       onCredential: jest.fn(),
     })
     expect(result).toEqual({ status: 'unavailable', reason: 'no-client-id' })
@@ -83,7 +80,7 @@ describe('renderGoogleSignInButton', () => {
     const gis = installGoogle()
     const container = document.createElement('div')
 
-    const result = await renderGoogleSignInButton(container, { onCredential: jest.fn() })
+    const result = await renderGoogleSignInButton(container, { clientId: CLIENT_ID, onCredential: jest.fn() })
 
     expect(result).toEqual({ status: 'rendered' })
     expect(gis.initialize).toHaveBeenCalledWith(
@@ -100,8 +97,8 @@ describe('renderGoogleSignInButton', () => {
     const gis = installGoogle()
     const first = jest.fn()
     const second = jest.fn()
-    await renderGoogleSignInButton(document.createElement('div'), { onCredential: first })
-    await renderGoogleSignInButton(document.createElement('div'), { onCredential: second })
+    await renderGoogleSignInButton(document.createElement('div'), { clientId: CLIENT_ID, onCredential: first })
+    await renderGoogleSignInButton(document.createElement('div'), { clientId: CLIENT_ID, onCredential: second })
 
     expect(gis.initialize).toHaveBeenCalledTimes(1)
     expect(gis.renderButton).toHaveBeenCalledTimes(2)
@@ -113,7 +110,7 @@ describe('renderGoogleSignInButton', () => {
   it('forwards the ID token from the GIS callback', async () => {
     const gis = installGoogle()
     const onCredential = jest.fn()
-    await renderGoogleSignInButton(document.createElement('div'), { onCredential })
+    await renderGoogleSignInButton(document.createElement('div'), { clientId: CLIENT_ID, onCredential })
 
     gis.initialize.mock.calls[0][0].callback({ credential: 'id-token' })
 
@@ -123,7 +120,7 @@ describe('renderGoogleSignInButton', () => {
   it('ignores a callback without a usable credential', async () => {
     const gis = installGoogle()
     const onCredential = jest.fn()
-    await renderGoogleSignInButton(document.createElement('div'), { onCredential })
+    await renderGoogleSignInButton(document.createElement('div'), { clientId: CLIENT_ID, onCredential })
 
     gis.initialize.mock.calls[0][0].callback({})
     gis.initialize.mock.calls[0][0].callback({ credential: '' })
@@ -135,7 +132,7 @@ describe('renderGoogleSignInButton', () => {
     const gis = installGoogle()
     const onCredential = jest.fn()
     const controller = new AbortController()
-    await renderGoogleSignInButton(document.createElement('div'), { onCredential, signal: controller.signal })
+    await renderGoogleSignInButton(document.createElement('div'), { clientId: CLIENT_ID, onCredential, signal: controller.signal })
 
     controller.abort()
     gis.initialize.mock.calls[0][0].callback({ credential: 'late' })
@@ -145,7 +142,7 @@ describe('renderGoogleSignInButton', () => {
 
   it('lazy-loads the GIS script, then renders once it has loaded', async () => {
     const container = document.createElement('div')
-    const pending = renderGoogleSignInButton(container, { onCredential: jest.fn() })
+    const pending = renderGoogleSignInButton(container, { clientId: CLIENT_ID, onCredential: jest.fn() })
 
     const script = gsiScript()
     expect(script).not.toBeNull()
@@ -157,8 +154,8 @@ describe('renderGoogleSignInButton', () => {
   })
 
   it('shares one script tag between concurrent callers', async () => {
-    const first = renderGoogleSignInButton(document.createElement('div'), { onCredential: jest.fn() })
-    const second = renderGoogleSignInButton(document.createElement('div'), { onCredential: jest.fn() })
+    const first = renderGoogleSignInButton(document.createElement('div'), { clientId: CLIENT_ID, onCredential: jest.fn() })
+    const second = renderGoogleSignInButton(document.createElement('div'), { clientId: CLIENT_ID, onCredential: jest.fn() })
 
     expect(document.head.querySelectorAll('script')).toHaveLength(1)
     installGoogle()
@@ -167,13 +164,13 @@ describe('renderGoogleSignInButton', () => {
   })
 
   it('is unavailable (offline) when the script fails to load, and a retry injects a fresh tag', async () => {
-    const pending = renderGoogleSignInButton(document.createElement('div'), { onCredential: jest.fn() })
+    const pending = renderGoogleSignInButton(document.createElement('div'), { clientId: CLIENT_ID, onCredential: jest.fn() })
     gsiScript()?.onerror?.(new Event('error'))
 
     await expect(pending).resolves.toEqual({ status: 'unavailable', reason: 'offline' })
     expect(gsiScript()).toBeNull()
 
-    const retry = renderGoogleSignInButton(document.createElement('div'), { onCredential: jest.fn() })
+    const retry = renderGoogleSignInButton(document.createElement('div'), { clientId: CLIENT_ID, onCredential: jest.fn() })
     expect(gsiScript()).not.toBeNull()
     gsiScript()?.onerror?.(new Event('error'))
     await retry
@@ -184,7 +181,7 @@ describe('renderGoogleSignInButton', () => {
     afterEach(() => jest.useRealTimers())
 
     it('gives up after the load timeout: unavailable (offline), stale tag removed', async () => {
-      const pending = renderGoogleSignInButton(document.createElement('div'), { onCredential: jest.fn() })
+      const pending = renderGoogleSignInButton(document.createElement('div'), { clientId: CLIENT_ID, onCredential: jest.fn() })
       expect(gsiScript()).not.toBeNull()
 
       await jest.advanceTimersByTimeAsync(SCRIPT_LOAD_TIMEOUT_MS)
@@ -194,11 +191,11 @@ describe('renderGoogleSignInButton', () => {
     })
 
     it('lets a retry inject a fresh script instead of reusing the dead load', async () => {
-      const first = renderGoogleSignInButton(document.createElement('div'), { onCredential: jest.fn() })
+      const first = renderGoogleSignInButton(document.createElement('div'), { clientId: CLIENT_ID, onCredential: jest.fn() })
       await jest.advanceTimersByTimeAsync(SCRIPT_LOAD_TIMEOUT_MS)
       await first
 
-      const retry = renderGoogleSignInButton(document.createElement('div'), { onCredential: jest.fn() })
+      const retry = renderGoogleSignInButton(document.createElement('div'), { clientId: CLIENT_ID, onCredential: jest.fn() })
       const gis = installGoogle()
       expect(gsiScript()).not.toBeNull()
       gsiScript()?.onload?.(new Event('load'))
@@ -208,7 +205,7 @@ describe('renderGoogleSignInButton', () => {
     })
 
     it('does not fire the timeout after a normal load', async () => {
-      const pending = renderGoogleSignInButton(document.createElement('div'), { onCredential: jest.fn() })
+      const pending = renderGoogleSignInButton(document.createElement('div'), { clientId: CLIENT_ID, onCredential: jest.fn() })
       installGoogle()
       gsiScript()?.onload?.(new Event('load'))
       await pending
@@ -218,7 +215,7 @@ describe('renderGoogleSignInButton', () => {
   })
 
   it('is unavailable when the script loads but defines no google global', async () => {
-    const pending = renderGoogleSignInButton(document.createElement('div'), { onCredential: jest.fn() })
+    const pending = renderGoogleSignInButton(document.createElement('div'), { clientId: CLIENT_ID, onCredential: jest.fn() })
     gsiScript()?.onload?.(new Event('load'))
 
     await expect(pending).resolves.toEqual({ status: 'unavailable', reason: 'offline' })
@@ -228,6 +225,7 @@ describe('renderGoogleSignInButton', () => {
     const controller = new AbortController()
     controller.abort()
     const result = await renderGoogleSignInButton(document.createElement('div'), {
+      clientId: CLIENT_ID,
       onCredential: jest.fn(),
       signal: controller.signal,
     })
@@ -237,6 +235,7 @@ describe('renderGoogleSignInButton', () => {
   it('is cancelled when the signal aborts while the script is loading, and renders nothing', async () => {
     const controller = new AbortController()
     const pending = renderGoogleSignInButton(document.createElement('div'), {
+      clientId: CLIENT_ID,
       onCredential: jest.fn(),
       signal: controller.signal,
     })

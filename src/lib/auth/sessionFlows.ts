@@ -2,15 +2,18 @@ import { disableGoogleAutoSelect } from './googleIdentity.ts'
 import {
   clearCachedIdentity,
   clearPendingLogout,
+  getCachedAuthConfig,
   getCachedIdentity,
   hasPendingLogout,
+  putCachedAuthConfig,
   putCachedIdentity,
   setPendingLogout,
 } from '../db/identityStore.ts'
 import { checkLocalOwner, claimLocalData, hasLocalData } from '../db/localOwner.ts'
-import { getMe, loginWithGoogle, logout as logoutRequest } from '../sync/authApi.ts'
+import { getAuthConfig, getMe, loginWithGoogle, logout as logoutRequest } from '../sync/authApi.ts'
 import { SyncAuthError } from '../sync/errors.ts'
 import { drainOutbox, pauseDrains, resumeDrains, type DrainSummary } from '../sync/outboxRunner.ts'
+import { UNKNOWN_CONFIG, knownConfig, type AuthConfig, type ConfigState } from './authConfig.ts'
 import type { AuthProfile, Session } from '../../types/auth.ts'
 
 /**
@@ -27,6 +30,10 @@ import type { AuthProfile, Session } from '../../types/auth.ts'
  * - Local data belongs to one account. A different account must confirm
  *   before the old data is removed (`settleProfile` -> `pendingSwitch`).
  */
+
+/** Why drains are held back, so the two guards can't release each other (see outboxRunner.ts). */
+export const ACCOUNT_PAUSE = 'account'
+export const AUTH_MODE_PAUSE = 'auth-mode'
 
 export const LOADING: Session = { state: 'loading', profile: null, unverified: false, pendingSwitch: null }
 export const SIGNED_OUT: Session = { state: 'signedOut', profile: null, unverified: false, pendingSwitch: null }
@@ -53,7 +60,7 @@ export async function settleProfile(profile: AuthProfile, signal?: AbortSignal):
   if ((await checkLocalOwner(profile.id)) === 'mismatch') {
     // The new account's session may already be live while the previous
     // account's queue is still here: block every drain until this is resolved.
-    await pauseDrains()
+    await pauseDrains(ACCOUNT_PAUSE)
     return { ...SIGNED_OUT, pendingSwitch: profile }
   }
   if (!signal?.aborted) await putCachedIdentity(profile)
@@ -139,7 +146,7 @@ async function fetchProfileWithRetry(): Promise<AuthProfile | null> {
  * ownership check.
  */
 export async function signInWithIdToken(idToken: string): Promise<Session> {
-  await pauseDrains()
+  await pauseDrains(ACCOUNT_PAUSE)
   let session: Session
   try {
     await loginWithGoogle(idToken)
@@ -147,10 +154,10 @@ export async function signInWithIdToken(idToken: string): Promise<Session> {
     const profile = await fetchProfileWithRetry()
     session = profile ? await settleProfile(profile) : unverifiedSession(null)
   } catch (error) {
-    resumeDrains()
+    resumeDrains(ACCOUNT_PAUSE)
     throw error
   }
-  if (session.pendingSwitch === null) resumeDrains()
+  if (session.pendingSwitch === null) resumeDrains(ACCOUNT_PAUSE)
   return session
 }
 
@@ -159,7 +166,7 @@ export async function adoptAccount(profile: AuthProfile): Promise<Session> {
   await claimLocalData(profile.id)
   await putCachedIdentity(profile)
   await clearPendingLogout()
-  resumeDrains()
+  resumeDrains(ACCOUNT_PAUSE)
   return verifiedSession(profile)
 }
 
@@ -203,6 +210,25 @@ export const RESTORE_TIMEOUT_MS = 4000
 export const LOCAL_PROBE_TIMEOUT_MS = 1000
 
 /**
+ * What this device holds, without letting a stuck IndexedDB hang the caller:
+ * `'data'` (local entries), `'none'` (a fresh device), or `'stuck'` (storage
+ * didn't answer within LOCAL_PROBE_TIMEOUT_MS).
+ */
+export async function probeLocalData(): Promise<'data' | 'none' | 'stuck'> {
+  let timer: ReturnType<typeof setTimeout> | undefined
+  const stuck = new Promise<'stuck'>((resolve) => {
+    timer = setTimeout(() => resolve('stuck'), LOCAL_PROBE_TIMEOUT_MS)
+  })
+  try {
+    const hasData = await Promise.race([hasLocalData(), stuck])
+    if (hasData === 'stuck') return 'stuck'
+    return hasData ? 'data' : 'none'
+  } finally {
+    clearTimeout(timer)
+  }
+}
+
+/**
  * Decides what a startup that is still waiting should do. An existing user
  * (local entries) opens unverified; a first-time user (nothing local) returns
  * `null` and keeps waiting on the splash for the server's answer, since opening
@@ -210,15 +236,41 @@ export const LOCAL_PROBE_TIMEOUT_MS = 1000
  * thing that's stuck, there is nothing to open: show the gate.
  */
 export async function resolveStuckStartup(): Promise<Session | null> {
-  let timer: ReturnType<typeof setTimeout> | undefined
-  const stuck = new Promise<'stuck'>((resolve) => {
-    timer = setTimeout(() => resolve('stuck'), LOCAL_PROBE_TIMEOUT_MS)
-  })
-  try {
-    const hasData = await Promise.race([hasLocalData(), stuck])
-    if (hasData === 'stuck') return SIGNED_OUT
-    return hasData ? unverifiedSession(null) : null
-  } finally {
-    clearTimeout(timer)
-  }
+  const found = await probeLocalData()
+  if (found === 'stuck') return SIGNED_OUT
+  return found === 'data' ? unverifiedSession(null) : null
+}
+
+/**
+ * The same rule for the wait on `GET /auth/config`: an existing user, or stuck
+ * storage, opens as `unknown` (local-only; asking again when back online), and
+ * a first-time user with nothing local keeps waiting on the splash. Nobody is
+ * gated here, because without a config there is no login to gate on.
+ */
+export async function resolveStuckConfig(): Promise<ConfigState | null> {
+  return (await probeLocalData()) === 'none' ? null : UNKNOWN_CONFIG
+}
+
+/** Asks the server which login it wants and remembers a good answer; `null` when it can't say. */
+export async function refreshAuthConfig(signal?: AbortSignal): Promise<AuthConfig | null> {
+  const config = await getAuthConfig(signal)
+  if (config) await putCachedAuthConfig(config)
+  return config
+}
+
+/**
+ * Works out the auth config on startup, reporting each step through `apply`:
+ * the cached config first (so a start with no signal decides instantly), then
+ * the server's fresh answer. With neither, it's `unknown`. Only a fresh answer
+ * can change what the cache says; a failed fetch never downgrades it, and
+ * nothing here touches the cached identity or any local data.
+ */
+export async function resolveAuthConfig(signal: AbortSignal, apply: (state: ConfigState) => void): Promise<void> {
+  const cached = await getCachedAuthConfig()
+  if (signal.aborted) return
+  if (cached) apply(knownConfig(cached))
+  const fresh = await refreshAuthConfig(signal)
+  if (signal.aborted) return
+  if (fresh) apply(knownConfig(fresh))
+  else if (!cached) apply(UNKNOWN_CONFIG)
 }

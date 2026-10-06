@@ -1,18 +1,22 @@
 import { act, renderHook, waitFor } from '@testing-library/react'
 import { useAuth, type UseAuthOptions } from './useAuth.ts'
-import { LOCAL_PROBE_TIMEOUT_MS, RESTORE_TIMEOUT_MS } from '../lib/auth/sessionFlows.ts'
-import { getMe, loginWithGoogle, logout } from '../lib/sync/authApi.ts'
+import { AUTH_MODE_PAUSE, LOCAL_PROBE_TIMEOUT_MS, RESTORE_TIMEOUT_MS } from '../lib/auth/sessionFlows.ts'
+import { onBackOnline } from '../lib/sync/connectivity.ts'
+import type { AuthConfig } from '../lib/auth/authConfig.ts'
+import { getAuthConfig, getMe, loginWithGoogle, logout } from '../lib/sync/authApi.ts'
 import { disableGoogleAutoSelect } from '../lib/auth/googleIdentity.ts'
 import {
   clearCachedIdentity,
   clearPendingLogout,
+  getCachedAuthConfig,
   getCachedIdentity,
   hasPendingLogout,
+  putCachedAuthConfig,
   putCachedIdentity,
   setPendingLogout,
 } from '../lib/db/identityStore.ts'
 import { checkLocalOwner, claimLocalData, hasLocalData } from '../lib/db/localOwner.ts'
-import { drainOutbox, subscribeToDrains, type DrainSummary } from '../lib/sync/outboxRunner.ts'
+import { drainOutbox, pauseDrains, resumeDrains, subscribeToDrains, type DrainSummary } from '../lib/sync/outboxRunner.ts'
 import { SyncAuthError, SyncHttpError, SyncNetworkError } from '../lib/sync/errors.ts'
 import type { AuthProfile } from '../types/auth.ts'
 
@@ -21,12 +25,17 @@ jest.mock('../lib/auth/googleIdentity.ts', () => ({ disableGoogleAutoSelect: jes
 jest.mock('../lib/db/identityStore.ts')
 jest.mock('../lib/db/localOwner.ts')
 jest.mock('../lib/sync/outboxRunner.ts')
+jest.mock('../lib/sync/connectivity.ts')
 
 const mocked = <T extends (...args: never[]) => unknown>(fn: T) => fn as unknown as jest.Mock
 
 const ada: AuthProfile = { id: 'u1', email: 'ada@example.com', name: 'Ada', picture: null }
 const grace: AuthProfile = { id: 'u2', email: 'grace@example.com', name: 'Grace', picture: null }
 
+const googleConfig: AuthConfig = { methods: [{ type: 'google', clientId: 'cid.apps.googleusercontent.com' }] }
+const noLogin: AuthConfig = { methods: [] }
+
+let onlineListeners: Array<() => void> = []
 let drainListeners: Array<(summary: DrainSummary) => void> = []
 
 function emitDrain(summary: DrainSummary) {
@@ -36,6 +45,17 @@ function emitDrain(summary: DrainSummary) {
 beforeEach(() => {
   jest.resetAllMocks()
   drainListeners = []
+  onlineListeners = []
+  mocked(onBackOnline).mockImplementation((listener: () => void) => {
+    onlineListeners.push(listener)
+    return () => {
+      onlineListeners = onlineListeners.filter((l) => l !== listener)
+    }
+  })
+  mocked(getAuthConfig).mockResolvedValue(googleConfig)
+  mocked(getCachedAuthConfig).mockResolvedValue(null)
+  mocked(putCachedAuthConfig).mockResolvedValue(undefined)
+  mocked(pauseDrains).mockResolvedValue(undefined)
   mocked(subscribeToDrains).mockImplementation((listener: (summary: DrainSummary) => void) => {
     drainListeners.push(listener)
     return () => {
@@ -168,6 +188,7 @@ describe('useAuth: startup', () => {
       const { result } = renderHook(() => useAuth())
       expect(result.current.state).toBe('loading')
 
+      await advance(0) // the auth config resolves first; the getMe timeout starts after it
       await advance(RESTORE_TIMEOUT_MS)
 
       expect(result.current.state).toBe('signedIn')
@@ -193,6 +214,7 @@ describe('useAuth: startup', () => {
       mocked(hasLocalData).mockReturnValue(new Promise(() => undefined))
       const { result } = renderHook(() => useAuth())
 
+      await advance(0)
       await advance(RESTORE_TIMEOUT_MS + LOCAL_PROBE_TIMEOUT_MS)
 
       expect(result.current.state).toBe('signedOut')
@@ -457,6 +479,7 @@ describe('useAuth: switching accounts', () => {
     const { result } = renderHook(() => useAuth())
     await waitFor(() => expect(result.current.state).toBe('signedOut'))
     mocked(getMe).mockResolvedValue(ada)
+    mocked(drainOutbox).mockClear() // the drain on entering google mode is not under test
 
     await act(async () => {
       await result.current.signInWithGoogle('id-token')
@@ -514,6 +537,7 @@ describe('useAuth: switching accounts', () => {
 
   it('cancelling signs the new account back out and keeps the old data', async () => {
     const { result } = await renderPendingSwitch()
+    mocked(drainOutbox).mockClear() // the drain on entering google mode is not under test
 
     await act(async () => {
       await result.current.cancelSwitch()
@@ -620,5 +644,190 @@ describe('useAuth: noteAuthRequired', () => {
     expect(result.current.needsSignIn).toBe(true)
     expect(result.current.state).toBe('signedIn')
     expect(clearCachedIdentity).not.toHaveBeenCalled()
+  })
+})
+
+describe('useAuth: the server decides which login (GET /auth/config)', () => {
+  it('stays "loading" until the config is known', async () => {
+    mocked(getAuthConfig).mockReturnValue(new Promise(() => undefined))
+    const { result } = renderHook(() => useAuth())
+    expect(result.current.mode).toBe('loading')
+    expect(result.current.state).toBe('loading')
+    await act(async () => {})
+  })
+
+  it('exposes the mode and the client ID the server gave', async () => {
+    const { result } = renderHook(() => useAuth())
+    await waitFor(() => expect(result.current.mode).toBe('google'))
+    expect(result.current.googleClientId).toBe('cid.apps.googleusercontent.com')
+    await waitFor(() => expect(result.current.state).toBe('signedIn'))
+  })
+
+  describe('when the server has login off ("none": local-only)', () => {
+    beforeEach(() => mocked(getAuthConfig).mockResolvedValue(noLogin))
+
+    it('opens the app straight away: no gate, no getMe, no cached identity or owner logic', async () => {
+      const { result } = renderHook(() => useAuth())
+
+      await waitFor(() => expect(result.current.mode).toBe('none'))
+      expect(result.current).toMatchObject({ state: 'signedIn', profile: null, unverified: false, needsSignIn: false })
+      expect(getMe).not.toHaveBeenCalled()
+      expect(getCachedIdentity).not.toHaveBeenCalled()
+      expect(hasPendingLogout).not.toHaveBeenCalled()
+      expect(checkLocalOwner).not.toHaveBeenCalled()
+    })
+
+    it('holds every drain back (no 401 churn) under its own pause reason, and never starts one', async () => {
+      const { result } = renderHook(() => useAuth())
+      await waitFor(() => expect(result.current.mode).toBe('none'))
+
+      expect(pauseDrains).toHaveBeenCalledWith(AUTH_MODE_PAUSE)
+      expect(drainOutbox).not.toHaveBeenCalled()
+    })
+
+    it('ignores a background 401: there is nothing to sign in to', async () => {
+      const { result } = renderHook(() => useAuth())
+      await waitFor(() => expect(result.current.mode).toBe('none'))
+
+      act(() => result.current.noteAuthRequired())
+
+      expect(result.current.needsSignIn).toBe(false)
+    })
+
+    it('releases its pause on unmount', async () => {
+      const { result, unmount } = renderHook(() => useAuth())
+      await waitFor(() => expect(result.current.mode).toBe('none'))
+
+      unmount()
+
+      expect(resumeDrains).toHaveBeenCalledWith(AUTH_MODE_PAUSE)
+    })
+
+    it('treats a cached identity as local-only and leaves its data untouched', async () => {
+      mocked(getCachedIdentity).mockResolvedValue(grace)
+      const { result } = renderHook(() => useAuth())
+
+      await waitFor(() => expect(result.current.mode).toBe('none'))
+
+      expect(result.current.state).toBe('signedIn')
+      expect(clearCachedIdentity).not.toHaveBeenCalled()
+      expect(claimLocalData).not.toHaveBeenCalled()
+    })
+  })
+
+  describe('when the server wants Google ("google")', () => {
+    it('holds drains back while the mode is still loading, then releases them and drains', async () => {
+      const { result } = renderHook(() => useAuth())
+      expect(pauseDrains).toHaveBeenCalledWith(AUTH_MODE_PAUSE)
+
+      await waitFor(() => expect(result.current.mode).toBe('google'))
+
+      expect(resumeDrains).toHaveBeenCalledWith(AUTH_MODE_PAUSE)
+      await waitFor(() => expect(drainOutbox).toHaveBeenCalled())
+    })
+
+    it('shows the gate with no known identity (the existing rules apply)', async () => {
+      mocked(getMe).mockRejectedValue(new SyncAuthError(401, null))
+      const { result } = renderHook(() => useAuth())
+      await waitFor(() => expect(result.current.state).toBe('signedOut'))
+      expect(result.current.mode).toBe('google')
+    })
+
+    it('opens from a cached config offline: the gate rules still apply with the cached client ID', async () => {
+      mocked(getCachedAuthConfig).mockResolvedValue(googleConfig)
+      mocked(getAuthConfig).mockResolvedValue(null)
+      mocked(getCachedIdentity).mockResolvedValue(grace)
+      mocked(getMe).mockRejectedValue(new SyncNetworkError())
+      const { result } = renderHook(() => useAuth())
+
+      await waitFor(() => expect(result.current.profile).toEqual(grace))
+      expect(result.current.mode).toBe('google')
+      expect(result.current.unverified).toBe(true)
+    })
+
+    it('counts a background 401 as "sign in again" (the banner)', async () => {
+      const { result } = await renderSignedIn()
+      act(() => result.current.noteAuthRequired())
+      expect(result.current.needsSignIn).toBe(true)
+    })
+  })
+
+  describe('when the server cannot be asked and nothing is cached ("unknown")', () => {
+    beforeEach(() => mocked(getAuthConfig).mockResolvedValue(null))
+
+    it('opens local-only instead of trapping an offline user: no gate, no getMe, no drains', async () => {
+      const { result } = renderHook(() => useAuth())
+
+      await waitFor(() => expect(result.current.mode).toBe('unknown'))
+
+      expect(result.current).toMatchObject({ state: 'signedIn', profile: null, needsSignIn: false })
+      expect(getMe).not.toHaveBeenCalled()
+      expect(pauseDrains).toHaveBeenCalledWith(AUTH_MODE_PAUSE)
+    })
+
+    it('switches to the gate when the server later says Google, as for any never-verified session', async () => {
+      const { result } = renderHook(() => useAuth())
+      await waitFor(() => expect(result.current.mode).toBe('unknown'))
+      mocked(getAuthConfig).mockResolvedValue(googleConfig)
+      mocked(getMe).mockRejectedValue(new SyncAuthError(401, null))
+
+      act(() => onlineListeners.forEach((listener) => listener()))
+
+      await waitFor(() => expect(result.current.state).toBe('signedOut'))
+      expect(result.current.mode).toBe('google')
+    })
+
+    it('stays open and local-only when the server later says login is off', async () => {
+      const { result } = renderHook(() => useAuth())
+      await waitFor(() => expect(result.current.mode).toBe('unknown'))
+      mocked(getAuthConfig).mockResolvedValue(noLogin)
+
+      act(() => onlineListeners.forEach((listener) => listener()))
+
+      await waitFor(() => expect(result.current.mode).toBe('none'))
+      expect(result.current.state).toBe('signedIn')
+    })
+
+    it('opens the app, verified, once Google is on and the browser already has a session', async () => {
+      const { result } = renderHook(() => useAuth())
+      await waitFor(() => expect(result.current.mode).toBe('unknown'))
+      mocked(getAuthConfig).mockResolvedValue(googleConfig)
+
+      act(() => onlineListeners.forEach((listener) => listener()))
+
+      await waitFor(() => expect(result.current.profile).toEqual(ada))
+      expect(result.current.unverified).toBe(false)
+    })
+  })
+
+  it('goes local-only, keeping everything, when a cached "google" is replaced by a fresh "none" while signed in', async () => {
+    mocked(getCachedAuthConfig).mockResolvedValue(googleConfig)
+    mocked(getAuthConfig).mockResolvedValue(noLogin)
+    mocked(getCachedIdentity).mockResolvedValue(grace)
+    const { result } = renderHook(() => useAuth())
+
+    await waitFor(() => expect(result.current.mode).toBe('none'))
+
+    expect(result.current).toMatchObject({ state: 'signedIn', needsSignIn: false })
+    expect(clearCachedIdentity).not.toHaveBeenCalled()
+  })
+
+  it('under dev:mocked skips the server entirely (sample data, no backend)', () => {
+    ;(globalThis as { __LOGBOOK_MOCKED__?: boolean }).__LOGBOOK_MOCKED__ = true
+    const { result } = renderHook(() => useAuth())
+    expect(result.current).toMatchObject({ mode: 'mock', state: 'signedIn', unverified: false })
+    expect(getAuthConfig).not.toHaveBeenCalled()
+    expect(pauseDrains).not.toHaveBeenCalled()
+  })
+
+  it('explains a 404 from /auth/google (the server turned Google off meanwhile)', async () => {
+    const { result } = await renderSignedOut()
+    mocked(loginWithGoogle).mockRejectedValue(new SyncHttpError(404, null, 'Not Found'))
+
+    await act(async () => {
+      await result.current.signInWithGoogle('id-token')
+    })
+
+    expect(result.current.error).toBe('Google sign-in is turned off on this server.')
   })
 })

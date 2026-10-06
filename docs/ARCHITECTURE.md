@@ -129,16 +129,33 @@ login (which had no UI) with **Sign in with Google**, the only method. The backe
 Google ID token (`POST /auth/google`), allowlists accounts, and starts a session cookie;
 `GET /auth/me` says who a session belongs to. On the client:
 
+- **The server decides which login.** Authentication is the backend's responsibility, so the
+  frontend owns no flag and no client ID. `GET /auth/config` (public) answers `{ methods: [] }` or
+  `{ methods: [{ type: 'google', clientId }] }`; the list shape leaves room for more login types
+  (unknown types are ignored, a malformed body counts as "unknown", never as "off"). `useAuthConfig`
+  resolves one **mode** in one place: `none` (login off: local-only), `google`, `unknown` (couldn't
+  ask, nothing cached: local-only, re-asked on reconnect), plus `mock` for `dev:mocked`. The last
+  good answer is cached in IndexedDB (`identityStore`), so the decision works offline.
 - `src/lib/auth/googleIdentity.ts` is the only module that touches Google Identity Services. It
-  lazy-loads `accounts.google.com/gsi/client`, renders Google's button, and degrades to an
-  "unavailable" result offline instead of throwing. The OAuth client ID comes from
-  `window.__LOGBOOK_GOOGLE_CLIENT_ID__` (`src/lib/auth/config.ts`), not `import.meta.env`, for the
-  same Jest/Babel reason as `src/lib/sync/config.ts`.
-- `useAuth` owns `state` (`'loading' | 'signedIn' | 'signedOut'`), the `profile`,
+  lazy-loads `accounts.google.com/gsi/client`, renders Google's button with the client ID the server
+  gave, and degrades to an "unavailable" result offline instead of throwing.
+- `useAuth` owns `state` (`'loading' | 'signedIn' | 'signedOut'`), the `profile`, the `mode`,
   `signInWithGoogle` and `logout`. `App.tsx` renders `LoginScreen` while `signedOut`. It is a gate in
   `App`, not a `useNavigation` overlay, because nothing else in the shell should be reachable
   behind it.
-- `src/lib/db/identityStore.ts` caches the last signed-in profile in IndexedDB.
+- `src/lib/db/identityStore.ts` caches the last signed-in profile and the auth config in IndexedDB.
+
+**The server's auth config versus the gate.** Everything below applies in `google` mode only.
+In `none` and `unknown` mode the session is simply local: no gate, no banner, no Google script, no
+`GET /auth/me`, no cached-identity or owner logic, and every outbox drain is held back (under its own
+pause reason, so the account guard below can't release it) so there is no 401 churn; Settings and the
+timeline say so. `unknown` is never a trap: with no cached config and no answer the app opens
+local-only (an existing user, or stuck storage, after the same startup timeout as below; a first-time
+user with nothing local waits on the splash for the answer, which fails fast offline), asks again on
+the browser's `online` event, and on an answer switches to `google` (the gate rules below then apply,
+as for any never-verified session) or `none`. If the server later says `none` while a cached identity
+exists, that identity and all local data are left untouched and the app is just local-only. A cached
+config means a start with no signal decides instantly, then the fresh answer replaces it.
 
 **The gate versus the offline rule.** The offline-first rule says creating and reading entries must
 work with no network, and a mandatory login is in tension with that. The full-screen gate therefore

@@ -3,8 +3,14 @@ import {
   SIGNED_OUT,
   adoptAccount,
   drainReachedServer,
+  ACCOUNT_PAUSE,
+  AUTH_MODE_PAUSE,
   LOCAL_PROBE_TIMEOUT_MS,
   SIGN_OUT_FLUSH_TIMEOUT_MS,
+  probeLocalData,
+  refreshAuthConfig,
+  resolveAuthConfig,
+  resolveStuckConfig,
   resolveStuckStartup,
   restoreSession,
   settleProfile,
@@ -18,15 +24,18 @@ import { disableGoogleAutoSelect } from './googleIdentity.ts'
 import {
   clearCachedIdentity,
   clearPendingLogout,
+  getCachedAuthConfig,
   getCachedIdentity,
   hasPendingLogout,
+  putCachedAuthConfig,
   putCachedIdentity,
   setPendingLogout,
 } from '../db/identityStore.ts'
 import { checkLocalOwner, claimLocalData, hasLocalData } from '../db/localOwner.ts'
-import { getMe, loginWithGoogle, logout } from '../sync/authApi.ts'
+import { getAuthConfig, getMe, loginWithGoogle, logout } from '../sync/authApi.ts'
 import { SyncAuthError, SyncNetworkError } from '../sync/errors.ts'
 import { drainOutbox, pauseDrains, resumeDrains } from '../sync/outboxRunner.ts'
+import { UNKNOWN_CONFIG, knownConfig, type ConfigState } from './authConfig.ts'
 import type { AuthProfile, Session } from '../../types/auth.ts'
 
 jest.mock('./googleIdentity.ts', () => ({ disableGoogleAutoSelect: jest.fn() }))
@@ -95,7 +104,7 @@ describe('settleProfile', () => {
   it('pauses every drain on a mismatch, so the previous account\'s queue can\'t go up under the new session', async () => {
     mocked(checkLocalOwner).mockResolvedValue('mismatch')
     await settleProfile(grace)
-    expect(pauseDrains).toHaveBeenCalled()
+    expect(pauseDrains).toHaveBeenCalledWith(ACCOUNT_PAUSE)
   })
 
   it('leaves drains alone for the device owner', async () => {
@@ -291,6 +300,8 @@ describe('signInWithIdToken', () => {
     await signInWithIdToken('tok')
 
     expect(order).toEqual(['pause', 'login', 'resume'])
+    expect(pauseDrains).toHaveBeenCalledWith(ACCOUNT_PAUSE)
+    expect(resumeDrains).toHaveBeenCalledWith(ACCOUNT_PAUSE)
   })
 
   it('resumes drains when /auth/google fails', async () => {
@@ -425,5 +436,133 @@ describe('resolveStuckStartup', () => {
     await jest.advanceTimersByTimeAsync(LOCAL_PROBE_TIMEOUT_MS)
 
     expect(await result).toEqual(SIGNED_OUT)
+  })
+})
+
+describe('probeLocalData', () => {
+  beforeEach(() => jest.useFakeTimers())
+  afterEach(() => jest.useRealTimers())
+
+  it.each([
+    [true, 'data'],
+    [false, 'none'],
+  ] as const)('is %s -> "%s" when storage answers', async (has, expected) => {
+    mocked(hasLocalData).mockResolvedValue(has)
+    expect(await probeLocalData()).toBe(expected)
+  })
+
+  it('is "stuck" when storage does not answer in time', async () => {
+    mocked(hasLocalData).mockReturnValue(new Promise(() => undefined))
+    const result = probeLocalData()
+    await jest.advanceTimersByTimeAsync(LOCAL_PROBE_TIMEOUT_MS)
+    expect(await result).toBe('stuck')
+  })
+})
+
+describe('refreshAuthConfig', () => {
+  const google = { methods: [{ type: 'google' as const, clientId: 'id' }] }
+
+  it('fetches the config and remembers it', async () => {
+    mocked(getAuthConfig).mockResolvedValue(google)
+    expect(await refreshAuthConfig()).toEqual(google)
+    expect(putCachedAuthConfig).toHaveBeenCalledWith(google)
+  })
+
+  it('returns null, caching nothing, when the server cannot answer', async () => {
+    mocked(getAuthConfig).mockResolvedValue(null)
+    expect(await refreshAuthConfig()).toBeNull()
+    expect(putCachedAuthConfig).not.toHaveBeenCalled()
+  })
+})
+
+describe('resolveAuthConfig', () => {
+  const google = { methods: [{ type: 'google' as const, clientId: 'id' }] }
+  const none = { methods: [] }
+
+  async function run(signal = new AbortController().signal): Promise<ConfigState[]> {
+    const applied: ConfigState[] = []
+    await resolveAuthConfig(signal, (state) => applied.push(state))
+    return applied
+  }
+
+  it('uses the server\'s answer when there is no cache', async () => {
+    mocked(getCachedAuthConfig).mockResolvedValue(null)
+    mocked(getAuthConfig).mockResolvedValue(google)
+    expect(await run()).toEqual([knownConfig(google)])
+    expect(putCachedAuthConfig).toHaveBeenCalledWith(google)
+  })
+
+  it('opens from the cached config first, then takes the fresh answer', async () => {
+    mocked(getCachedAuthConfig).mockResolvedValue(google)
+    mocked(getAuthConfig).mockResolvedValue(none)
+    expect(await run()).toEqual([knownConfig(google), knownConfig(none)])
+  })
+
+  it('keeps the cached config when the server cannot answer', async () => {
+    mocked(getCachedAuthConfig).mockResolvedValue(google)
+    mocked(getAuthConfig).mockResolvedValue(null)
+    expect(await run()).toEqual([knownConfig(google)])
+  })
+
+  it('is "unknown" when there is neither a cache nor an answer', async () => {
+    mocked(getCachedAuthConfig).mockResolvedValue(null)
+    mocked(getAuthConfig).mockResolvedValue(null)
+    expect(await run()).toEqual([UNKNOWN_CONFIG])
+  })
+
+  it('never touches the cached identity or local data, even when the server now says "none"', async () => {
+    mocked(getCachedAuthConfig).mockResolvedValue(google)
+    mocked(getAuthConfig).mockResolvedValue(none)
+    await run()
+    expect(clearCachedIdentity).not.toHaveBeenCalled()
+    expect(claimLocalData).not.toHaveBeenCalled()
+  })
+
+  it('applies nothing when superseded before the cache is read', async () => {
+    const controller = new AbortController()
+    mocked(getCachedAuthConfig).mockImplementation(async () => {
+      controller.abort()
+      return google
+    })
+    expect(await run(controller.signal)).toEqual([])
+    expect(getAuthConfig).not.toHaveBeenCalled()
+  })
+
+  it('applies nothing further when superseded while waiting for the server', async () => {
+    const controller = new AbortController()
+    mocked(getCachedAuthConfig).mockResolvedValue(null)
+    mocked(getAuthConfig).mockImplementation(async () => {
+      controller.abort()
+      return google
+    })
+    expect(await run(controller.signal)).toEqual([])
+  })
+})
+
+describe('resolveStuckConfig', () => {
+  beforeEach(() => jest.useFakeTimers())
+  afterEach(() => jest.useRealTimers())
+
+  it('opens as "unknown" (local-only) when this device has local data', async () => {
+    mocked(hasLocalData).mockResolvedValue(true)
+    expect(await resolveStuckConfig()).toEqual(UNKNOWN_CONFIG)
+  })
+
+  it('keeps a first-time user waiting on the splash (null) when nothing is local', async () => {
+    mocked(hasLocalData).mockResolvedValue(false)
+    expect(await resolveStuckConfig()).toBeNull()
+  })
+
+  it('opens as "unknown" rather than trapping anyone when storage itself is stuck', async () => {
+    mocked(hasLocalData).mockReturnValue(new Promise(() => undefined))
+    const result = resolveStuckConfig()
+    await jest.advanceTimersByTimeAsync(LOCAL_PROBE_TIMEOUT_MS)
+    expect(await result).toEqual(UNKNOWN_CONFIG)
+  })
+})
+
+describe('pause reasons', () => {
+  it('names distinct reasons so the account guard and the auth-mode guard cannot release each other', () => {
+    expect(ACCOUNT_PAUSE).not.toBe(AUTH_MODE_PAUSE)
   })
 })

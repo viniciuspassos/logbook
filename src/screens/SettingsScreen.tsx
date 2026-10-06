@@ -50,6 +50,12 @@ function SettingsActionRow({ label, hint, disabled, onClick }: SettingsActionRow
   )
 }
 
+// With no login to do the app is local-only; say why, so it doesn't look broken.
+const LOCAL_ONLY_NOTE = {
+  none: 'Local only · sign-in is off on this server',
+  unknown: 'Local only · the server has not answered yet',
+} as const
+
 const AI_PROCESSING_LABEL: Record<AiProcessingStatus, string> = {
   enabled: 'Enabled',
   downloading: 'Downloading…',
@@ -119,12 +125,16 @@ export function SettingsScreen({ entryCount, exports, auth }: SettingsScreenProp
 
       {/* Who is signed in + Sign out; signing in is the login gate's job. */}
       <SettingsGroup label="Account">
-        <AccountSettings
-          profile={auth.profile}
-          pending={auth.pending}
-          status={auth.pending ? 'Signing out…' : auth.error}
-          onLogout={auth.logout}
-        />
+        {auth.mode === 'none' || auth.mode === 'unknown' ? (
+          <SettingsRow label="Sign-in" value={LOCAL_ONLY_NOTE[auth.mode]} />
+        ) : (
+          <AccountSettings
+            profile={auth.profile}
+            pending={auth.pending}
+            status={auth.pending ? 'Signing out…' : auth.error}
+            onLogout={auth.logout}
+          />
+        )}
       </SettingsGroup>
 
       <SettingsGroup label="Data">

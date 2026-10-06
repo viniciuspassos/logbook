@@ -57,6 +57,13 @@ beforeEach(() => {
   queueEntryDeletionMock.mockResolvedValue(undefined)
 })
 
+describe('useSyncOutbox sync status when the server has login off', () => {
+  it('says sync is off', () => {
+    const { result } = renderHook(() => useSyncOutbox({ syncOff: true }))
+    expect(result.current.syncStatus).toBe('Saved locally · sync is off')
+  })
+})
+
 describe('useSyncOutbox', () => {
   it('reports "Saved locally" until a drain says otherwise, then follows each outcome', () => {
     const { result } = renderHook(() => useSyncOutbox())

@@ -196,7 +196,7 @@ async function attemptRecord(
 async function processQueue(records: OutboxRecord[], signal?: AbortSignal): Promise<DrainSummary> {
   const state: PassState = { processed: 0, blockedEntries: new Map() }
   for (const record of records) {
-    if (signal?.aborted || paused) return { processed: state.processed, stoppedReason: 'aborted' }
+    if (signal?.aborted || pauseReasons.size > 0) return { processed: state.processed, stoppedReason: 'aborted' }
     // The pass works from one snapshot; the user may have removed this op
     // since (deleted its entry or photo), so never run one that's gone.
     if (!(await hasRecord(record.queueId))) continue
@@ -266,7 +266,7 @@ async function drainUntilSettled(signal?: AbortSignal): Promise<DrainSummary> {
 }
 
 export function drainOutbox(signal?: AbortSignal): Promise<DrainSummary> {
-  if (paused) return Promise.resolve({ processed: 0, stoppedReason: 'aborted' })
+  if (pauseReasons.size > 0) return Promise.resolve({ processed: 0, stoppedReason: 'aborted' })
   if (inFlight) {
     rerunRequested = true
     return inFlight
@@ -281,9 +281,12 @@ export function drainOutbox(signal?: AbortSignal): Promise<DrainSummary> {
 
 // While paused, every drain trigger (mount, save, photo upload, sign-in, the
 // `online` event) is a no-op, because they all go through drainOutbox. Used
-// when the signed-in Google account may not be the one that owns the queue, so
-// one account's entries can never be uploaded under another's session.
-let paused = false
+// when the signed-in Google account may not be the one that owns the queue (so
+// one account's entries can never be uploaded under another's session) and
+// when the server has login off or the app can't tell yet (so there is no 401
+// churn). Each caller pauses under its own reason, and drains stay blocked
+// until every reason has been released, so one can't un-pause another.
+const pauseReasons = new Set<string>()
 
 /**
  * Blocks all drains and stops the one in flight at its next operation,
@@ -292,15 +295,15 @@ let paused = false
  * cut off half-sent. A blocked drain reports `'aborted'`, which consumers
  * already ignore.
  */
-export async function pauseDrains(): Promise<void> {
-  paused = true
+export async function pauseDrains(reason = 'default'): Promise<void> {
+  pauseReasons.add(reason)
   // A drain never rejects (failures become a summary), so this only waits.
   await inFlight
 }
 
-/** Lets drains run again. */
-export function resumeDrains(): void {
-  paused = false
+/** Releases one reason for pausing; drains run again once none are left. */
+export function resumeDrains(reason = 'default'): void {
+  pauseReasons.delete(reason)
 }
 
 /**

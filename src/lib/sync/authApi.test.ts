@@ -1,4 +1,4 @@
-import { getMe, loginWithGoogle, logout } from './authApi.ts'
+import { getAuthConfig, getMe, loginWithGoogle, logout } from './authApi.ts'
 
 function installFetch(): jest.MockedFunction<typeof fetch> {
   const mock = jest.fn() as jest.MockedFunction<typeof fetch>
@@ -91,5 +91,59 @@ describe('logout', () => {
     const [url, init] = fetchMock.mock.calls[0]
     expect(url).toBe('/api/auth/logout')
     expect(init?.method).toBe('POST')
+  })
+})
+
+describe('getAuthConfig', () => {
+  it('GETs /auth/config and resolves with the server\'s login methods', async () => {
+    const fetchMock = installFetch()
+    fetchMock.mockResolvedValue(jsonResponse(200, { methods: [{ type: 'google', clientId: 'id.apps.googleusercontent.com' }] }))
+
+    await expect(getAuthConfig()).resolves.toEqual({
+      methods: [{ type: 'google', clientId: 'id.apps.googleusercontent.com' }],
+    })
+    const [url, init] = fetchMock.mock.calls[0]
+    expect(url).toBe('/api/auth/config')
+    expect(init?.method).toBe('GET')
+  })
+
+  it('resolves with no methods when login is off on the server', async () => {
+    installFetch().mockResolvedValue(jsonResponse(200, { methods: [] }))
+    await expect(getAuthConfig()).resolves.toEqual({ methods: [] })
+  })
+
+  it('ignores method types it does not know', async () => {
+    installFetch().mockResolvedValue(jsonResponse(200, { methods: [{ type: 'passkey' }] }))
+    await expect(getAuthConfig()).resolves.toEqual({ methods: [] })
+  })
+
+  it('passes the abort signal through', async () => {
+    const fetchMock = installFetch()
+    fetchMock.mockResolvedValue(jsonResponse(200, { methods: [] }))
+    const controller = new AbortController()
+
+    await getAuthConfig(controller.signal)
+
+    expect(fetchMock.mock.calls[0][1]?.signal).toBe(controller.signal)
+  })
+
+  it.each([
+    ['a 404 (an older server)', jsonResponse(404, { message: 'Not Found' })],
+    ['a 500', jsonResponse(500, { message: 'boom' })],
+    ['a 401', jsonResponse(401, { message: 'no' })],
+    ['a malformed body', jsonResponse(200, { methods: 'google' })],
+    ['a non-object body', jsonResponse(200, 'ok')],
+  ])('is null (unknown), never a throw, for %s', async (_label, response) => {
+    installFetch().mockResolvedValue(response)
+    await expect(getAuthConfig()).resolves.toBeNull()
+  })
+
+  it('is null when the server cannot be reached', async () => {
+    installFetch().mockRejectedValue(new TypeError('Failed to fetch'))
+    await expect(getAuthConfig()).resolves.toBeNull()
+  })
+
+  it('is null when there is no fetch at all', async () => {
+    await expect(getAuthConfig()).resolves.toBeNull()
   })
 })

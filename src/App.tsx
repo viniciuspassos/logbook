@@ -80,6 +80,7 @@ function App() {
       <LoginScreen
         pending={auth.pending}
         error={auth.error}
+        clientId={auth.googleClientId}
         onCredential={auth.signInWithGoogle}
         pendingSwitch={auth.pendingSwitch}
         onConfirmSwitch={auth.confirmSwitch}
@@ -111,6 +112,7 @@ function App() {
         <LoginScreen
           pending={auth.pending}
           error={auth.error}
+          clientId={auth.googleClientId}
           onCredential={auth.signInWithGoogle}
           pendingSwitch={auth.pendingSwitch}
           onConfirmSwitch={auth.confirmSwitch}
