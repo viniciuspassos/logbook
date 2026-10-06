@@ -2,7 +2,7 @@ import { DataSource, IsNull, type Repository } from 'typeorm'
 import { EntriesRepository } from './entries.repository'
 import { Entry } from './entry.entity'
 import { User } from '../users/user.entity'
-import type { Attachment } from '../attachments/attachment.entity'
+import { Attachment } from '../attachments/attachment.entity'
 import type { UpdateEntryDto } from './dto/update-entry.dto'
 
 const USER_ID = 7
@@ -485,6 +485,67 @@ describe('EntriesRepository', () => {
         expect.anything(),
         expect.objectContaining({ deletedAt: expect.any(Date) }),
       )
+    })
+  })
+
+  describe('removeCascade (real sqljs driver)', () => {
+    let dataSource: DataSource
+
+    beforeAll(async () => {
+      dataSource = new DataSource({
+        type: 'sqljs',
+        autoSave: false,
+        synchronize: true,
+        entities: [Entry, Attachment, User],
+      })
+      await dataSource.initialize()
+    })
+
+    afterAll(async () => {
+      await dataSource.destroy()
+    })
+
+    it("removes only the owned entry's attachments and tombstones only that entry; another user's entry and attachments are untouched", async () => {
+      const users = dataSource.getRepository(User)
+      const alice = await users.save(
+        users.create({ googleSub: 'a', email: 'a@example.com', name: null, picture: null }),
+      )
+      const bob = await users.save(
+        users.create({ googleSub: 'b', email: 'b@example.com', name: null, picture: null }),
+      )
+      const entries = dataSource.getRepository(Entry)
+      const draft = fakeEntry({ id: undefined as unknown as number })
+      const aliceEntry = await entries.save(entries.create({ ...draft, userId: alice.id }))
+      const bobEntry = await entries.save(entries.create({ ...draft, userId: bob.id }))
+      const attachments = dataSource.getRepository(Attachment)
+      const row = (entryId: number) =>
+        attachments.create({
+          entryId,
+          originalFilename: 'p.jpg',
+          storageKey: `k-${entryId}`,
+          mimeType: 'image/jpeg',
+          sizeBytes: 1,
+          // attachments.userId is informational: ownership comes from the entry.
+          userId: null,
+        })
+      const aliceAttachment = await attachments.save(row(aliceEntry.id))
+      const bobAttachment = await attachments.save(row(bobEntry.id))
+      const repo = new EntriesRepository(entries)
+
+      await expect(repo.removeCascade(bobEntry.id, alice.id)).resolves.toBeNull()
+      const removed = await repo.removeCascade(aliceEntry.id, alice.id)
+
+      expect(removed?.map((a) => a.id)).toEqual([aliceAttachment.id])
+      await expect(attachments.findOneBy({ id: aliceAttachment.id })).resolves.toBeNull()
+      await expect(attachments.findOneBy({ id: bobAttachment.id })).resolves.not.toBeNull()
+      await expect(entries.findOneBy({ id: bobEntry.id })).resolves.toMatchObject({
+        deletedAt: null,
+      })
+      const tombstoned = await entries.findOne({
+        where: { id: aliceEntry.id },
+        withDeleted: true,
+      })
+      expect(tombstoned?.deletedAt).toBeInstanceOf(Date)
     })
   })
 })

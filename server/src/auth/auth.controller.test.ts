@@ -6,6 +6,7 @@ import type { RequestWithSession } from './request-with-session'
 import type { Session } from './session.entity'
 import type { GoogleLoginDto } from './dto/google-login.dto'
 import { GoogleAuthEnabledGuard } from './google-auth-enabled.guard'
+import { GoogleLoginRequestGuard } from './google-login-request.guard'
 import { IS_PUBLIC_KEY } from './public.decorator'
 import { IS_SESSION_OPTIONAL_KEY } from './optional-session.decorator'
 import { CSRF_COOKIE_NAME, SESSION_COOKIE_NAME } from './cookies'
@@ -29,10 +30,10 @@ function makeResMock() {
 }
 
 describe('AuthController', () => {
-  it('gates the Google sign-in route behind the feature-flag guard', () => {
+  it('gates the Google sign-in route: flag guard first (404 when off), then the login-CSRF guard', () => {
     const guards = Reflect.getMetadata('__guards__', AuthController.prototype.loginWithGoogle)
 
-    expect(guards).toContain(GoogleAuthEnabledGuard)
+    expect(guards).toEqual([GoogleAuthEnabledGuard, GoogleLoginRequestGuard])
   })
 
   describe('loginWithGoogle', () => {

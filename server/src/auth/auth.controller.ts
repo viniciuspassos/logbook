@@ -16,6 +16,7 @@ import { clearSessionCookies, getSessionCookie, setSessionCookies } from './cook
 import { CurrentUserId } from './current-user.decorator'
 import { GoogleLoginDto } from './dto/google-login.dto'
 import { GoogleAuthEnabledGuard } from './google-auth-enabled.guard'
+import { GoogleLoginRequestGuard } from './google-login-request.guard'
 import { OptionalSession } from './optional-session.decorator'
 import { Public } from './public.decorator'
 import type { RequestWithSession } from './request-with-session'
@@ -38,7 +39,8 @@ export class AuthController {
   ) {}
 
   @Public()
-  @UseGuards(GoogleAuthEnabledGuard)
+  // Order matters: a disabled deployment answers 404 before any login-CSRF hint.
+  @UseGuards(GoogleAuthEnabledGuard, GoogleLoginRequestGuard)
   @Post('google')
   @HttpCode(HttpStatus.OK)
   async loginWithGoogle(

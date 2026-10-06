@@ -157,6 +157,28 @@ describe('AttachmentsRepository', () => {
       await expect(attachments.findOneBy({ id: orphaned.id })).resolves.not.toBeNull()
     })
 
+    it('remove affects no row when the entry is tombstoned between the lookup and the delete', async () => {
+      const entries = dataSource.getRepository(Entry)
+      const attachments = dataSource.getRepository(Attachment)
+      const racedEntry = await entries.save(entries.create(entryFor(owner.id)))
+      const raced = await attachments.save(
+        attachments.create({
+          entryId: racedEntry.id,
+          originalFilename: 'r.jpg',
+          storageKey: 'kr',
+          mimeType: 'image/jpeg',
+          sizeBytes: 1,
+          userId: owner.id,
+        }),
+      )
+
+      await expect(repo.findById(raced.id, owner.id)).resolves.not.toBeNull()
+      await entries.update({ id: racedEntry.id }, { deletedAt: new Date() })
+
+      await expect(repo.remove(raced.id, owner.id)).resolves.toBe(false)
+      await expect(attachments.findOneBy({ id: raced.id })).resolves.not.toBeNull()
+    })
+
     it('remove returns false and deletes nothing for another user', async () => {
       await expect(repo.remove(ownedWithUserId.id, other.id)).resolves.toBe(false)
 

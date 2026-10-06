@@ -39,11 +39,13 @@ export class AttachmentsRepository {
   }
 
   /**
-   * One scoped DELETE: the attachment goes only if its parent entry is owned
-   * by `userId` and not tombstoned, checked inside the same statement (no
-   * separate lookup to race against, and one fewer query). The column is
-   * quoted explicitly because a DELETE has no entity alias for TypeORM to
-   * resolve `entryId` through.
+   * One ownership-scoped DELETE: the attachment goes only if its parent entry
+   * is owned by `userId` and not tombstoned, checked inside the same
+   * statement, so there is no separate lookup to race against. The owned-entry
+   * subquery is built with the query builder and its parameters are carried
+   * over to the DELETE (bound, never interpolated). Returns whether a row was
+   * actually deleted, which callers must use to decide whether to touch the
+   * stored blob.
    */
   async remove(id: number, userId: number): Promise<boolean> {
     const ownedEntries = this.orm
@@ -51,16 +53,17 @@ export class AttachmentsRepository {
       .subQuery()
       .select('owned.id')
       .from(Entry, 'owned')
-      .where('owned.userId = :userId')
+      .where('owned.userId = :userId', { userId })
       .andWhere('owned.deletedAt IS NULL')
-      .getQuery()
     const result = await this.orm
       .createQueryBuilder()
       .delete()
       .from(Attachment)
       .where('id = :id', { id })
-      .andWhere(`"entryId" IN ${ownedEntries}`)
-      .setParameter('userId', userId)
+      // A DELETE has no entity alias for TypeORM to resolve `entryId` through,
+      // so the one column is quoted by hand (standard SQL, same on sqlite/Postgres).
+      .andWhere(`"entryId" IN ${ownedEntries.getQuery()}`)
+      .setParameters(ownedEntries.getParameters())
       .execute()
     return (result.affected ?? 0) > 0
   }

@@ -130,7 +130,13 @@ export class AttachmentsService {
    */
   async remove(id: number, userId: number): Promise<void> {
     const attachment = await this.requireAttachment(id, userId)
-    await this.attachmentsRepository.remove(id, userId)
+    // The scoped delete's affected count is the truth: if the row was already
+    // gone or its entry was tombstoned since the lookup, nothing was deleted,
+    // and the blob must not be touched either.
+    const removed = await this.attachmentsRepository.remove(id, userId)
+    if (!removed) {
+      throw new NotFoundException(`Attachment ${id} not found`)
+    }
 
     try {
       await this.fileStorage.delete(attachment.storageKey)

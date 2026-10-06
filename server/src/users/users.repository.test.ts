@@ -132,13 +132,31 @@ describe('UsersRepository', () => {
       expect(result).toBe(saved)
     })
 
-    it('is idempotent: when the sub already exists under the lock (a racing sign-in won), it returns that user without inserting or claiming', async () => {
+    it('runs the claim even when the user already exists, without inserting again (idempotent step on every owner sign-in)', async () => {
       const { ormRepo, fakeManager } = makeRepoMock()
       const existing = fakeUser({ id: 2 })
       fakeManager.findOneBy.mockResolvedValue(existing)
       const repo = new UsersRepository(ormRepo)
 
       const result = await repo.findOrCreate(profile, { claimLegacyRows: true })
+
+      expect(result).toBe(existing)
+      expect(fakeManager.save).not.toHaveBeenCalled()
+      expect(fakeManager.update).toHaveBeenCalledWith(Entry, { userId: IsNull() }, { userId: 2 })
+      expect(fakeManager.update).toHaveBeenCalledWith(
+        Attachment,
+        { userId: IsNull() },
+        { userId: 2 },
+      )
+    })
+
+    it('is idempotent: when the sub already exists under the lock (a racing sign-in won), it returns that user without inserting or claiming', async () => {
+      const { ormRepo, fakeManager } = makeRepoMock()
+      const existing = fakeUser({ id: 2 })
+      fakeManager.findOneBy.mockResolvedValue(existing)
+      const repo = new UsersRepository(ormRepo)
+
+      const result = await repo.findOrCreate(profile, { claimLegacyRows: false })
 
       expect(fakeManager.findOneBy).toHaveBeenCalledWith(User, { googleSub: 'sub-1' })
       expect(result).toBe(existing)
@@ -164,9 +182,9 @@ describe('UsersRepository', () => {
       await dataSource.destroy()
     })
 
-    it('claims legacy rows only for the user asked to claim them, regardless of who signs in first; repeat calls neither claim nor duplicate', async () => {
+    async function orphanEntry(userId: number | null): Promise<Entry> {
       const entries = dataSource.getRepository(Entry)
-      const orphan = await entries.save(
+      return entries.save(
         entries.create({
           title: 't',
           shape: 'circle',
@@ -185,37 +203,66 @@ describe('UsersRepository', () => {
           media: ['a', 'b', 'c'],
           mapX: 1,
           mapY: 2,
-          userId: null,
+          userId,
         }),
       )
+    }
+
+    const ownerData = { googleSub: 'a', email: 'a@example.com', name: null, picture: null }
+    const strangerData = { googleSub: 'b', email: 'b@example.com', name: null, picture: null }
+
+    async function ownerOf(entry: Entry): Promise<number | null | undefined> {
+      return (await dataSource.getRepository(Entry).findOneByOrFail({ id: entry.id })).userId
+    }
+
+    it('another allowlisted user signing in first takes nothing; the owner claims at their own first sign-in', async () => {
+      const orphan = await orphanEntry(null)
       const repo = new UsersRepository(dataSource.getRepository(User))
-      const base = { name: null, picture: null }
 
-      // A non-owner signs in first and must not take the rows.
-      const stranger = await repo.findOrCreate(
-        { ...base, email: 'b@example.com', googleSub: 'b' },
-        { claimLegacyRows: false },
-      )
-      await expect(entries.findOneByOrFail({ id: orphan.id })).resolves.toMatchObject({
-        userId: null,
-      })
+      const stranger = await repo.findOrCreate(strangerData, { claimLegacyRows: false })
+      await expect(ownerOf(orphan)).resolves.toBeNull()
 
-      // The owner signs in later and inherits them, once.
-      const owner = await repo.findOrCreate(
-        { ...base, email: 'a@example.com', googleSub: 'a' },
-        { claimLegacyRows: true },
-      )
-      const again = await repo.findOrCreate(
-        { ...base, email: 'a@example.com', googleSub: 'a' },
-        { claimLegacyRows: true },
-      )
+      const owner = await repo.findOrCreate(ownerData, { claimLegacyRows: true })
+
+      expect(owner.id).not.toBe(stranger.id)
+      await expect(ownerOf(orphan)).resolves.toBe(owner.id)
+    })
+
+    it('an owner who already has a user row claims rows that are still ownerless on a later sign-in, without a duplicate user', async () => {
+      const repo = new UsersRepository(dataSource.getRepository(User))
+      // Signed in earlier, before any ownerless row existed (or before they were the owner).
+      const owner = await repo.findOrCreate(ownerData, { claimLegacyRows: false })
+      const late = await orphanEntry(null)
+
+      const again = await repo.findOrCreate(ownerData, { claimLegacyRows: true })
 
       expect(again.id).toBe(owner.id)
-      expect(owner.id).not.toBe(stranger.id)
-      await expect(dataSource.getRepository(User).count()).resolves.toBe(2)
-      await expect(entries.findOneByOrFail({ id: orphan.id })).resolves.toMatchObject({
-        userId: owner.id,
-      })
+      await expect(dataSource.getRepository(User).count()).resolves.toBe(1)
+      await expect(ownerOf(late)).resolves.toBe(owner.id)
+    })
+
+    it('a changed LEGACY_OWNER_EMAIL: the new owner claims what is still ownerless, rows already owned are untouched', async () => {
+      const repo = new UsersRepository(dataSource.getRepository(User))
+      const first = await repo.findOrCreate(ownerData, { claimLegacyRows: true })
+      const alreadyOwned = await orphanEntry(first.id)
+      const stillOrphan = await orphanEntry(null)
+
+      const newOwner = await repo.findOrCreate(strangerData, { claimLegacyRows: true })
+
+      await expect(ownerOf(stillOrphan)).resolves.toBe(newOwner.id)
+      await expect(ownerOf(alreadyOwned)).resolves.toBe(first.id)
+    })
+
+    it('repeat owner sign-ins are idempotent: nothing left to claim is a no-op', async () => {
+      const repo = new UsersRepository(dataSource.getRepository(User))
+      const orphan = await orphanEntry(null)
+
+      const owner = await repo.findOrCreate(ownerData, { claimLegacyRows: true })
+      await repo.findOrCreate(ownerData, { claimLegacyRows: true })
+      await repo.findOrCreate(ownerData, { claimLegacyRows: true })
+
+      await expect(dataSource.getRepository(User).count()).resolves.toBe(1)
+      await expect(ownerOf(orphan)).resolves.toBe(owner.id)
     })
   })
 })

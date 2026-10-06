@@ -72,6 +72,12 @@ describe('Auth with GOOGLE_AUTH_ENABLED=false (e2e)', () => {
       .post('/auth/google')
       .send({ idToken: 'anything' })
       .expect(404)
+    // Disabled wins over the login-CSRF guard: no 415/403 hint that the route exists.
+    await request(app.getHttpServer())
+      .post('/auth/google')
+      .type('form')
+      .send({ idToken: 'anything' })
+      .expect(404)
     await request(app.getHttpServer()).post('/auth/google').send({ nope: 1 }).expect(404)
     const res = await request(app.getHttpServer()).post('/auth/google').expect(404)
 

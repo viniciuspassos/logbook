@@ -1,4 +1,4 @@
-import { Column, CreateDateColumn, Entity, PrimaryGeneratedColumn } from 'typeorm'
+import { Column, CreateDateColumn, Entity, Index, PrimaryGeneratedColumn } from 'typeorm'
 
 /**
  * An account created the first time an allowlisted Google identity signs in.
@@ -19,6 +19,14 @@ export class User {
   @Column({ unique: true })
   googleSub!: string
 
+  /**
+   * Always stored trimmed and lowercased (UsersService). Indexed but
+   * deliberately NOT unique: a recycled address (the same e-mail now held by a
+   * different Google account, i.e. a different `sub`) must not lock a new
+   * legitimate user out. Identity is `googleSub`; the e-mail is only the
+   * allowlist/legacy-owner key.
+   */
+  @Index()
   @Column()
   email!: string
 

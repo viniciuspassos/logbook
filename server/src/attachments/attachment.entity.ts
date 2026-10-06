@@ -63,11 +63,14 @@ export class Attachment {
   sizeBytes!: number
 
   /**
-   * Owner (users.id). Every read/write is scoped by it — a row another user
-   * owns is indistinguishable from a missing one (404). Nullable only for
-   * rows that predate accounts; the first user to sign in inherits them (see
-   * UsersRepository.createClaimingLegacyRowsIfFirst), after which new rows
-   * always carry an owner.
+   * Informational only: set at upload time (and by the legacy claim), but
+   * NOT what access control reads. The unit of ownership is the parent entry:
+   * every read/delete resolves ownership through `entries.userId` (see
+   * AttachmentsRepository), so a row whose own `userId` is NULL or stale is
+   * still reachable by exactly its entry's owner. The column is kept (not
+   * dropped) so ownership data stays queryable; nullable for rows that
+   * predate accounts, which the configured legacy owner's idempotent claim
+   * fills in (see UsersRepository.findOrCreate).
    */
   @Index()
   @Column({ type: 'int', nullable: true })

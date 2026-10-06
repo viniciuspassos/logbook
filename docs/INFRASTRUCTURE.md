@@ -193,17 +193,30 @@ rationale lives in the auth PR descriptions; this section is the operational sum
   union), so a new method is a one-file change.
 
 - **Sign-in flow**: the browser gets an ID token from Google Identity Services and sends it to
-  `POST /auth/google` (`{ "idToken": "..." }`). `GoogleTokenVerifier`
+  `POST /auth/google` (`{ "idToken": "..." }`). **The request must be JSON and must carry the header
+  `X-Logbook-Client: web`** (see "Login CSRF" below). `GoogleTokenVerifier`
   (`server/src/auth/google-token-verifier.service.ts`, a thin adapter over `google-auth-library`)
   checks the signature, `aud` (must equal `GOOGLE_CLIENT_ID`), `iss` and `exp`, and requires
-  `email_verified`. A bad token or unverified e-mail is `401`; a verified e-mail that is not in
-  `ALLOWED_EMAILS` is `403`. If Google itself can't be reached (a listed Node network error code
-  such as `ECONNREFUSED`/`ETIMEDOUT`/`ENOTFOUND`/`EAI_AGAIN`, a cert fetch failure, an upstream 5xx) the failure is logged and answered with `503` so the client can retry instead of
-  treating it as a rejected sign-in. On success the same httpOnly session + CSRF cookies as before
+  `email_verified`. A token the library recognisably rejects (wrong audience, expired, bad signature, bad
+  issuer, malformed) or an unverified e-mail is `401`; a verified e-mail that is not in
+  `ALLOWED_EMAILS` is `403`. **Every other verification failure is logged and answered with `503`**
+  (network, TLS, abort, cert-fetch, anything unrecognised): the classification fails toward "try
+  again", never toward "your token is bad". The known token-failure messages are a list in the
+  verifier, pinned by a test to the installed `google-auth-library` source. On success the same httpOnly session + CSRF cookies as before
   are set.
   `GET /auth/me` (protected) returns `{ id, email, name, picture }` for the session's user, and
   `GET /auth/me` also re-issues both session cookies, so a client that missed an earlier
   `Set-Cookie` resyncs at least once per app launch.
+- **Login CSRF (`POST /auth/google`)**: the route is public, so it skips `CsrfGuard`; without more, a
+  cross-site page could submit the *attacker's own* ID token and sign the victim's browser into the
+  attacker's account. `GoogleLoginRequestGuard` therefore requires, before verifying anything:
+  `Content-Type: application/json` (else `415`, an HTML form can't send JSON), the custom header
+  **`X-Logbook-Client: web`** (else a generic `403`; a cross-site form can't set it, and a cross-site
+  `fetch` that does would need a CORS preflight), and refuses a browser-declared
+  `Sec-Fetch-Site: cross-site` (`403`). **CORS is not enabled** (`main.ts` never calls
+  `enableCors`, and an e2e test asserts a cross-origin preflight gets no `Access-Control-Allow-*`
+  headers), so no foreign origin can pass that preflight. The frontend must send the header; the
+  feature-flag 404 still wins over these checks.
 - **`POST /auth/logout`** is `@OptionalSession()` (not `@Public()`): with **no, expired or revoked
   session it answers 200 and clears both cookies** (nothing to protect, and a client with a dead
   session must still be able to clear its stale cookies); with a **valid session the CSRF header
@@ -236,14 +249,25 @@ rationale lives in the auth PR descriptions; this section is the operational sum
   from each verified token. `entries`, `attachments` and `sessions` carry a `userId` foreign key;
   every entries/attachments query is filtered by the session's user, and an id belonging to
   another user answers `404` (not `403`) so ids can't be probed. **Only the legacy owner
-  (`LEGACY_OWNER_EMAIL`) inherits every pre-existing `entries`/`attachments` row with
-  `userId IS NULL`**, in the same transaction that creates their account, whenever they first sign
-  in; no other user ever takes those rows. User creation takes a Postgres advisory transaction
-  lock, so a double sign-in of the same new account reuses one user instead of failing on the
-  unique `googleSub`. Attachment access follows the *parent entry's* owner (a join on
+  (`LEGACY_OWNER_EMAIL`) inherits the pre-existing `entries`/`attachments` rows with
+  `userId IS NULL`**, through an idempotent claim run on **every** sign-in of that user (not only
+  when their row is created), under the same Postgres advisory transaction lock as user creation:
+  it works when another allowlisted user signed in first, when the owner already had a row, and
+  when `LEGACY_OWNER_EMAIL` later names someone else, and it is a cheap no-op when nothing is left.
+  It only touches rows whose `userId IS NULL`, so it can never take a row away from anyone, and no
+  other user ever takes those rows. The lock also makes a double sign-in of the same new account
+  reuse one user instead of failing on the unique `googleSub`. **E-mails are stored trimmed and
+  lowercased** (migration `EmailAndSessionIndexes` backfills older rows) and `users.email` is
+  indexed but deliberately **not unique**: Google can recycle an address to a different account
+  (a different `sub`), and a unique constraint would lock that new legitimate user out. Identity
+  is `googleSub`; the e-mail is only the allowlist / legacy-owner key. Because the claim only
+  touches `userId IS NULL` rows, a recycled address matching the legacy owner can claim nothing
+  that is already owned. `sessions.userId` is indexed too (every request joins the session's user). Attachment access follows the *parent entry's* owner (a join on
   `entries.userId`, tombstoned entries excluded, so an attachment of a deleted entry answers `404`
-  like upload does), not the attachment's own nullable `userId`; attachment deletes are a single
-  scoped statement. Numeric env vars are validated at boot (`PORT` 0-65535, where 0 means an
+  like upload does), not the attachment's own nullable `userId` (that column is informational:
+  set at upload and by the claim, never read for access control); an attachment delete is a single
+  ownership-scoped statement whose affected count decides the outcome (`404`, and the stored file is
+  left alone, when nothing was deleted), and the file is only removed, best-effort, after the row. Numeric env vars are validated at boot (`PORT` 0-65535, where 0 means an
   ephemeral port; `SESSION_TTL_DAYS` and `MAX_UPLOAD_SIZE_BYTES` positive integers). Migration
   `GoogleUsers` deletes existing sessions (they were password sessions with no user), so everyone
   signs in again once after upgrading, and nulls any pre-existing `userId` on entries/attachments

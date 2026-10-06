@@ -2,6 +2,7 @@ import {
   Column,
   CreateDateColumn,
   Entity,
+  Index,
   JoinColumn,
   ManyToOne,
   PrimaryGeneratedColumn,
@@ -26,6 +27,7 @@ export class Session {
   id!: number
 
   /** The signed-in user this session belongs to; deleting the user deletes their sessions. */
+  @Index()
   @Column({ type: 'int' })
   userId!: number
 

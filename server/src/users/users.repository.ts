@@ -30,13 +30,16 @@ export class UsersRepository {
 
   /**
    * Returns the user with this Google `sub`, creating it first if needed. When
-   * it creates the user and `claimLegacyRows` is set, it also hands every
-   * entry and attachment that has no owner (`userId IS NULL` — everything
-   * written before accounts existed) to them. Creation and claim happen in
-   * one transaction, so a failed claim never leaves a user behind who
-   * silently lost the legacy data to a retry. Who may claim is the caller's
-   * decision (the configured legacy owner only, see UsersService); this
-   * method only guarantees it happens at most once, with the creation.
+   * `claimLegacyRows` is set it then hands every entry and attachment that
+   * still has no owner (`userId IS NULL` — everything written before accounts
+   * existed) to that user. The claim is an idempotent step, run on every
+   * sign-in of the legacy owner, not only when their row is created: it is a
+   * cheap no-op when nothing is left, and it still works when another user
+   * signed in first, when the owner already had a row, or when
+   * LEGACY_OWNER_EMAIL later names someone else. It can never take a row away
+   * from anyone, because it only touches rows whose `userId IS NULL`. Who may
+   * claim is the caller's decision (UsersService); creation and claim share
+   * one transaction.
    *
    * Under READ COMMITTED two sign-ins of the same new account would both try
    * to insert (one losing to the unique `googleSub` with a 500). So the
@@ -53,12 +56,9 @@ export class UsersRepository {
     return this.orm.manager.transaction(async (manager) => {
       await serializeUserCreation(manager)
 
-      const existing = await manager.findOneBy(User, { googleSub: data.googleSub })
-      if (existing) {
-        return existing
-      }
-
-      const user = await manager.save(manager.create(User, data))
+      const user =
+        (await manager.findOneBy(User, { googleSub: data.googleSub })) ??
+        (await manager.save(manager.create(User, data)))
       if (options.claimLegacyRows) {
         await manager.update(Entry, { userId: IsNull() }, { userId: user.id })
         await manager.update(Attachment, { userId: IsNull() }, { userId: user.id })

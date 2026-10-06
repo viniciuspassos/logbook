@@ -14,6 +14,7 @@ import { AuthModule } from './auth.module'
 import { Session } from './session.entity'
 import { SessionsService } from './sessions.service'
 import { GoogleTokenVerifier } from './google-token-verifier.service'
+import { LOGIN_CLIENT_HEADER_NAME, LOGIN_CLIENT_HEADER_VALUE } from './google-login-request.guard'
 import { CSRF_COOKIE_NAME, CSRF_HEADER_NAME, SESSION_COOKIE_NAME } from './cookies'
 import {
   TEST_AUTH_ENV,
@@ -128,19 +129,71 @@ describe('Auth (e2e)', () => {
   it('rejects an invalid Google ID token with 401 and sets no cookie', async () => {
     const res = await request(app.getHttpServer())
       .post('/auth/google')
+      .set(LOGIN_CLIENT_HEADER_NAME, LOGIN_CLIENT_HEADER_VALUE)
       .send({ idToken: 'forged' })
       .expect(401)
 
     expect(res.headers['set-cookie']).toBeUndefined()
   })
 
+  describe('login CSRF defences on POST /auth/google', () => {
+    const validBody = { idToken: idTokenFor(TEST_USER_A_EMAIL) }
+
+    it('rejects a cross-site HTML form post (urlencoded) with 415, signing nobody in', async () => {
+      const res = await request(app.getHttpServer())
+        .post('/auth/google')
+        .set(LOGIN_CLIENT_HEADER_NAME, LOGIN_CLIENT_HEADER_VALUE)
+        .type('form')
+        .send(validBody)
+        .expect(415)
+
+      expect(res.headers['set-cookie']).toBeUndefined()
+    })
+
+    it('rejects a JSON request without the X-Logbook-Client header with 403, signing nobody in', async () => {
+      const res = await request(app.getHttpServer())
+        .post('/auth/google')
+        .send(validBody)
+        .expect(403)
+
+      expect(res.headers['set-cookie']).toBeUndefined()
+    })
+
+    it('rejects a request the browser marks Sec-Fetch-Site: cross-site with 403', async () => {
+      const res = await request(app.getHttpServer())
+        .post('/auth/google')
+        .set(LOGIN_CLIENT_HEADER_NAME, LOGIN_CLIENT_HEADER_VALUE)
+        .set('Sec-Fetch-Site', 'cross-site')
+        .send(validBody)
+        .expect(403)
+
+      expect(res.headers['set-cookie']).toBeUndefined()
+    })
+
+    it('does not enable CORS: a cross-origin preflight gets no Access-Control-Allow-* headers', async () => {
+      const res = await request(app.getHttpServer())
+        .options('/auth/google')
+        .set('Origin', 'https://evil.example')
+        .set('Access-Control-Request-Method', 'POST')
+        .set('Access-Control-Request-Headers', 'content-type,x-logbook-client')
+
+      expect(res.headers['access-control-allow-origin']).toBeUndefined()
+      expect(res.headers['access-control-allow-headers']).toBeUndefined()
+    })
+  })
+
   it('rejects a sign-in request missing idToken with 400', async () => {
-    await request(app.getHttpServer()).post('/auth/google').send({}).expect(400)
+    await request(app.getHttpServer())
+      .post('/auth/google')
+      .set(LOGIN_CLIENT_HEADER_NAME, LOGIN_CLIENT_HEADER_VALUE)
+      .send({})
+      .expect(400)
   })
 
   it('rejects a verified Google account that is not allowlisted with 403, no cookie and no user row', async () => {
     const res = await request(app.getHttpServer())
       .post('/auth/google')
+      .set(LOGIN_CLIENT_HEADER_NAME, LOGIN_CLIENT_HEADER_VALUE)
       .send({ idToken: idTokenFor(TEST_STRANGER_EMAIL) })
       .expect(403)
 
@@ -153,6 +206,7 @@ describe('Auth (e2e)', () => {
   it('signs in an allowlisted account: sets an httpOnly session cookie plus a readable csrf cookie', async () => {
     const res = await request(app.getHttpServer())
       .post('/auth/google')
+      .set(LOGIN_CLIENT_HEADER_NAME, LOGIN_CLIENT_HEADER_VALUE)
       .send({ idToken: idTokenFor(TEST_USER_A_EMAIL) })
       .expect(200)
 
@@ -206,7 +260,7 @@ describe('Auth (e2e)', () => {
     await withAuth(request(app.getHttpServer()).get('/auth/me'), auth).expect(401)
   })
 
-  it('only the configured legacy owner inherits ownerless entries and attachments, even when another allowlisted user signs in first', async () => {
+  it('only the configured legacy owner inherits ownerless entries and attachments, on any of their sign-ins, even when another allowlisted user signed in first', async () => {
     const entries = dataSource.getRepository(Entry)
     const attachments = dataSource.getRepository(Attachment)
     const legacyEntry = await entries.save(entries.create(ownerlessEntry('legacy')))
@@ -241,11 +295,16 @@ describe('Auth (e2e)', () => {
       userId: userA.id,
     })
 
-    // Signing in again later claims nothing more.
+    // Rows that are still ownerless later are claimed by the owner's next
+    // sign-in (the claim is an idempotent step), never by anyone else's.
     const lateOrphan = await entries.save(entries.create(ownerlessEntry('late orphan')))
-    await loginForTests(app, TEST_USER_A_EMAIL)
+    await loginForTests(app, TEST_USER_B_EMAIL)
     await expect(entries.findOneByOrFail({ id: lateOrphan.id })).resolves.toMatchObject({
       userId: null,
+    })
+    await loginForTests(app, TEST_USER_A_EMAIL)
+    await expect(entries.findOneByOrFail({ id: lateOrphan.id })).resolves.toMatchObject({
+      userId: userA.id,
     })
   })
 
@@ -310,6 +369,7 @@ describe('Auth (e2e)', () => {
   it('logout clears both cookies and invalidates the session for future requests', async () => {
     const loginRes = await request(app.getHttpServer())
       .post('/auth/google')
+      .set(LOGIN_CLIENT_HEADER_NAME, LOGIN_CLIENT_HEADER_VALUE)
       .send({ idToken: idTokenFor(TEST_USER_A_EMAIL) })
       .expect(200)
 

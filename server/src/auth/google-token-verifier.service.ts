@@ -29,10 +29,11 @@ export interface GoogleIdentity {
  * The OAuth2Client is created on first use, so a deployment with Google login
  * disabled (the provider still exists, but the route is gated) never builds one.
  *
- * A bad token collapses into one generic 401 so a caller can't learn from
- * the response why it was refused. Failing to reach Google at all (network,
- * cert fetch, upstream 5xx) is not the caller's fault: it is logged and
- * answered with 503 so the client can retry instead of treating it as a
+ * A token the library recognisably rejects (wrong audience, expired, bad
+ * signature, ...) collapses into one generic 401 so a caller can't learn from
+ * the response why it was refused. Every other failure (network, TLS, abort,
+ * cert fetch, anything unrecognised) is not the caller's fault: it is logged
+ * and answered with 503 so the client can retry instead of treating it as a
  * rejected sign-in.
  */
 @Injectable()
@@ -64,62 +65,49 @@ export class GoogleTokenVerifier {
       const ticket = await this.client.verifyIdToken({ idToken, audience: this.clientId })
       return ticket.getPayload()
     } catch (error) {
-      if (isInfrastructureError(error)) {
-        const reason = error instanceof Error ? error.message : String(error)
-        this.logger.warn(`Could not reach Google to verify an ID token: ${reason}`)
-        throw new ServiceUnavailableException('Google sign-in is temporarily unavailable')
+      if (isKnownInvalidToken(error)) {
+        throw invalidToken()
       }
-      throw invalidToken()
+      // Anything that is not a recognised token failure (network, TLS, abort,
+      // gaxios, an unknown shape) fails toward "try again", never toward
+      // "your token is bad".
+      const reason = error instanceof Error ? error.message : String(error)
+      this.logger.warn(`Could not verify an ID token (not a token failure): ${reason}`)
+      throw new ServiceUnavailableException('Google sign-in is temporarily unavailable')
     }
   }
 }
 
 /**
- * Node network error codes that mean "could not reach Google". An explicit
- * list, not a pattern: an unrelated `E*`/`ERR_*` code (EACCES, a TLS parse
- * error) must not turn a bad token into a retryable-looking 503.
+ * The messages google-auth-library throws when the *token itself* is bad
+ * (prefixes; some carry the offending token/payload after them). Only these
+ * map to 401; everything else is treated as an infrastructure problem (503),
+ * so a new or unexpected error can never turn an outage into "invalid
+ * credentials". A test pins each prefix to the installed library's source, so
+ * an upgrade that rewords one fails loudly.
  */
-const NETWORK_ERROR_CODES: ReadonlySet<string> = new Set([
-  'ECONNREFUSED',
-  'ECONNRESET',
-  'ENOTFOUND',
-  'ETIMEDOUT',
-  'EAI_AGAIN',
-  'EPIPE',
-  'ECONNABORTED',
-  'ENETUNREACH',
-  'EHOSTUNREACH',
-])
+export const KNOWN_INVALID_TOKEN_MESSAGES: readonly string[] = [
+  'The verifyIdToken method requires an ID Token',
+  'Wrong number of segments in token',
+  "Can't parse token envelope",
+  "Can't parse token payload",
+  'No pem found for envelope',
+  'Invalid token signature',
+  'No issue time in token',
+  'No expiration time in token',
+  'iat field using invalid format',
+  'exp field using invalid format',
+  'Expiration time too far in future',
+  'Token used too early',
+  'Token used too late',
+  'Invalid issuer, expected one of',
+  'Wrong recipient, payload audience != requiredAudience',
+]
 
-/**
- * Prefix google-auth-library puts on failures fetching Google's signing
- * certs. A test pins it against the installed library's source, so an
- * upgrade that changes the message fails loudly.
- */
-export const CERT_FETCH_FAILURE_PREFIX = 'Failed to retrieve verification certificates'
-
-/**
- * True when verification failed because Google (or the network to it) could
- * not be reached, as opposed to the token itself being bad: a listed Node
- * network code, an upstream HTTP 5xx (gaxios puts it on `response.status`),
- * or the library's cert-fetch failure message. Anything else stays an
- * invalid-token 401, the safe side for an authentication check.
- */
-function isInfrastructureError(error: unknown): boolean {
-  if (typeof error !== 'object' || error === null) {
-    return false
-  }
-  const { code, status, response, message } = error as {
-    code?: unknown
-    status?: unknown
-    response?: { status?: unknown }
-    message?: unknown
-  }
-  const httpStatus = typeof status === 'number' ? status : response?.status
+function isKnownInvalidToken(error: unknown): boolean {
   return (
-    (typeof code === 'string' && NETWORK_ERROR_CODES.has(code)) ||
-    (typeof httpStatus === 'number' && httpStatus >= 500) ||
-    (typeof message === 'string' && message.startsWith(CERT_FETCH_FAILURE_PREFIX))
+    error instanceof Error &&
+    KNOWN_INVALID_TOKEN_MESSAGES.some((message) => error.message.startsWith(message))
   )
 }
 

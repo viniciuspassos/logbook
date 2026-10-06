@@ -324,6 +324,19 @@ describe('AttachmentsService', () => {
     warnSpy.mockRestore()
   })
 
+  it('remove throws NotFoundException and keeps the blob when the scoped delete affects no row (lost the race)', async () => {
+    const { attachmentsRepository, entriesRepository, fileStorage } = makeMocks()
+    // The lookup still saw it, but by the time of the delete its entry was
+    // tombstoned/handed away, so the ownership-scoped DELETE removed nothing.
+    attachmentsRepository.findById.mockResolvedValue(fakeAttachment({ storageKey: 'must-survive' }))
+    attachmentsRepository.remove.mockResolvedValue(false)
+    const service = new AttachmentsService(attachmentsRepository, entriesRepository, fileStorage)
+
+    await expect(service.remove(1, USER_ID)).rejects.toBeInstanceOf(NotFoundException)
+
+    expect(fileStorage.delete).not.toHaveBeenCalled()
+  })
+
   it('remove throws NotFoundException when the attachment does not exist', async () => {
     const { attachmentsRepository, entriesRepository, fileStorage } = makeMocks()
     attachmentsRepository.findById.mockResolvedValue(null)

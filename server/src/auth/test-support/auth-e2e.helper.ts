@@ -2,6 +2,7 @@ import { UnauthorizedException, type INestApplication } from '@nestjs/common'
 import request from 'supertest'
 import { CSRF_HEADER_NAME } from '../cookies'
 import type { GoogleIdentity } from '../google-token-verifier.service'
+import { LOGIN_CLIENT_HEADER_NAME, LOGIN_CLIENT_HEADER_VALUE } from '../google-login-request.guard'
 
 /**
  * Test-only helper shared by the e2e suites: not independently unit-tested,
@@ -66,6 +67,7 @@ export async function loginForTests(
 ): Promise<AuthenticatedRequestContext> {
   const res = await request(app.getHttpServer())
     .post('/auth/google')
+    .set(LOGIN_CLIENT_HEADER_NAME, LOGIN_CLIENT_HEADER_VALUE)
     .send({ idToken: idTokenFor(email) })
     .expect(200)
 
