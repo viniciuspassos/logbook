@@ -78,6 +78,25 @@ agent's prompt states policy ("run the quality gate") rather than reimplementing
     through. It had also stopped at about 43 of ~100 requests, which is why the floor applies to
     both agents.
 
+  The floor and the selector check still let two nights through (2026-10-04 and 2026-10-05), so
+  they are now binding, not advisory:
+  - **Per-flow and per-endpoint floor.** Every frontend flow needs at least 5 logged actions and
+    every backend endpoint at least 3 logged requests, and the next pass picks the least-covered
+    one. On 2026-10-05 the frontend ran 932 actions that repeated two flows and never reached
+    attachments, Settings or Stats; the backend never touched the attachment endpoints. A run
+    with any shortfall is INCOMPLETE, and the skill names what is missing.
+  - **Hard selector gate.** The tester prints `SELECTOR CHECK: n/n` and the timed run doesn't
+    start until it passes. On 2026-10-04 the script looked up the main nav as `role=tab`
+    (only the timeline's List/Map switch is; Timeline, Search, Stats and Settings are buttons in
+    `nav[aria-label="Primary"]`), so four flows had no evidence. The plan now spells each locator
+    out as `getByRole(...)`, with the role checked against the JSX.
+  - **Counts come from the log.** The harness appends every action or request to one log, and the
+    report's count is that file's line count. The skill rechecks it. On 2026-10-04 the backend
+    agent reported 100+ requests with 68 in the log.
+  - **Seed from the date**, unless one is passed. Both nights used seed 42 for the backend.
+  - **Fake credentials are not a safety skip.** On a throwaway local app the tester fills
+    password fields with fake values, rather than skipping them.
+
 All four implementing agents (`product-engineer` excluded) call these in the same order: **write
 code test-first → `code-reviewer` → `ship-pr`** (which itself calls `validate-before-commit` and
 `code-reviewer` again if the calling agent hadn't already run them on this exact diff).
