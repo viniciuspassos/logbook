@@ -1,7 +1,7 @@
 import { act, renderHook } from '@testing-library/react'
 import { useSyncOutbox } from './useSyncOutbox.ts'
 import { drainOutbox, startAutoSync, subscribeToDrains } from '../lib/sync/outboxRunner.ts'
-import { queueEntryCreate, queueEntryCreates, queueEntryDeletion } from '../lib/sync/outboxQueue.ts'
+import { queueAttachmentUpload, queueEntryCreate, queueEntryCreates, queueEntryDeletion } from '../lib/sync/outboxQueue.ts'
 import type { Entry } from '../types/entry.ts'
 
 jest.mock('../lib/sync/outboxRunner.ts', () => ({
@@ -10,6 +10,7 @@ jest.mock('../lib/sync/outboxRunner.ts', () => ({
   subscribeToDrains: jest.fn().mockReturnValue(jest.fn()),
 }))
 jest.mock('../lib/sync/outboxQueue.ts', () => ({
+  queueAttachmentUpload: jest.fn().mockResolvedValue(undefined),
   queueEntryCreate: jest.fn().mockResolvedValue(undefined),
   queueEntryCreates: jest.fn().mockResolvedValue(undefined),
   queueEntryDeletion: jest.fn().mockResolvedValue(undefined),
@@ -18,6 +19,7 @@ jest.mock('../lib/sync/outboxQueue.ts', () => ({
 const drainMock = drainOutbox as jest.Mock
 const startAutoSyncMock = startAutoSync as jest.Mock
 const subscribeMock = subscribeToDrains as jest.Mock
+const queueAttachmentUploadMock = queueAttachmentUpload as jest.Mock
 const queueEntryCreateMock = queueEntryCreate as jest.Mock
 const queueEntryCreatesMock = queueEntryCreates as jest.Mock
 const queueEntryDeletionMock = queueEntryDeletion as jest.Mock
@@ -121,6 +123,22 @@ describe('useSyncOutbox', () => {
     })
 
     expect(drainMock).toHaveBeenCalledTimes(1)
+  })
+
+  it('queueEntryWithPhotos queues the create, then each photo, then drains', async () => {
+    const { result } = renderHook(() => useSyncOutbox())
+    drainMock.mockClear()
+    const a = new File(['a'], 'a.jpg', { type: 'image/jpeg' })
+    const b = new File(['b'], 'b.jpg', { type: 'image/jpeg' })
+
+    await act(async () => {
+      result.current.queueEntryWithPhotos(makeEntry(1), [a, b])
+    })
+
+    expect(queueEntryCreateMock).toHaveBeenCalledWith(makeEntry(1))
+    expect(queueAttachmentUploadMock).toHaveBeenNthCalledWith(1, makeEntry(1), a, 'a.jpg')
+    expect(queueAttachmentUploadMock).toHaveBeenNthCalledWith(2, makeEntry(1), b, 'b.jpg')
+    expect(drainMock).toHaveBeenCalled()
   })
 
   it('queueEntryCreate enqueues the entry and kicks a drain', async () => {

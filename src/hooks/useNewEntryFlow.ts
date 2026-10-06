@@ -7,6 +7,7 @@ import {
 import { extractEntry } from '../lib/ai/extractEntry.ts'
 import { rewriteStory } from '../lib/ai/rewriteStory.ts'
 import type { Draft } from '../lib/buildEntry.ts'
+import { validateAttachmentFile } from '../lib/sync/attachmentValidation.ts'
 import { useSpeechCapture, type SpeechCaptureError } from './useSpeechCapture.ts'
 
 export type NewEntryStep = 'capture' | 'listening' | 'processing' | 'review'
@@ -38,6 +39,8 @@ export function useNewEntryFlow() {
   const [draft, setDraft] = useState<Draft>(EMPTY_DRAFT)
   const [captureError, setCaptureError] = useState<string | null>(null)
   const [isRegenerating, setIsRegenerating] = useState(false)
+  const [photos, setPhotos] = useState<File[]>([])
+  const [photoError, setPhotoError] = useState<string | null>(null)
 
   const abortRef = useRef<AbortController | null>(null)
   const variantRef = useRef(0)
@@ -174,6 +177,28 @@ export function useNewEntryFlow() {
     setDraft((prev) => ({ ...prev, story: text }))
   }, [])
 
+  const editTitle = useCallback((title: string) => {
+    setDraft((prev) => ({ ...prev, title }))
+  }, [])
+
+  /** Keeps the valid images; reports the first invalid one instead of dropping it silently. */
+  const addPhotos = useCallback((files: File[]) => {
+    const accepted: File[] = []
+    let error: string | null = null
+    for (const file of files) {
+      const validation = validateAttachmentFile(file)
+      if (validation.ok) accepted.push(file)
+      else error ??= validation.reason
+    }
+    setPhotoError(error)
+    if (accepted.length > 0) setPhotos((prev) => [...prev, ...accepted])
+  }, [])
+
+  const removePhoto = useCallback((index: number) => {
+    setPhotoError(null)
+    setPhotos((prev) => prev.filter((_, i) => i !== index))
+  }, [])
+
   const reset = useCallback(() => {
     abortRef.current?.abort()
     speech.abort()
@@ -182,6 +207,8 @@ export function useNewEntryFlow() {
     setDraft(EMPTY_DRAFT)
     setCaptureError(null)
     setIsRegenerating(false)
+    setPhotos([])
+    setPhotoError(null)
   }, [speech])
 
   const abort = useCallback(() => {
@@ -195,6 +222,8 @@ export function useNewEntryFlow() {
     draft,
     captureError,
     isRegenerating,
+    photos,
+    photoError,
     listening: speech.listening,
     transcript: speech.transcript,
     interimTranscript: speech.interimTranscript,
@@ -203,6 +232,9 @@ export function useNewEntryFlow() {
     submitTyped,
     regenerateStory,
     editStory,
+    editTitle,
+    addPhotos,
+    removePhoto,
     reset,
     abort,
   }

@@ -4,7 +4,7 @@ import { extractEntry } from '../lib/ai/extractEntry.ts'
 import { rewriteStory } from '../lib/ai/rewriteStory.ts'
 import { importBackup } from '../lib/backup/exportBackup.ts'
 import { subscribeToDrains } from '../lib/sync/outboxRunner.ts'
-import { queueEntryCreates, queueEntryDeletion } from '../lib/sync/outboxQueue.ts'
+import { queueAttachmentUpload, queueEntryCreates, queueEntryDeletion } from '../lib/sync/outboxQueue.ts'
 import { entries as seedEntries } from '../data/entries.ts'
 import type { Entry } from '../types/entry.ts'
 
@@ -12,6 +12,7 @@ const extractMock = extractEntry as jest.Mock
 const rewriteMock = rewriteStory as jest.Mock
 const importBackupMock = importBackup as jest.Mock
 const subscribeToDrainsMock = subscribeToDrains as jest.Mock
+const queueAttachmentUploadMock = queueAttachmentUpload as jest.Mock
 const queueEntryCreatesMock = queueEntryCreates as jest.Mock
 const queueEntryDeletionMock = queueEntryDeletion as jest.Mock
 
@@ -27,6 +28,7 @@ jest.mock('../lib/sync/outboxQueue.ts', () => {
   return {
     ...actual,
     queueEntryCreates: jest.fn(actual.queueEntryCreates),
+    queueAttachmentUpload: jest.fn(actual.queueAttachmentUpload),
     queueEntryDeletion: jest.fn(actual.queueEntryDeletion),
   }
 })
@@ -201,6 +203,39 @@ describe('useLogbookApp', () => {
     expect(result.current.overlay).toBeNull()
     expect(result.current.tab).toBe('timeline')
     expect(result.current.newStep).toBe('capture')
+  })
+
+  it('saveEntry uses the edited title and queues the chosen photos', async () => {
+    const { result } = renderHook(() => useLogbookApp())
+    const photo = new File(['x'], 'peak.jpg', { type: 'image/jpeg' })
+    act(() => result.current.openNewEntry())
+    await act(async () => {
+      triggerSpeechEnd('climbed a peak today')
+    })
+    act(() => {
+      result.current.editTitle('Edited title')
+      result.current.addPhotos([photo])
+    })
+    expect(result.current.photos).toEqual([photo])
+
+    await act(async () => {
+      result.current.saveEntry()
+    })
+
+    expect(result.current.entries[0].title).toBe('Edited title')
+    expect(queueAttachmentUploadMock).toHaveBeenCalledWith(
+      expect.objectContaining({ title: 'Edited title' }),
+      photo,
+      'peak.jpg',
+    )
+    expect(result.current.photos).toEqual([])
+  })
+
+  it('removeNewEntryPhoto drops a chosen photo before saving', async () => {
+    const { result } = renderHook(() => useLogbookApp())
+    act(() => result.current.addPhotos([new File(['x'], 'peak.jpg', { type: 'image/jpeg' })]))
+    act(() => result.current.removeNewEntryPhoto(0))
+    expect(result.current.photos).toEqual([])
   })
 
   it('saveEntry never reuses the id of a deleted newest entry', async () => {

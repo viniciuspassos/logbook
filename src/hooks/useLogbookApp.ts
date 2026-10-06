@@ -70,7 +70,8 @@ export function useLogbookApp() {
     const now = Date.now()
     const entry = buildEntryFromDraft(flow.draft, { id: nextEntryId(entries, now), date: new Date(now) })
     addEntry(entry)
-    syncOutbox.queueEntryCreate(entry)
+    if (flow.photos.length > 0) syncOutbox.queueEntryWithPhotos(entry, flow.photos)
+    else syncOutbox.queueEntryCreate(entry)
     flow.reset()
     nav.goTimeline()
   }
@@ -105,6 +106,8 @@ export function useLogbookApp() {
     draft: flow.draft,
     captureError: flow.captureError,
     isRegenerating: flow.isRegenerating,
+    photos: flow.photos,
+    photoError: flow.photoError,
     listening: flow.listening,
     transcript: flow.transcript,
     interimTranscript: flow.interimTranscript,
@@ -113,6 +116,9 @@ export function useLogbookApp() {
     submitTyped: flow.submitTyped,
     regenerateStory: flow.regenerateStory,
     editStory: flow.editStory,
+    editTitle: flow.editTitle,
+    addPhotos: flow.addPhotos,
+    removeNewEntryPhoto: flow.removePhoto,
     // exports & backup
     exportActions,
     // attachments (#26) — the gallery for whichever entry `selectedEntry` is

@@ -101,4 +101,46 @@ describe('useNewEntryFlow', () => {
       "Voice input isn't available in this browser. Type your note instead.",
     )
   })
+
+  describe('title and photos', () => {
+    const jpeg = new File(['x'], 'peak.jpg', { type: 'image/jpeg' })
+    const pdf = new File(['x'], 'notes.pdf', { type: 'application/pdf' })
+
+    it('editTitle stores the override on the draft', () => {
+      const { result } = renderHook(() => useNewEntryFlow())
+      act(() => result.current.editTitle('My trip'))
+      expect(result.current.draft.title).toBe('My trip')
+    })
+
+    it('addPhotos keeps valid images and reports the first invalid one', () => {
+      const { result } = renderHook(() => useNewEntryFlow())
+      act(() => result.current.addPhotos([jpeg, pdf, pdf]))
+      expect(result.current.photos).toEqual([jpeg])
+      expect(result.current.photoError).toMatch(/isn't a supported image/)
+
+      act(() => result.current.addPhotos([jpeg]))
+      expect(result.current.photos).toEqual([jpeg, jpeg])
+      expect(result.current.photoError).toBeNull()
+    })
+
+    it('removePhoto drops one photo and clears the error', () => {
+      const { result } = renderHook(() => useNewEntryFlow())
+      act(() => result.current.addPhotos([jpeg, pdf]))
+      act(() => result.current.removePhoto(0))
+      expect(result.current.photos).toEqual([])
+      expect(result.current.photoError).toBeNull()
+    })
+
+    it('reset clears the title, photos and photo error', () => {
+      const { result } = renderHook(() => useNewEntryFlow())
+      act(() => {
+        result.current.editTitle('x')
+        result.current.addPhotos([jpeg, pdf])
+      })
+      act(() => result.current.reset())
+      expect(result.current.draft.title).toBeUndefined()
+      expect(result.current.photos).toEqual([])
+      expect(result.current.photoError).toBeNull()
+    })
+  })
 })
