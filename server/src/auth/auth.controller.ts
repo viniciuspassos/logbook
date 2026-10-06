@@ -21,10 +21,6 @@ import { Public } from './public.decorator'
 import type { RequestWithSession } from './request-with-session'
 import { AuthService, type AuthProfile } from './auth.service'
 
-export type AuthConfigResponse =
-  | { googleEnabled: true; googleClientId: string }
-  | { googleEnabled: false }
-
 export interface AuthStatusResponse {
   status: 'ok'
 }
@@ -40,14 +36,6 @@ export class AuthController {
     private readonly authService: AuthService,
     private readonly configService: ConfigService,
   ) {}
-
-  /** Public, secret-free: lets a client learn whether Google login is on (and the client ID only then). */
-  @Public()
-  @Get('config')
-  config(): AuthConfigResponse {
-    const { googleAuthEnabled, googleClientId } = this.configService.getOrThrow<AppConfig>('app')
-    return googleAuthEnabled ? { googleEnabled: true, googleClientId } : { googleEnabled: false }
-  }
 
   @Public()
   @UseGuards(GoogleAuthEnabledGuard)

@@ -110,10 +110,12 @@ describe('Auth (e2e)', () => {
     expect(res.body.status).toBe('ok')
   })
 
-  it('GET /auth/config is public and reports Google login on, with the client ID', async () => {
+  it('GET /auth/config is public, uncacheable, and lists the google method with the client ID', async () => {
     const res = await request(app.getHttpServer()).get('/auth/config').expect(200)
 
-    expect(res.body).toEqual({ googleEnabled: true, googleClientId: TEST_GOOGLE_CLIENT_ID })
+    expect(res.body).toEqual({ methods: [{ type: 'google', clientId: TEST_GOOGLE_CLIENT_ID }] })
+    expect(res.headers['cache-control']).toBe('no-store')
+    expect(JSON.stringify(res.body)).not.toContain(TEST_USER_A_EMAIL)
   })
 
   it('no longer serves the password login route', async () => {

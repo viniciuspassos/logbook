@@ -60,10 +60,11 @@ describe('Auth with GOOGLE_AUTH_ENABLED=false (e2e)', () => {
     await app.close()
   })
 
-  it('GET /auth/config is public and reports Google login off, without any client ID', async () => {
+  it('GET /auth/config is public and uncacheable, and lists no methods (so no client ID either)', async () => {
     const res = await request(app.getHttpServer()).get('/auth/config').expect(200)
 
-    expect(res.body).toEqual({ googleEnabled: false })
+    expect(res.body).toEqual({ methods: [] })
+    expect(res.headers['cache-control']).toBe('no-store')
   })
 
   it('POST /auth/google answers 404 for a well-formed body, a malformed one and an empty one', async () => {

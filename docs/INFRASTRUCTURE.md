@@ -181,9 +181,16 @@ rationale lives in the auth PR descriptions; this section is the operational sum
   are neither required nor validated, and the legacy-row claim never runs. No session can ever be
   created, so every protected route (including `GET /auth/me`) answers 401: the API stays closed.
   `POST /auth/logout` keeps working (200 + cleared cookies). **On**: the behaviour described below,
-  with the Google variables required. `GET /auth/config` (public, no secrets) tells clients which
-  mode this is: `{ "googleEnabled": false }`, or `{ "googleEnabled": true, "googleClientId": "..." }`
-  (the client ID is public and only returned when the flag is on).
+  with the Google variables required.
+- **`GET /auth/config`** is how clients learn which login methods the backend offers: the
+  frontend has no flag or client ID of its own and calls this (before showing a login screen) to
+  decide what to render. Public (no session, no CSRF, never 401) and `Cache-Control: no-store`, so
+  flipping the flag takes effect on the next call. Response, a list so more methods can be added
+  later: `{ "methods": [] }` when the flag is off, or
+  `{ "methods": [ { "type": "google", "clientId": "<GOOGLE_CLIENT_ID>" } ] }` when it is on. The
+  client ID is public by design (browsers need it); the allowlist, the legacy owner and any secret
+  are never returned. The list is built in one place (`AuthConfigService`, a typed `AuthMethod`
+  union), so a new method is a one-file change.
 
 - **Sign-in flow**: the browser gets an ID token from Google Identity Services and sends it to
   `POST /auth/google` (`{ "idToken": "..." }`). `GoogleTokenVerifier`

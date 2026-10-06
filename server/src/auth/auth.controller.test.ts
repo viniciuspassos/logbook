@@ -29,34 +29,10 @@ function makeResMock() {
 }
 
 describe('AuthController', () => {
-  describe('config', () => {
-    function configServiceFor(app: object) {
-      return { getOrThrow: jest.fn().mockReturnValue(app) } as unknown as jest.Mocked<ConfigService>
-    }
+  it('gates the Google sign-in route behind the feature-flag guard', () => {
+    const guards = Reflect.getMetadata('__guards__', AuthController.prototype.loginWithGoogle)
 
-    it('exposes the client ID along with googleEnabled:true when Google login is on', () => {
-      const controller = new AuthController(
-        makeAuthServiceMock(),
-        configServiceFor({ googleAuthEnabled: true, googleClientId: 'client-id' }),
-      )
-
-      expect(controller.config()).toEqual({ googleEnabled: true, googleClientId: 'client-id' })
-    })
-
-    it('exposes only googleEnabled:false, never the client ID, when Google login is off', () => {
-      const controller = new AuthController(
-        makeAuthServiceMock(),
-        configServiceFor({ googleAuthEnabled: false, googleClientId: 'leaky-if-returned' }),
-      )
-
-      expect(controller.config()).toEqual({ googleEnabled: false })
-    })
-
-    it('is public (readable before sign-in) and the Google sign-in route is gated by the flag guard', () => {
-      expect(Reflect.getMetadata(IS_PUBLIC_KEY, AuthController.prototype.config)).toBe(true)
-      const guards = Reflect.getMetadata('__guards__', AuthController.prototype.loginWithGoogle)
-      expect(guards).toContain(GoogleAuthEnabledGuard)
-    })
+    expect(guards).toContain(GoogleAuthEnabledGuard)
   })
 
   describe('loginWithGoogle', () => {

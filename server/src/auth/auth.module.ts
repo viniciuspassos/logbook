@@ -3,6 +3,8 @@ import { ConfigService } from '@nestjs/config'
 import { APP_GUARD } from '@nestjs/core'
 import { TypeOrmModule } from '@nestjs/typeorm'
 import type { AppConfig } from '../config/configuration'
+import { AuthConfigController } from './auth-config.controller'
+import { AuthConfigService } from './auth-config.service'
 import { AuthController } from './auth.controller'
 import { AuthService } from './auth.service'
 import { CsrfGuard } from './csrf.guard'
@@ -24,9 +26,10 @@ import { SessionsService } from './sessions.service'
  */
 @Module({
   imports: [TypeOrmModule.forFeature([Session]), UsersModule],
-  controllers: [AuthController],
+  controllers: [AuthController, AuthConfigController],
   providers: [
     GoogleTokenVerifier,
+    AuthConfigService,
     SessionsRepository,
     {
       provide: SessionsService,
