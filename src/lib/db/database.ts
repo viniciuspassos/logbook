@@ -28,7 +28,7 @@ export function getDbName(): string {
   return shouldUseMockData() ? 'logbook-mocked' : 'logbook'
 }
 
-export const DB_VERSION = 2
+export const DB_VERSION = 3
 
 export const ENTRIES_STORE = 'entries'
 /** #26: durable write queue for entry/attachment mutations made while
@@ -39,6 +39,9 @@ export const OUTBOX_STORE = 'outbox'
  *  single source of truth for "has this local entry synced, and what's its
  *  server id" — see outboxRunner.ts. */
 export const SYNC_STATE_STORE = 'entrySyncState'
+/** Sign in with Google: the last signed-in profile, so the login gate stays
+ *  open offline after a first sign-in — see identityStore.ts. */
+export const IDENTITY_STORE = 'identity'
 
 /** Whether this environment can persist at all (false in SSR/jsdom). */
 export function isPersistenceSupported(): boolean {
@@ -62,6 +65,9 @@ export function openLogbookDb(): Promise<IDBDatabase> {
       }
       if (!db.objectStoreNames.contains(SYNC_STATE_STORE)) {
         db.createObjectStore(SYNC_STATE_STORE, { keyPath: 'localEntryId' })
+      }
+      if (!db.objectStoreNames.contains(IDENTITY_STORE)) {
+        db.createObjectStore(IDENTITY_STORE, { keyPath: 'key' })
       }
     }
     request.onsuccess = () => resolve(request.result)

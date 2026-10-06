@@ -2,6 +2,7 @@ import { TabBar } from './components/TabBar.tsx'
 import { mostRecentEntry } from './hooks/useEntries.ts'
 import { useIsDesktop } from './hooks/useIsDesktop.ts'
 import { useLogbookApp } from './hooks/useLogbookApp.ts'
+import { LoginScreen } from './screens/LoginScreen.tsx'
 import { EntryDetailOverlay } from './screens/EntryDetailOverlay.tsx'
 import { NewEntryOverlay } from './screens/NewEntryOverlay.tsx'
 import { SearchScreen } from './screens/SearchScreen.tsx'
@@ -48,6 +49,25 @@ function App() {
     syncStatus,
   } = useLogbookApp()
   const isDesktop = useIsDesktop()
+
+  // The sign-in gate (#122): the shell only opens with a known identity. It
+  // keys off `auth.state`, which counts the last signed-in profile cached on
+  // this device as known, so reopening offline never lands here — see
+  // useAuth.ts and docs/ARCHITECTURE.md. The hooks above stay mounted, so
+  // local data and the outbox are untouched while the gate is up.
+  if (auth.state === 'loading') {
+    return (
+      <main className="splash">
+        <p className="splash__text" role="status" aria-live="polite">
+          Opening Logbook…
+        </p>
+      </main>
+    )
+  }
+  if (auth.state === 'signedOut') {
+    return <LoginScreen pending={auth.pending} error={auth.error} onCredential={auth.signInWithGoogle} />
+  }
+
   // Below the desktop breakpoint an overlay is a full-screen cover, so the
   // rail underneath must unmount (both visually and from focus/AT). At
   // desktop width the overlay is just the reading panel next to the list,

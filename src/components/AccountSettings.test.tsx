@@ -1,121 +1,81 @@
-import { render, screen } from '@testing-library/react'
+import { fireEvent, render, screen } from '@testing-library/react'
 import userEvent from '@testing-library/user-event'
 import { AccountSettings, type AccountSettingsProps } from './AccountSettings.tsx'
 
 function makeProps(overrides: Partial<AccountSettingsProps> = {}): AccountSettingsProps {
   return {
-    state: 'unknown' as const,
+    profile: { id: 'u1', email: 'ada@example.com', name: 'Ada Lovelace', picture: null },
     pending: false,
-    error: null,
-    onLogin: jest.fn().mockResolvedValue(true),
     onLogout: jest.fn(),
     ...overrides,
   }
 }
 
 describe('AccountSettings', () => {
-  it('shows a password field and a sign-in button when not signed in (unknown)', () => {
-    render(<AccountSettings {...makeProps({ state: 'unknown' })} />)
-    expect(screen.getByLabelText(/password/i)).toBeInTheDocument()
-    expect(screen.getByRole('button', { name: /sign in/i })).toBeInTheDocument()
+  it('shows the account name and e-mail', () => {
+    render(<AccountSettings {...makeProps()} />)
+    expect(screen.getByText('Ada Lovelace')).toBeInTheDocument()
+    expect(screen.getByText('ada@example.com')).toBeInTheDocument()
   })
 
-  it('announces the sign-in/signed-in state transition politely, not just the error text', () => {
-    // The whole container carries aria-live so a screen reader hears the
-    // form -> "Signed in" swap once login settles, not just error messages.
-    const { container } = render(<AccountSettings {...makeProps({ state: 'unknown' })} />)
-    expect(container.querySelector('.account-settings')).toHaveAttribute('aria-live', 'polite')
+  it('falls back to the e-mail alone when the account has no name', () => {
+    render(<AccountSettings {...makeProps({ profile: { id: 1, email: 'ada@example.com', name: null, picture: null } })} />)
+    expect(screen.getAllByText('ada@example.com')).toHaveLength(1)
   })
 
-  it('shows the same sign-in form when explicitly signed out', () => {
-    render(<AccountSettings {...makeProps({ state: 'signedOut' })} />)
-    expect(screen.getByLabelText(/password/i)).toBeInTheDocument()
-  })
-
-  it('shows a signed-in row with a sign-out button when signed in', () => {
-    render(<AccountSettings {...makeProps({ state: 'signedIn' })} />)
-    expect(screen.getByText(/signed in/i)).toBeInTheDocument()
+  it('shows a plain "Signed in" row when the profile is not known', () => {
+    render(<AccountSettings {...makeProps({ profile: null })} />)
+    expect(screen.getByText('Signed in')).toBeInTheDocument()
     expect(screen.getByRole('button', { name: /sign out/i })).toBeInTheDocument()
+  })
+
+  it('shows the Google picture, with empty alt text since the name sits beside it', () => {
+    const { container } = render(
+      <AccountSettings
+        {...makeProps({ profile: { id: 1, email: 'a@b.co', name: 'Ada', picture: 'https://example.com/a.png' } })}
+      />,
+    )
+    const img = container.querySelector('img')
+    expect(img).toHaveAttribute('src', 'https://example.com/a.png')
+    expect(img).toHaveAttribute('alt', '')
+    expect(img).toHaveAttribute('referrerpolicy', 'no-referrer')
+  })
+
+  it('falls back to the initial when the picture cannot load (offline)', () => {
+    const { container } = render(
+      <AccountSettings
+        {...makeProps({ profile: { id: 1, email: 'a@b.co', name: 'Ada', picture: 'https://example.com/a.png' } })}
+      />,
+    )
+
+    fireEvent.error(container.querySelector('img') as HTMLImageElement)
+
+    expect(container.querySelector('img')).toBeNull()
+    expect(screen.getByText('A')).toBeInTheDocument()
+  })
+
+  it('shows the initial when there is no picture', () => {
+    render(<AccountSettings {...makeProps()} />)
+    expect(screen.getByText('A')).toBeInTheDocument()
+  })
+
+  it('has no password field', () => {
+    render(<AccountSettings {...makeProps()} />)
     expect(screen.queryByLabelText(/password/i)).not.toBeInTheDocument()
   })
 
-  it('submits the entered password via onLogin', async () => {
-    const user = userEvent.setup()
-    const onLogin = jest.fn().mockResolvedValue(true)
-    render(<AccountSettings {...makeProps({ onLogin })} />)
-
-    await user.type(screen.getByLabelText(/password/i), 'hunter2')
-    await user.click(screen.getByRole('button', { name: /sign in/i }))
-
-    expect(onLogin).toHaveBeenCalledWith('hunter2')
-  })
-
-  it('clears the password field after a successful sign-in', async () => {
-    const user = userEvent.setup()
-    const onLogin = jest.fn().mockResolvedValue(true)
-    render(<AccountSettings {...makeProps({ onLogin })} />)
-
-    const input = screen.getByLabelText(/password/i) as HTMLInputElement
-    await user.type(input, 'hunter2')
-    await user.click(screen.getByRole('button', { name: /sign in/i }))
-
-    expect(input.value).toBe('')
-  })
-
-  it('keeps the entered password after a failed sign-in so the user can correct it', async () => {
-    const user = userEvent.setup()
-    const onLogin = jest.fn().mockResolvedValue(false)
-    render(<AccountSettings {...makeProps({ onLogin })} />)
-
-    const input = screen.getByLabelText(/password/i) as HTMLInputElement
-    await user.type(input, 'wrong')
-    await user.click(screen.getByRole('button', { name: /sign in/i }))
-
-    expect(input.value).toBe('wrong')
-  })
-
-  it('does not submit an empty password', async () => {
-    const user = userEvent.setup()
-    const onLogin = jest.fn().mockResolvedValue(true)
-    render(<AccountSettings {...makeProps({ onLogin })} />)
-
-    await user.click(screen.getByRole('button', { name: /sign in/i }))
-
-    expect(onLogin).not.toHaveBeenCalled()
-  })
-
-  it('disables the sign-in button while pending', () => {
-    render(<AccountSettings {...makeProps({ state: 'unknown', pending: true })} />)
-    expect(screen.getByRole('button', { name: /sign in/i })).toBeDisabled()
-  })
-
-  it('disables the sign-out button while pending', () => {
-    render(<AccountSettings {...makeProps({ state: 'signedIn', pending: true })} />)
-    expect(screen.getByRole('button', { name: /sign out/i })).toBeDisabled()
-  })
-
-  it('calls onLogout when the sign-out button is clicked', async () => {
+  it('calls onLogout when Sign out is clicked', async () => {
     const user = userEvent.setup()
     const onLogout = jest.fn()
-    render(<AccountSettings {...makeProps({ state: 'signedIn', onLogout })} />)
+    render(<AccountSettings {...makeProps({ onLogout })} />)
 
     await user.click(screen.getByRole('button', { name: /sign out/i }))
 
     expect(onLogout).toHaveBeenCalledTimes(1)
   })
 
-  it('announces a sign-in error politely', () => {
-    render(<AccountSettings {...makeProps({ error: 'Incorrect password.' })} />)
-    const status = screen.getByRole('status')
-    expect(status).toHaveTextContent('Incorrect password.')
-    expect(status).toHaveAttribute('aria-live', 'polite')
-  })
-
-  it('renders no status region at all when there is no error', () => {
-    // Deliberately absent (not just empty) so it never collides with another
-    // `role="status"` region rendered alongside it — see SettingsScreen,
-    // which pairs this with its own export-status region.
-    render(<AccountSettings {...makeProps({ error: null })} />)
-    expect(screen.queryByRole('status')).not.toBeInTheDocument()
+  it('disables Sign out while pending', () => {
+    render(<AccountSettings {...makeProps({ pending: true })} />)
+    expect(screen.getByRole('button', { name: /sign out/i })).toBeDisabled()
   })
 })

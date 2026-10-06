@@ -1,0 +1,133 @@
+/* The sign-in gate. Mobile: a navy band of contour lines, with the white
+   panel sliding up over it. >= 960px: the same two surfaces side by side on
+   the sky, mirroring the app's rail + reading-panel shell. All colours are
+   --lb-* tokens, so dark mode follows without a second set of rules. */
+.login {
+  width: 100%;
+  min-height: 100dvh;
+  display: flex;
+  flex-direction: column;
+  background: var(--lb-bg);
+  color: var(--lb-ink);
+}
+
+.login__art {
+  position: relative;
+  flex: 1 1 auto;
+  min-height: 200px;
+  overflow: hidden;
+  background: var(--lb-rail-bg);
+}
+
+.login__panel {
+  position: relative;
+  flex: 0 0 auto;
+  display: flex;
+  flex-direction: column;
+  align-items: flex-start;
+  margin-top: calc(var(--lb-space-4) * -1);
+  padding: var(--lb-space-5) var(--lb-space-4) max(var(--lb-space-6), env(safe-area-inset-bottom));
+  border-radius: var(--lb-radius-lg) var(--lb-radius-lg) 0 0;
+  background: var(--lb-bg);
+}
+
+.login__title {
+  margin: 0;
+  font-family: var(--display);
+  font-stretch: 125%;
+  font-weight: 800;
+  font-size: clamp(2.4rem, 11vw, 3.5rem);
+  line-height: 1;
+  letter-spacing: -0.02em;
+  color: var(--lb-ink);
+}
+
+.login__lede {
+  max-width: 24ch;
+  margin: var(--lb-space-3) 0 var(--lb-space-2);
+  font-size: 19px;
+  line-height: 1.3;
+  color: var(--lb-ink);
+}
+
+.login__note {
+  max-width: 36ch;
+  margin: 0 0 var(--lb-space-5);
+  font-size: 14px;
+  color: var(--lb-muted);
+}
+
+/* Google's own button renders in here (its iframe is up to 40px tall); the
+   44px floor keeps the target and the reserved space stable while it loads. */
+.login__google {
+  min-height: 44px;
+  max-width: 100%;
+  border-radius: var(--lb-radius-sm);
+}
+.login__google[data-state='loading'] {
+  width: min(100%, 280px);
+  background: var(--lb-surface-muted);
+}
+.login__google.is-pending {
+  opacity: 0.5;
+  pointer-events: none;
+}
+
+.login__retry {
+  min-height: 44px;
+  margin-top: var(--lb-space-2);
+  padding: 0 var(--lb-space-4);
+  border: 1px solid var(--lb-border);
+  border-radius: var(--lb-radius-sm);
+  font: inherit;
+  font-weight: 600;
+  color: var(--lb-ink);
+  background: var(--lb-bg);
+  cursor: pointer;
+}
+.login__retry:hover {
+  background: var(--lb-surface-hover);
+}
+.login__retry:focus-visible {
+  outline: 2px solid var(--lb-accent-ink);
+  outline-offset: 2px;
+}
+
+/* Reserves two lines so an error never shifts the layout. */
+.login__status {
+  min-height: 2.9em;
+  max-width: 36ch;
+  margin-top: var(--lb-space-3);
+  font-size: 14px;
+  color: var(--lb-muted);
+}
+.login__status--problem {
+  color: var(--lb-danger);
+}
+
+@media (min-width: 960px) {
+  .login {
+    flex-direction: row;
+    height: 100dvh;
+    min-height: 0;
+    padding: var(--lb-space-3);
+    background: var(--lb-page-bg);
+  }
+
+  .login__art {
+    flex: 1 1 56%;
+    border-radius: var(--lb-radius-lg) 0 0 var(--lb-radius-lg);
+  }
+
+  .login__panel {
+    flex: 1 1 44%;
+    justify-content: center;
+    margin-top: 0;
+    padding: var(--lb-space-6) clamp(40px, 6vw, 96px);
+    border-radius: 0 var(--lb-radius-lg) var(--lb-radius-lg) 0;
+  }
+
+  .login__title {
+    font-size: clamp(3rem, 4.4vw, 4.25rem);
+  }
+}

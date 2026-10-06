@@ -26,12 +26,12 @@ export type { AuthState, UseAuthResult } from './useAuth.ts'
  * `npm run dev:mocked` (`shouldUseMockData`) — a normal run starts from a
  * real, empty timeline instead.
  *
- * `useAuth` owns sign-in state; this hook only wires its `noteAuthRequired`/
- * `noteAuthConfirmed` callbacks into the two places that actually attempt a
- * sync (the outbox drain and the attachment upload flow) — neither of those
- * hooks needs to know auth exists beyond "something to call when a drain
- * finds out". Signing in/out is never a gate on entry capture: it's surfaced
- * only in Settings (see SettingsScreen's Account section).
+ * `useAuth` owns who is signed in (Sign in with Google); this hook only wires
+ * its `noteAuthRequired` callback into the two places that actually attempt a
+ * sync (the outbox drain and the attachment upload flow) — neither needs to
+ * know auth exists beyond "something to call when a drain finds a 401".
+ * `App.tsx` gates the whole app on `auth.state`; offline reopening stays
+ * possible because the last profile is cached (see useAuth.ts).
  */
 export function useLogbookApp() {
   const { entries, addEntry, removeEntry, replaceEntries } = useEntries(shouldUseMockData() ? seedEntries : [])
@@ -40,11 +40,9 @@ export function useLogbookApp() {
   const auth = useAuth()
   const syncOutbox = useSyncOutbox({
     onAuthRequired: auth.noteAuthRequired,
-    onAuthConfirmed: auth.noteAuthConfirmed,
   })
   const attachments = useEntryAttachments(nav.selectedEntry, {
     onAuthRequired: auth.noteAuthRequired,
-    onAuthConfirmed: auth.noteAuthConfirmed,
   })
   // Restoring a backup replaces the whole list, so a stale detail overlay
   // could be pointing at an entry that no longer exists — close it first.
@@ -123,7 +121,7 @@ export function useLogbookApp() {
     exportActions,
     // attachments (#26) — the gallery for whichever entry `selectedEntry` is
     attachments,
-    // sign-in state (#57) for the sync backend
+    // who is signed in (Sign in with Google, #122); App.tsx gates on it
     auth,
     // the timeline's sync line, from the last outbox drain
     syncStatus: syncOutbox.syncStatus,

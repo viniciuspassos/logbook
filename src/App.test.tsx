@@ -3,6 +3,10 @@ import userEvent from '@testing-library/user-event'
 import App from './App.tsx'
 import { entries } from './data/entries.ts'
 import { subscribeToDrains } from './lib/sync/outboxRunner.ts'
+import { getMe, loginWithGoogle } from './lib/sync/authApi.ts'
+import { getCachedIdentity } from './lib/db/identityStore.ts'
+import { renderGoogleSignInButton } from './lib/auth/googleIdentity.ts'
+import { SyncAuthError, SyncNetworkError } from './lib/sync/errors.ts'
 
 // The real runner, with subscribeToDrains wrapped so a test can hand a drain
 // outcome straight to whoever subscribed.
@@ -10,6 +14,23 @@ jest.mock('./lib/sync/outboxRunner.ts', () => {
   const actual = jest.requireActual('./lib/sync/outboxRunner.ts')
   return { ...actual, subscribeToDrains: jest.fn(actual.subscribeToDrains) }
 })
+
+// Only the sign-in gate tests below run the real useAuth; every other test
+// runs under the mocked flag, which skips the gate (see useAuth.ts).
+jest.mock('./lib/sync/authApi.ts', () => ({
+  getMe: jest.fn(),
+  loginWithGoogle: jest.fn(),
+  logout: jest.fn().mockResolvedValue({ status: 'ok' }),
+}))
+jest.mock('./lib/db/identityStore.ts', () => ({
+  getCachedIdentity: jest.fn().mockResolvedValue(null),
+  putCachedIdentity: jest.fn().mockResolvedValue(undefined),
+  clearCachedIdentity: jest.fn().mockResolvedValue(undefined),
+}))
+jest.mock('./lib/auth/googleIdentity.ts', () => ({
+  renderGoogleSignInButton: jest.fn().mockResolvedValue({ status: 'rendered' }),
+  disableGoogleAutoSelect: jest.fn(),
+}))
 
 // This suite exercises the real App -> useLogbookApp -> useEntries path and
 // asserts against the sample entries' titles/ids, so it needs the same
@@ -37,8 +58,8 @@ describe('App', () => {
     expect(screen.getByRole('status')).toHaveTextContent('Saved locally')
 
     const listener = (subscribeToDrains as jest.Mock).mock.calls.at(-1)?.[0]
-    act(() => listener({ processed: 0, stoppedReason: 'auth' }))
-    expect(screen.getByRole('status')).toHaveTextContent('Saved locally · sign in to sync')
+    act(() => listener({ processed: 1, stoppedReason: 'empty' }))
+    expect(screen.getByRole('status')).toHaveTextContent('Saved locally · synced')
   })
 
   it('navigates between tabs and hides the tab bar behind an overlay', async () => {
@@ -153,6 +174,82 @@ describe('App', () => {
       render(<App />)
       await user.click(screen.getByRole('button', { name: 'New entry' }))
       expect(screen.queryByRole('button', { current: true })).not.toBeInTheDocument()
+    })
+  })
+
+  describe('sign-in gate', () => {
+    const ada = { id: 'u1', email: 'ada@example.com', name: 'Ada', picture: null }
+
+    beforeEach(() => {
+      delete (globalThis as { __LOGBOOK_MOCKED__?: boolean }).__LOGBOOK_MOCKED__
+      ;(getCachedIdentity as jest.Mock).mockResolvedValue(null)
+      ;(getMe as jest.Mock).mockRejectedValue(new SyncAuthError(401, null))
+    })
+
+    afterEach(() => {
+      globalThis.__LOGBOOK_MOCKED__ = true
+    })
+
+    it('shows the login screen, not the app, when there is no known identity', async () => {
+      render(<App />)
+
+      expect(await screen.findByRole('heading', { name: 'Logbook', level: 1 })).toBeInTheDocument()
+      expect(screen.queryByRole('button', { name: /new entry/i })).not.toBeInTheDocument()
+      await act(async () => {})
+    })
+
+    it('opens the app after signing in with Google', async () => {
+      const user = userEvent.setup()
+      ;(loginWithGoogle as jest.Mock).mockResolvedValue({ status: 'ok' })
+      render(<App />)
+      await screen.findByRole('heading', { name: 'Logbook', level: 1 })
+
+      ;(getMe as jest.Mock).mockResolvedValue(ada)
+      const options = (renderGoogleSignInButton as jest.Mock).mock.calls.at(-1)?.[1]
+      await act(async () => options.onCredential('id-token'))
+
+      expect(await screen.findByRole('button', { name: /new entry/i })).toBeInTheDocument()
+      await user.click(screen.getByRole('button', { name: /settings/i }))
+      expect(screen.getByText('ada@example.com')).toBeInTheDocument()
+      await act(async () => {})
+    })
+
+    it('opens the app offline from the cached identity', async () => {
+      ;(getCachedIdentity as jest.Mock).mockResolvedValue(ada)
+      ;(getMe as jest.Mock).mockRejectedValue(new SyncNetworkError())
+      render(<App />)
+
+      expect(await screen.findByRole('button', { name: /new entry/i })).toBeInTheDocument()
+      await act(async () => {})
+    })
+
+    it('brings the gate back on a 401 without touching local entries', async () => {
+      ;(getCachedIdentity as jest.Mock).mockResolvedValue(ada)
+      render(<App />)
+
+      expect(await screen.findByRole('heading', { name: 'Logbook', level: 1 })).toBeInTheDocument()
+      await act(async () => {})
+    })
+
+    it('brings the gate back when a sync attempt finds the session gone', async () => {
+      ;(getCachedIdentity as jest.Mock).mockResolvedValue(ada)
+      ;(getMe as jest.Mock).mockResolvedValue(ada)
+      render(<App />)
+      await screen.findByRole('button', { name: /new entry/i })
+
+      const listener = (subscribeToDrains as jest.Mock).mock.calls.at(-1)?.[0]
+      act(() => listener({ processed: 0, stoppedReason: 'auth' }))
+
+      expect(await screen.findByRole('heading', { name: 'Logbook', level: 1 })).toBeInTheDocument()
+      await act(async () => {})
+    })
+
+    it('shows a quiet splash while the session is being resolved', async () => {
+      ;(getMe as jest.Mock).mockReturnValue(new Promise(() => undefined))
+      render(<App />)
+
+      expect(screen.getByRole('status')).toHaveTextContent('Opening Logbook…')
+      await act(async () => {})
     })
   })
 })

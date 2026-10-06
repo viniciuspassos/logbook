@@ -37,13 +37,13 @@ function makeExports(overrides: Partial<ExportActions> = {}): ExportActions {
 
 function makeAuth(overrides: Partial<UseAuthResult> = {}): UseAuthResult {
   return {
-    state: 'unknown',
+    state: 'signedIn',
+    profile: { id: 'u1', email: 'ada@example.com', name: 'Ada Lovelace', picture: null },
     pending: false,
     error: null,
-    login: jest.fn().mockResolvedValue(true),
+    signInWithGoogle: jest.fn().mockResolvedValue(true),
     logout: jest.fn(),
     noteAuthRequired: jest.fn(),
-    noteAuthConfirmed: jest.fn(),
     clearError: jest.fn(),
     ...overrides,
   }
@@ -180,32 +180,17 @@ describe('SettingsScreen', () => {
     expect(screen.getByText('1.0.0')).toBeInTheDocument()
   })
 
-  it('renders an Account section offering a sign-in form when not signed in', async () => {
-    await renderScreen({ auth: { state: 'unknown' } })
+  it('renders the Account section with the signed-in account and a sign-out control', async () => {
+    await renderScreen()
     expect(screen.getByText('Account')).toBeInTheDocument()
-    expect(screen.getByLabelText(/password/i)).toBeInTheDocument()
-  })
-
-  it('renders the Account section as signed-in with a sign-out control', async () => {
-    await renderScreen({ auth: { state: 'signedIn' } })
-    expect(screen.getByText(/signed in/i)).toBeInTheDocument()
+    expect(screen.getByText('Ada Lovelace')).toBeInTheDocument()
+    expect(screen.getByText('ada@example.com')).toBeInTheDocument()
     expect(screen.getByRole('button', { name: /sign out/i })).toBeInTheDocument()
-  })
-
-  it('wires a password submission through to auth.login', async () => {
-    const user = userEvent.setup()
-    const login = jest.fn().mockResolvedValue(true)
-    const { auth } = await renderScreen({ auth: { state: 'unknown', login } })
-
-    await user.type(screen.getByLabelText(/password/i), 'hunter2')
-    await user.click(screen.getByRole('button', { name: /sign in/i }))
-
-    expect(auth.login).toHaveBeenCalledWith('hunter2')
   })
 
   it('wires the sign-out button through to auth.logout', async () => {
     const user = userEvent.setup()
-    const { auth } = await renderScreen({ auth: { state: 'signedIn' } })
+    const { auth } = await renderScreen()
 
     await user.click(screen.getByRole('button', { name: /sign out/i }))
 

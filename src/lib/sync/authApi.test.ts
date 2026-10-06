@@ -1,4 +1,4 @@
-import { login, logout } from './authApi.ts'
+import { getMe, loginWithGoogle, logout } from './authApi.ts'
 
 function installFetch(): jest.MockedFunction<typeof fetch> {
   const mock = jest.fn() as jest.MockedFunction<typeof fetch>
@@ -18,25 +18,65 @@ afterEach(() => {
   delete (globalThis as { fetch?: typeof fetch }).fetch
 })
 
-describe('login', () => {
-  it('POSTs the password and resolves with the status', async () => {
+describe('loginWithGoogle', () => {
+  it('POSTs the ID token to /auth/google and resolves with the status', async () => {
     const fetchMock = installFetch()
     fetchMock.mockResolvedValue(jsonResponse(200, { status: 'ok' }))
 
-    const result = await login('hunter2')
+    const result = await loginWithGoogle('google-id-token')
 
     expect(result).toEqual({ status: 'ok' })
     const [url, init] = fetchMock.mock.calls[0]
-    expect(url).toBe('/api/auth/login')
+    expect(url).toBe('/api/auth/google')
     expect(init?.method).toBe('POST')
-    expect(init?.body).toBe(JSON.stringify({ password: 'hunter2' }))
+    expect(init?.body).toBe(JSON.stringify({ idToken: 'google-id-token' }))
   })
 
-  it('rejects on a wrong password (401)', async () => {
+  it('rejects with the status when the token is rejected (401) or the account is not allowed (403)', async () => {
     const fetchMock = installFetch()
-    fetchMock.mockResolvedValue(jsonResponse(401, { message: 'Invalid password' }))
+    fetchMock.mockResolvedValueOnce(jsonResponse(401, { message: 'Invalid token' }))
+    await expect(loginWithGoogle('bad')).rejects.toMatchObject({ status: 401 })
 
-    await expect(login('wrong')).rejects.toMatchObject({ status: 401 })
+    fetchMock.mockResolvedValueOnce(jsonResponse(403, { message: 'Not allowed' }))
+    await expect(loginWithGoogle('nope')).rejects.toMatchObject({ status: 403 })
+  })
+})
+
+describe('getMe', () => {
+  it('GETs /auth/me and resolves with the profile', async () => {
+    const fetchMock = installFetch()
+    const profile = { id: 'u1', email: 'a@b.co', name: 'Ada', picture: null }
+    fetchMock.mockResolvedValue(jsonResponse(200, profile))
+
+    await expect(getMe()).resolves.toEqual(profile)
+    const [url, init] = fetchMock.mock.calls[0]
+    expect(url).toBe('/api/auth/me')
+    expect(init?.method).toBe('GET')
+  })
+
+  it('accepts a numeric id and passes the abort signal through', async () => {
+    const fetchMock = installFetch()
+    fetchMock.mockResolvedValue(jsonResponse(200, { id: 7, email: 'a@b.co', name: null, picture: 'https://x/y.png' }))
+    const controller = new AbortController()
+
+    await expect(getMe(controller.signal)).resolves.toMatchObject({ id: 7 })
+    expect(fetchMock.mock.calls[0][1]?.signal).toBe(controller.signal)
+  })
+
+  it('rejects with a 401 when there is no session', async () => {
+    installFetch().mockResolvedValue(jsonResponse(401, { message: 'Unauthorized' }))
+    await expect(getMe()).rejects.toMatchObject({ status: 401 })
+  })
+
+  it.each([
+    ['null', null],
+    ['a string', 'ok'],
+    ['a missing email', { id: 1, name: null, picture: null }],
+    ['a bad id', { id: true, email: 'a@b.co', name: null, picture: null }],
+    ['a numeric name', { id: 1, email: 'a@b.co', name: 5, picture: null }],
+  ])('rejects a malformed profile (%s) instead of trusting it', async (_label, body) => {
+    installFetch().mockResolvedValue(jsonResponse(200, body))
+    await expect(getMe()).rejects.toThrow('Unexpected response')
   })
 })
 

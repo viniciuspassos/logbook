@@ -117,16 +117,9 @@ export function SettingsScreen({ entryCount, exports, auth }: SettingsScreenProp
     <div className="settings-screen">
       <h1 className="settings-screen__title">Settings</h1>
 
-      {/* Contextual, never a startup gate — see AccountSettings.tsx's doc
-          comment and CLAUDE.md's Browser AI/sync degradation rule. */}
+      {/* Who is signed in + Sign out; signing in is the login gate's job. */}
       <SettingsGroup label="Account">
-        <AccountSettings
-          state={auth.state}
-          pending={auth.pending}
-          error={auth.error}
-          onLogin={auth.login}
-          onLogout={auth.logout}
-        />
+        <AccountSettings profile={auth.profile} pending={auth.pending} onLogout={auth.logout} />
       </SettingsGroup>
 
       <SettingsGroup label="Data">

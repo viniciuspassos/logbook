@@ -13,9 +13,9 @@ capturing, structuring, and polishing an adventure log works without a network r
 > of truth. A background outbox also pushes entries and photos to a NestJS + Postgres backend
 > (`server/`) whenever it's reachable, degrading silently otherwise.
 >
+> Access is gated behind **Sign in with Google** (see [Sign in with Google](#sign-in-with-google)).
 > Still outstanding on the cloud-sync side (see [Product vision](#product-vision)): there's no
-> pull/reconcile path back from the server (today's outbox only pushes local changes), and no
-> login screen is wired up, so sync will 401 against a deployment with auth enabled.
+> pull/reconcile path back from the server (today's outbox only pushes local changes).
 >
 > The AI features need desktop Chrome with the built-in AI flags enabled (see
 > [Browser & AI requirements](#browser--ai-requirements)); without them the app degrades to
@@ -73,10 +73,41 @@ npm run dev                 # in another terminal — vite.config.ts proxies /ap
 ```
 
 See [`docs/INFRASTRUCTURE.md`](docs/INFRASTRUCTURE.md) → "Optional local backend infra" for the
-full Compose setup and → "Backend authentication" for `AUTH_PASSWORD_HASH`. One current gap: no
-login screen is wired up in the app yet (see [Product vision](#product-vision)), so even with the
-backend running, uploads 401 until a session cookie is established out-of-band — this is tracked,
-not yet closed.
+full Compose setup and → "Backend authentication" for the server's auth settings. The app opens
+behind a Google sign-in screen, so you also need the one-time Google setup below.
+
+### Sign in with Google
+
+Logbook opens only for a signed-in user, and Google is the only way in. The sign-in screen
+(`src/screens/LoginScreen.tsx`) renders Google's own button; the backend verifies the ID token
+(`POST /auth/google`) and starts a session.
+
+One-time setup:
+
+1. In the [Google Cloud console](https://console.cloud.google.com/apis/credentials), configure the
+   OAuth consent screen, then create an **OAuth client ID** of type **Web application**.
+2. Under **Authorized JavaScript origins**, add every origin the app is served from, for example
+   `http://localhost:5173` for `npm run dev` and your production origin. No redirect URIs are
+   needed: the button hands an ID token back to the page, not through a redirect.
+3. Give the same client ID to both sides. The backend reads it from its environment (see
+   `docs/INFRASTRUCTURE.md`). The frontend reads it from a `window` global, so a static build can
+   be pointed at a client without a rebuild. Set it in a script that runs before the app bundle,
+   for example in `index.html`:
+
+   ```html
+   <script>
+     window.__LOGBOOK_GOOGLE_CLIENT_ID__ = '1234567890-abc.apps.googleusercontent.com'
+   </script>
+   ```
+
+   A client ID is public by design. Without it the sign-in screen says sign-in isn't set up
+   instead of showing a button.
+
+**Offline.** The first sign-in needs a connection (Google's script loads from Google). After that
+the signed-in profile is cached on the device, so reopening Logbook with no signal goes straight to
+your entries. A session that expires while you're online brings the sign-in screen back; your local
+entries and the sync queue are left untouched. `npm run dev:mocked` skips the screen (sample data,
+no backend).
 
 ---
 
@@ -170,7 +201,8 @@ src/
   lib/
     ai/                  # Chrome built-in AI wrappers: availability, extractEntry,
                          #   rewriteStory, searchEntries
-    db/                  # entriesStore, outboxStore, syncStateStore — IndexedDB wrappers
+    db/                  # entriesStore, outboxStore, syncStateStore, identityStore — IndexedDB wrappers
+    auth/                # googleIdentity (Google Identity Services wrapper), config (client ID)
     backup/              # JSON snapshot export/import (File System Access)
     export/              # Markdown + printable-PDF formatters
     sync/                # Backend HTTP client (entriesApi, attachmentsApi, authApi, health)
@@ -229,7 +261,7 @@ feature from request to merged PR.
 ## Product vision
 
 The sections below describe the intended product. Everything here is implemented except the
-sync gaps called out explicitly below (no pull/reconcile sync, no login screen).
+sync gap called out explicitly below (no pull/reconcile sync).
 
 ### Core features
 
@@ -266,8 +298,7 @@ The application must:
   the backend whenever it's reachable. IndexedDB is still authoritative in shipped code, though:
   there's no pull/reconcile path back from the server yet, a version conflict
   ([#24](https://github.com/viniciuspassos/logbook/issues/24)) is left queued rather than
-  auto-resolved, and there's no login screen wired up, so sync 401s against a deployment with auth
-  enabled until that lands.
+  auto-resolved. Access is gated behind Sign in with Google.
 
 > One caveat on "completely offline": Chrome's **Web Speech API** may route audio to a network
 > service, so voice capture specifically can require connectivity. Extraction, rewriting, search,

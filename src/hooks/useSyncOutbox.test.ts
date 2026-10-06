@@ -67,7 +67,7 @@ describe('useSyncOutbox', () => {
     expect(result.current.syncStatus).toBe('Saved locally · synced')
 
     act(() => listener({ processed: 0, stoppedReason: 'auth' }))
-    expect(result.current.syncStatus).toBe('Saved locally · sign in to sync')
+    expect(result.current.syncStatus).toBe('Saved locally · sync paused')
   })
 
   it('keeps the last real outcome when a drain is aborted', () => {

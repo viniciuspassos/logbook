@@ -13,6 +13,7 @@ import { IDBFactory } from 'fake-indexeddb'
 import {
   DB_VERSION,
   ENTRIES_STORE,
+  IDENTITY_STORE,
   OUTBOX_STORE,
   SYNC_STATE_STORE,
   getDbName,
@@ -50,11 +51,11 @@ describe('isPersistenceSupported', () => {
 })
 
 describe('openLogbookDb', () => {
-  it('creates all three object stores on a fresh database', async () => {
+  it('creates all four object stores on a fresh database', async () => {
     const db = await openLogbookDb()
     try {
       expect(Array.from(db.objectStoreNames).sort()).toEqual(
-        [ENTRIES_STORE, OUTBOX_STORE, SYNC_STATE_STORE].sort(),
+        [ENTRIES_STORE, IDENTITY_STORE, OUTBOX_STORE, SYNC_STATE_STORE].sort(),
       )
     } finally {
       db.close()
@@ -86,7 +87,7 @@ describe('openLogbookDb', () => {
     try {
       expect(db.version).toBe(DB_VERSION)
       expect(Array.from(db.objectStoreNames).sort()).toEqual(
-        [ENTRIES_STORE, OUTBOX_STORE, SYNC_STATE_STORE].sort(),
+        [ENTRIES_STORE, IDENTITY_STORE, OUTBOX_STORE, SYNC_STATE_STORE].sort(),
       )
       const entry = await new Promise((resolve, reject) => {
         const request = db.transaction(ENTRIES_STORE, 'readonly').objectStore(ENTRIES_STORE).get(1)

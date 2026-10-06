@@ -35,10 +35,8 @@ no-op'ing silently otherwise. Two things separate this from the target architect
   state back down, so a second device's writes or a server-side edit are invisible locally. A
   version conflict ([#24](https://github.com/viniciuspassos/logbook/issues/24)) is left queued with
   its error recorded rather than auto-resolved — there's no manual-resolution UI yet.
-- **No login screen.** The backend requires a session cookie for every route except `/health` and
-  `/auth/login` (see `docs/INFRASTRUCTURE.md` → "Backend authentication"). `src/lib/sync/authApi.ts`
-  implements `login`/`logout`, but nothing under `src/screens` calls it, so against a real
-  deployment every outbox request 401s and is left queued until a login UI lands.
+
+Sign-in is covered in "Authentication: Sign in with Google" below.
 
 **Drain policy: stop on transient failures, park permanent rejections.** `outboxRunner` drains
 strictly FIFO, which is what guarantees an entry's create lands before any op that needs its server
@@ -124,6 +122,43 @@ Two properties of this flow are load-bearing and easy to break by accident:
   sync-state map's key, so reusing a deleted newest entry's id would hand the new entry the deleted
   one's server mapping and photos.
 
+### Authentication: Sign in with Google (decided, built)
+
+[Issue #122](https://github.com/viniciuspassos/logbook/issues/122) replaced the shared-password
+login (which had no UI) with **Sign in with Google**, the only method. The backend verifies a
+Google ID token (`POST /auth/google`), allowlists accounts, and starts a session cookie;
+`GET /auth/me` says who a session belongs to. On the client:
+
+- `src/lib/auth/googleIdentity.ts` is the only module that touches Google Identity Services. It
+  lazy-loads `accounts.google.com/gsi/client`, renders Google's button, and degrades to an
+  "unavailable" result offline instead of throwing. The OAuth client ID comes from
+  `window.__LOGBOOK_GOOGLE_CLIENT_ID__` (`src/lib/auth/config.ts`), not `import.meta.env`, for the
+  same Jest/Babel reason as `src/lib/sync/config.ts`.
+- `useAuth` owns `state` (`'loading' | 'signedIn' | 'signedOut'`), the `profile`,
+  `signInWithGoogle` and `logout`. `App.tsx` renders `LoginScreen` while `signedOut`. It is a gate in
+  `App`, not a `useNavigation` overlay, because nothing else in the shell should be reachable
+  behind it.
+- `src/lib/db/identityStore.ts` caches the last signed-in profile in IndexedDB.
+
+**The gate versus the offline rule.** The offline-first rule says creating and reading entries must
+work with no network. A mandatory login is in tension with that, so the gate applies only when
+there is **no known identity**:
+
+- *Cached identity present* (any earlier successful sign-in on this device): the app opens
+  immediately, with or without a network. `GET /auth/me` then runs in the background, and only a
+  401 from it, or from a sync drain, returns to the gate.
+- *A 401 never touches local data.* Entries, photos and the outbox stay exactly as they were; only
+  the way into the app changes. The cached identity is kept too, so the app still opens offline
+  afterwards. Only an explicit **Sign out** clears it.
+- *First sign-in needs a network.* This is unavoidable: Google and the backend both have to be
+  reached once. With no cached identity and no connection the screen says it couldn't reach Google
+  and offers a retry.
+
+Why: a hard gate that also required a live check on every open would lock a signed-in climber out
+of their own logbook on a mountain, which is the product's core scenario. The cache is not a
+security boundary (the session cookie is what authorises sync), so keeping the profile for offline
+reopening gives nothing to someone holding the unlocked device that they didn't already have.
+
 ## State composition
 
 `useLogbookApp` (`src/hooks/useLogbookApp.ts`) is the composition root. It owns **no state of its
@@ -137,6 +172,7 @@ everything else is delegated to a single-concern hook:
 | `useNewEntryFlow` | The capture → listening → processing → review state machine, speech, AI orchestration |
 | `useExportActions` | Markdown/PDF export, JSON backup export/restore, a `busy` guard and status message |
 | `useSyncOutbox` | Registers the reconnect trigger and does a mount-time drain against the backend outbox; exposes `queueEntryCreate`, `queueEntryCreates` (backup restore), `queueEntryDeletion` and the timeline's `syncStatus`, read from every finished drain via `subscribeToDrains` |
+| `useAuth` | Who is signed in (Sign in with Google): `state`, `profile`, `signInWithGoogle`, `logout`; resolved on mount from the cached identity plus `GET /auth/me`. `App.tsx` gates on it |
 | `useEntryAttachments` | The attachment gallery (server-confirmed + locally-queued photos) for whichever entry is open, the upload flow, and removing a single photo |
 
 **Why this shape instead of one hook, or a global store (Redux/Zustand):** the app has several
@@ -219,6 +255,7 @@ read as generic, and the book metaphor made the list look like a page instead of
 | **Postgres** for server-side persistence ([#25](https://github.com/viniciuspassos/logbook/issues/25)) | SQLite | SQLite is meaningfully simpler to operate — one file, no container, trivial backups — and was the right question to ask, because when Postgres was first chosen its justification was *speculative*: multi-writer and sync headroom that nothing actually used. Two later decisions made that headroom real. [#23](https://github.com/viniciuspassos/logbook/issues/23) put multiple devices reconciling write queues against one server (the multi-writer case), and [#18](https://github.com/viniciuspassos/logbook/issues/18) put the session store in Postgres, so auth depends on it too. SQLite's single-writer model now sits badly with both. Cost accepted: a second container and heavier local dev than a file would be. |
 | **IndexedDB** for persistence (`lib/db/entriesStore.ts`) | `localStorage` | Entries carry structured fields plus media placeholders; `localStorage`'s string-only, ~5MB, synchronous API doesn't scale to that and blocks the main thread. IndexedDB is async and has no practical size ceiling for this use case. |
 | **On-device AI** (Chrome Prompt/Rewriter APIs) over a cloud LLM | Calling an LLM API over the network | The core product requirement is working with no connectivity. A cloud call is a hard dependency the app can't have on its capture path. The cost is real: the feature is flag-gated, download-gated, and desktop-Chrome-only — accepted deliberately, with unavailability always degrading to a manual path (see `README.md` → "Browser AI best practices"). |
+| **Sign in with Google**, a mandatory gate that stays open offline from a cached identity ([#122](https://github.com/viniciuspassos/logbook/issues/122)) | A shared password; an optional, Settings-only sign-in; a gate that re-checks the server on every open | A shared password has no per-user identity, which the backend's per-user data scoping needs, and it never had a UI. An optional sign-in left sync permanently 401ing. A gate that must reach the server on every open breaks offline-first. Google needs no password storage on our side. The cost: the first sign-in needs a network, and the Google script is a third-party dependency (isolated in `lib/auth/googleIdentity.ts`). |
 | **Composed single-concern hooks**, no global store | Redux/Zustand/Context-as-store | Several concerns (nav, entries, new-entry flow, export, server-sync, attachments) that don't need cross-cutting selectors or middleware. A composition-root hook keeps the wiring visible in one function instead of behind a store's action/reducer indirection. |
 | **`vite-plugin-pwa` with `generateSW` + `registerType: 'autoUpdate'`** | `injectManifest` (custom service worker logic), or prompting the user to refresh | Logbook is a single-user personal log with no server contract to coordinate (no "your data is stale, refresh" concern), so silently activating the newest build is safe and avoids nagging the user with an update prompt. `devOptions.enabled: true` additionally serves the service worker under `npm run dev`, not just a production build, so offline behaviour is exercisable without a separate `preview` step. |
 | **File System Access API for local JSON backup**, kept alongside the [#26](https://github.com/viniciuspassos/logbook/issues/26) backend outbox | Treating the backend outbox as the only durability path | The outbox only pushes best-effort and has no pull/reconcile path or login UI yet (see "Source of truth" above), so it isn't a substitute for a user-controlled escape hatch. Local JSON backup stays the durable, portable fallback that doesn't depend on a reachable server or a signed-in session. |

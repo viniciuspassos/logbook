@@ -405,10 +405,11 @@ describe('useLogbookApp', () => {
     expect(() => unmount()).not.toThrow()
   })
 
-  it('exposes auth (#57) so Settings can offer a sign-in form without useLogbookApp owning any auth state itself', () => {
+  it('exposes auth (#122) so App can gate on it without useLogbookApp owning any auth state itself', () => {
+    // Mocked mode (set for this suite) skips the gate, so no backend is hit.
     const { result } = renderHook(() => useLogbookApp())
-    expect(result.current.auth.state).toBe('unknown')
-    expect(typeof result.current.auth.login).toBe('function')
+    expect(result.current.auth.state).toBe('signedIn')
+    expect(typeof result.current.auth.signInWithGoogle).toBe('function')
     expect(typeof result.current.auth.logout).toBe('function')
   })
 

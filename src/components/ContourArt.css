@@ -1,0 +1,59 @@
+.contour-art {
+  position: absolute;
+  inset: 0;
+  width: 100%;
+  height: 100%;
+  display: block;
+}
+
+.contour-art__ring {
+  fill: none;
+  stroke: var(--lb-contour);
+  stroke-width: 1.1;
+  stroke-opacity: 0.7;
+  vector-effect: non-scaling-stroke;
+}
+
+.contour-art__ring--major {
+  stroke-width: 2;
+  stroke-opacity: 1;
+}
+
+.contour-art__halo {
+  fill: none;
+  stroke: var(--lb-accent);
+  stroke-width: 1.5;
+  vector-effect: non-scaling-stroke;
+}
+
+.contour-art__summit {
+  fill: var(--lb-accent);
+}
+
+/* The one load-in moment: the rings appear outward from the summit once,
+   then the summit lands. (A stroke-dash "draw" would be prettier, but it
+   breaks under non-scaling-stroke, which keeps the line weights crisp at any
+   size.) Skipped entirely for people who ask for less motion. */
+@media (prefers-reduced-motion: no-preference) {
+  .contour-art__ring,
+  .contour-art__halo,
+  .contour-art__summit {
+    opacity: 0;
+    animation: contour-in 0.7s ease-out forwards;
+  }
+
+  .contour-art__ring {
+    animation-delay: calc(var(--ring) * 90ms + 200ms);
+  }
+
+  .contour-art__halo,
+  .contour-art__summit {
+    animation-delay: 0.1s;
+  }
+}
+
+@keyframes contour-in {
+  to {
+    opacity: 1;
+  }
+}

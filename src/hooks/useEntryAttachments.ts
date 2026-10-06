@@ -194,7 +194,7 @@ export function useEntryAttachments(
         // both, which is what prompted this hook's auth-awareness (see
         // the bug this fixes: a reachable-but-unauthenticated backend
         // looked identical to no connectivity at all).
-        setStatus({ tone: 'info', message: 'Photo queued — sign in to sync it.' })
+        setStatus({ tone: 'info', message: "Photo queued — it will upload once you're signed in." })
         onAuthRequired?.()
       } else {
         setStatus({ tone: 'info', message: "Photo queued — it'll upload once you're back online." })

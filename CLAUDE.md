@@ -6,7 +6,7 @@ This file provides guidance to Claude Code (claude.ai/code) when working with co
 
 Logbook is an offline-first Progressive Web App (PWA) for mountaineers and skydivers to record their adventures, even in places with little or no internet connectivity (see `package.json` description). It is a working app: an installable, offline-capable PWA that captures entries by voice, structures and polishes them with Chrome's built-in on-device AI, persists them in IndexedDB, and exports them to Markdown/PDF/JSON.
 
-Photo attachments and a background sync client are now implemented ([#26](https://github.com/viniciuspassos/logbook/issues/26)): entries and photos push to a NestJS + Postgres backend (`server/`) through an offline outbox, best-effort and silently degrading when the backend is unreachable — see `docs/ARCHITECTURE.md` → "Source of truth". Two things are still missing before that's a real cloud-sync feature: there's no pull/reconcile path back from the server (today's outbox only pushes local changes), and no login screen is wired up (`src/lib/sync/authApi.ts` exists but nothing calls it), so sync will 401 against a deployment with auth enabled. Everything else in `README.md`'s "Product vision" is live.
+Photo attachments and a background sync client are now implemented ([#26](https://github.com/viniciuspassos/logbook/issues/26)): entries and photos push to a NestJS + Postgres backend (`server/`) through an offline outbox, best-effort and silently degrading when the backend is unreachable — see `docs/ARCHITECTURE.md` → "Source of truth". One thing is still missing before that's a real cloud-sync feature: there's no pull/reconcile path back from the server (today's outbox only pushes local changes). Access is behind **Sign in with Google** ([#122](https://github.com/viniciuspassos/logbook/issues/122)): `App.tsx` shows `LoginScreen` until there is a known identity (Google is the only method; the OAuth client ID comes from `window.__LOGBOOK_GOOGLE_CLIENT_ID__`, see README → "Sign in with Google"). Everything else in `README.md`'s "Product vision" is live.
 
 The AI and speech features require desktop Chrome with the built-in AI flags enabled (README → "Browser & AI requirements"). They are always optional at runtime — see Browser AI rules below.
 
@@ -74,6 +74,7 @@ Tests must never be deleted to make a change land. If a test's behavior is genui
 - `useNewEntryFlow` — the capture → listening → processing → review state machine, speech, and AI orchestration.
 - `useExportActions` — Markdown/PDF/backup/restore, with a `busy` guard and a status message.
 - `useSyncOutbox` — registers the reconnect trigger and does a mount-time drain against the backend outbox (`src/lib/sync/`); exposes `queueEntryCreate` for `saveEntry` to call, `queueEntryDeletion` for `deleteEntry`, and `queueEntryCreates` for a backup restore (after the awaited `replaceEntries`, so entries that didn't persist locally never sync), and `syncStatus` (the timeline's sync line). It reads every finished drain, wherever it started, through `outboxRunner`'s `subscribeToDrains`, and forwards what each one learns about the session to `useAuth`.
+- `useAuth` — who is signed in: `state` (`'loading' | 'signedIn' | 'signedOut'`), `profile`, `signInWithGoogle`, `logout`. Resolved on mount from the identity cached in IndexedDB (`src/lib/db/identityStore.ts`) plus `GET /auth/me`; `App.tsx` gates on it (not a navigation overlay), and `noteAuthRequired` (a 401 from a drain) flips it to `'signedOut'`.
 - `useEntryAttachments` — the attachment gallery (server-confirmed + locally-queued photos) for whichever entry is open, the upload flow, and removing a single photo.
 
 Keep these concerns separate: put new state in the hook that owns that concern (or a new one) rather than growing `useLogbookApp` back into a god hook.
@@ -88,10 +89,15 @@ Screens and hooks must not touch flag-gated browser globals directly. All browse
 - `src/lib/db/` — IndexedDB: `entriesStore.ts` (entries), `outboxStore.ts` (pending sync ops), `syncStateStore.ts` (local-id ↔ server-id/version mapping)
 - `src/lib/backup/` — File System Access (JSON snapshot export/import)
 - `src/lib/export/` — pure Markdown/printable-HTML formatters; shared field rules live in `entryFields.ts` so formats can't drift apart
+- `src/lib/auth/` — `googleIdentity` (the only module that touches Google Identity Services; lazy-loads the GIS script and renders Google's button) and `config` (`window.__LOGBOOK_GOOGLE_CLIENT_ID__`)
 - `src/lib/sync/` — the HTTP client for the `server/` backend (`httpClient`, `entriesApi`, `attachmentsApi`, `authApi`, `health`) plus the offline outbox (`outboxQueue`, `outboxRunner`)
 - `src/types/*.d.ts` — ambient declarations for APIs missing from the DOM lib (speech, Chrome AI, File System Access)
 
 This is what keeps a shifting origin-trial API surface a one-file change.
+
+## Sign-in gate vs. offline-first
+
+The app is behind a mandatory Google sign-in, but **the gate must never lock a signed-in user out of their own local logbook**. It applies only when there is *no known identity*: after one successful sign-in the profile is cached in IndexedDB, so reopening offline (or with the backend down) opens the app directly. A later 401 from the server shows the gate again but never touches local entries, photos or the outbox, and keeps the cached identity; only an explicit Sign out clears it. Only the very first sign-in needs a network. New code must keep it that way: never add a startup check that blocks the shell on a live request, and never clear local data or the outbox on an auth failure. Why: `docs/ARCHITECTURE.md` → "Authentication: Sign in with Google".
 
 ## Browser AI rules
 
