@@ -1,4 +1,4 @@
-import { render, screen } from '@testing-library/react'
+import { cleanup, render, screen } from '@testing-library/react'
 import userEvent from '@testing-library/user-event'
 import { NewEntryOverlay } from './NewEntryOverlay.tsx'
 import { DEFAULT_MEDIA_HINTS, type Draft } from '../lib/buildEntry.ts'
@@ -33,6 +33,11 @@ function renderOverlay(overrides: {
   onSubmitTyped?: (text: string) => void
   onRegenerate?: () => void
   onEditStory?: (text: string) => void
+  photos?: File[]
+  photoError?: string | null
+  onEditTitle?: (title: string) => void
+  onAddPhotos?: (files: File[]) => void
+  onRemovePhoto?: (index: number) => void
   onSave?: () => void
 } = {}) {
   const props = {
@@ -48,6 +53,11 @@ function renderOverlay(overrides: {
     onSubmitTyped: jest.fn(),
     onRegenerate: jest.fn(),
     onEditStory: jest.fn(),
+    photos: [] as File[],
+    photoError: null,
+    onEditTitle: jest.fn(),
+    onAddPhotos: jest.fn(),
+    onRemovePhoto: jest.fn(),
     onSave: jest.fn(),
     ...overrides,
   }
@@ -144,6 +154,68 @@ describe('NewEntryOverlay', () => {
     for (const hint of DEFAULT_MEDIA_HINTS) {
       expect(screen.getByRole('img', { name: hint })).toBeInTheDocument()
     }
+  })
+
+  it('shows the derived title and reports edits', async () => {
+    const user = userEvent.setup()
+    const props = renderOverlay({
+      step: 'review',
+      draft: { raw: 'climbed pico', extracted, story: 's' },
+    })
+    const title = screen.getByRole('textbox', { name: 'Title' })
+    expect(title).toHaveValue('Pico da Bandeira')
+    await user.type(title, '!')
+    expect(props.onEditTitle).toHaveBeenCalledWith('Pico da Bandeira!')
+  })
+
+  it('shows the edited title over the derived one', () => {
+    renderOverlay({
+      step: 'review',
+      draft: { raw: 'climbed pico', extracted, story: 's', title: 'Mine' },
+    })
+    expect(screen.getByRole('textbox', { name: 'Title' })).toHaveValue('Mine')
+  })
+
+  it('reports chosen photos', async () => {
+    const user = userEvent.setup()
+    const props = renderOverlay({
+      step: 'review',
+      draft: { raw: 'x', extracted, story: 's' },
+    })
+    const file = new File(['x'], 'peak.jpg', { type: 'image/jpeg' })
+    await user.upload(screen.getByLabelText('Choose photos'), file)
+    expect(props.onAddPhotos).toHaveBeenCalledWith([file])
+  })
+
+  it('lists chosen photos with a remove button and shows photo errors', async () => {
+    const user = userEvent.setup()
+    const create = jest.fn(() => 'blob:peak')
+    const revoke = jest.fn()
+    Object.assign(URL, { createObjectURL: create, revokeObjectURL: revoke })
+    const props = renderOverlay({
+      step: 'review',
+      draft: { raw: 'x', extracted, story: 's' },
+      photos: [new File(['x'], 'peak.jpg', { type: 'image/jpeg' })],
+      photoError: 'Too big',
+    })
+    expect(screen.getByRole('img', { name: 'peak.jpg' })).toHaveAttribute('src', 'blob:peak')
+    expect(screen.queryByRole('img', { name: DEFAULT_MEDIA_HINTS[0] })).not.toBeInTheDocument()
+    expect(screen.getByRole('alert')).toHaveTextContent('Too big')
+    await user.click(screen.getByRole('button', { name: 'Remove peak.jpg' }))
+    expect(props.onRemovePhoto).toHaveBeenCalledWith(0)
+    cleanup()
+    expect(revoke).toHaveBeenCalledWith('blob:peak')
+    Reflect.deleteProperty(URL, 'createObjectURL')
+    Reflect.deleteProperty(URL, 'revokeObjectURL')
+  })
+
+  it('still lists photos when object URLs are unsupported', () => {
+    renderOverlay({
+      step: 'review',
+      draft: { raw: 'x', extracted, story: 's' },
+      photos: [new File(['x'], 'peak.jpg', { type: 'image/jpeg' })],
+    })
+    expect(screen.getByRole('img', { name: 'peak.jpg' })).toBeInTheDocument()
   })
 
   it('disables Regenerate while regenerating', () => {

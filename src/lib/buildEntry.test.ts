@@ -1,4 +1,4 @@
-import { buildEntryFromDraft, DEFAULT_MEDIA_HINTS, formatEntryDate, nextEntryId } from './buildEntry.ts'
+import { buildEntryFromDraft, DEFAULT_MEDIA_HINTS, deriveTitle, formatEntryDate, nextEntryId } from './buildEntry.ts'
 import type { ExtractedEntryFields } from './ai/extractEntry.ts'
 
 const extracted: ExtractedEntryFields = {
@@ -92,5 +92,27 @@ describe('nextEntryId', () => {
 
   it('works on an empty list', () => {
     expect(nextEntryId([], 42)).toBe(42)
+  })
+})
+
+describe('deriveTitle', () => {
+  it('prefers the AI title, falls back to the first words, then to a placeholder', () => {
+    expect(deriveTitle(extracted, 'raw')).toBe('Pico da Bandeira')
+    expect(deriveTitle({ ...extracted, title: ' ' }, 'one two three four five six seven')).toBe('one two three four five six')
+    expect(deriveTitle(null, '')).toBe('Untitled adventure')
+  })
+})
+
+describe('buildEntryFromDraft title override', () => {
+  const date = new Date(2026, 6, 15)
+
+  it('uses the user-edited title, trimmed', () => {
+    const entry = buildEntryFromDraft({ raw: 'r', extracted, story: 's', title: '  My trip ' }, { id: 1, date })
+    expect(entry.title).toBe('My trip')
+  })
+
+  it('ignores a blank override', () => {
+    const entry = buildEntryFromDraft({ raw: 'r', extracted, story: 's', title: '   ' }, { id: 1, date })
+    expect(entry.title).toBe('Pico da Bandeira')
   })
 })

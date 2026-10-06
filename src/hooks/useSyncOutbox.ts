@@ -6,6 +6,7 @@ import {
   type DrainSummary,
 } from '../lib/sync/outboxRunner.ts'
 import {
+  queueAttachmentUpload as queueAttachmentUploadOp,
   queueEntryCreate as queueEntryCreateOp,
   queueEntryCreates as queueEntryCreatesOp,
   queueEntryDeletion as queueEntryDeletionOp,
@@ -90,6 +91,17 @@ export function useSyncOutbox(options: UseSyncOutboxOptions = {}) {
     [queueThenDrain],
   )
 
+  // Photos chosen while creating the entry: queueAttachmentUpload queues the
+  // entry's create ahead of the first upload itself, so order is preserved.
+  const queueEntryWithPhotos = useCallback(
+    (entry: Entry, files: File[]) =>
+      queueThenDrain(async () => {
+        await queueEntryCreateOp(entry)
+        for (const file of files) await queueAttachmentUploadOp(entry, file, file.name)
+      }),
+    [queueThenDrain],
+  )
+
   const queueEntryCreates = useCallback(
     (entries: Entry[]) => queueThenDrain(() => queueEntryCreatesOp(entries)),
     [queueThenDrain],
@@ -100,5 +112,5 @@ export function useSyncOutbox(options: UseSyncOutboxOptions = {}) {
     [queueThenDrain],
   )
 
-  return { queueEntryCreate, queueEntryCreates, queueEntryDeletion, syncStatus: syncStatusLabel(lastDrain) }
+  return { queueEntryCreate, queueEntryWithPhotos, queueEntryCreates, queueEntryDeletion, syncStatus: syncStatusLabel(lastDrain) }
 }

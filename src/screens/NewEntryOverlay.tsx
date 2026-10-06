@@ -1,8 +1,8 @@
-import { useState } from 'react'
+import { useEffect, useMemo, useState } from 'react'
 import { OverlayHeader } from '../components/OverlayHeader.tsx'
 import { PhotoPlaceholder } from '../components/PhotoPlaceholder.tsx'
 import type { NewEntryStep } from '../hooks/useNewEntryFlow.ts'
-import { DEFAULT_MEDIA_HINTS, type Draft } from '../lib/buildEntry.ts'
+import { DEFAULT_MEDIA_HINTS, deriveTitle, type Draft } from '../lib/buildEntry.ts'
 import type { ExtractedEntryFields } from '../lib/ai/extractEntry.ts'
 import './NewEntryOverlay.css'
 
@@ -11,6 +11,8 @@ interface NewEntryOverlayProps {
   draft: Draft
   captureError: string | null
   isRegenerating: boolean
+  photos: File[]
+  photoError: string | null
   transcript: string
   interimTranscript: string
   onClose: () => void
@@ -19,6 +21,9 @@ interface NewEntryOverlayProps {
   onSubmitTyped: (text: string) => void
   onRegenerate: () => void
   onEditStory: (text: string) => void
+  onEditTitle: (title: string) => void
+  onAddPhotos: (files: File[]) => void
+  onRemovePhoto: (index: number) => void
   onSave: () => void
 }
 
@@ -34,11 +39,33 @@ function extractedTags(extracted: ExtractedEntryFields): string[] {
     .filter(Boolean)
 }
 
+/** Object URLs for the chosen photos, revoked when the set changes or the overlay closes. */
+function usePhotoUrls(photos: File[]): string[] {
+  const urls = useMemo(
+    () =>
+      typeof URL !== 'undefined' && typeof URL.createObjectURL === 'function'
+        ? photos.map((photo) => URL.createObjectURL(photo))
+        : photos.map(() => ''),
+    [photos],
+  )
+  useEffect(
+    () => () => {
+      if (typeof URL !== 'undefined' && typeof URL.revokeObjectURL === 'function') {
+        urls.forEach((url) => url && URL.revokeObjectURL(url))
+      }
+    },
+    [urls],
+  )
+  return urls
+}
+
 export function NewEntryOverlay({
   step,
   draft,
   captureError,
   isRegenerating,
+  photos,
+  photoError,
   transcript,
   interimTranscript,
   onClose,
@@ -47,11 +74,15 @@ export function NewEntryOverlay({
   onSubmitTyped,
   onRegenerate,
   onEditStory,
+  onEditTitle,
+  onAddPhotos,
+  onRemovePhoto,
   onSave,
 }: NewEntryOverlayProps) {
   const [mode, setMode] = useState<'voice' | 'text'>('voice')
   const [typed, setTyped] = useState('')
 
+  const photoUrls = usePhotoUrls(photos)
   const tags = draft.extracted ? extractedTags(draft.extracted) : []
 
   return (
@@ -176,14 +207,61 @@ export function NewEntryOverlay({
             )}
           </div>
 
-          <div className="new-entry__section-label">Add photos &amp; video</div>
-          <div className="new-entry__media">
-            {DEFAULT_MEDIA_HINTS.map((hint) => (
-              <div className="new-entry__media-item" key={hint}>
-                <PhotoPlaceholder hint={hint} shape="rounded" radius={12} />
-              </div>
-            ))}
-          </div>
+          <label className="new-entry__section-label" htmlFor="new-entry-title">
+            Title
+          </label>
+          <input
+            id="new-entry-title"
+            className="new-entry__input"
+            type="text"
+            value={draft.title ?? deriveTitle(draft.extracted, draft.raw)}
+            onChange={(event) => onEditTitle(event.target.value)}
+          />
+
+          <div className="new-entry__section-label">Add photos</div>
+          {photos.length === 0 ? (
+            <div className="new-entry__media">
+              {DEFAULT_MEDIA_HINTS.map((hint) => (
+                <div className="new-entry__media-item" key={hint}>
+                  <PhotoPlaceholder hint={hint} shape="rounded" radius={12} />
+                </div>
+              ))}
+            </div>
+          ) : (
+            <ul className="new-entry__media">
+              {photos.map((photo, index) => (
+                <li className="new-entry__media-item" key={`${photo.name}-${index}`}>
+                  <img src={photoUrls[index]} alt={photo.name} className="new-entry__photo" />
+                  <button
+                    type="button"
+                    className="new-entry__photo-remove"
+                    aria-label={`Remove ${photo.name}`}
+                    onClick={() => onRemovePhoto(index)}
+                  >
+                    ×
+                  </button>
+                </li>
+              ))}
+            </ul>
+          )}
+          <label className="new-entry__secondary new-entry__add-photo">
+            Choose photos
+            <input
+              type="file"
+              accept="image/*"
+              multiple
+              className="new-entry__file"
+              onChange={(event) => {
+                onAddPhotos(Array.from(event.target.files ?? []))
+                event.target.value = ''
+              }}
+            />
+          </label>
+          {photoError && (
+            <p className="new-entry__error" role="alert">
+              {photoError}
+            </p>
+          )}
 
           <div className="new-entry__section-label">
             {draft.extracted ? 'Polished story' : 'Your story'}

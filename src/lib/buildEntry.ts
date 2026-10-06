@@ -7,6 +7,8 @@ export interface Draft {
   raw: string
   extracted: ExtractedEntryFields | null
   story: string
+  /** The user's edited title; when absent (or blank) the derived one is used. */
+  title?: string
 }
 
 function fieldOr(value: string | undefined, fallback = DASH): string {
@@ -28,6 +30,11 @@ export function formatEntryDate(date: Date): string {
 function titleFromText(text: string): string {
   const words = text.trim().split(/\s+/).slice(0, 6).join(' ')
   return words || 'Untitled adventure'
+}
+
+/** The title an entry gets unless the user edits it: the AI's, else the note's first words. */
+export function deriveTitle(extracted: ExtractedEntryFields | null, raw: string): string {
+  return extracted ? fieldOr(extracted.title, titleFromText(raw)) : titleFromText(raw)
 }
 
 /**
@@ -75,7 +82,7 @@ export function buildEntryFromDraft(
 
   return {
     id: opts.id,
-    title: extracted ? fieldOr(extracted.title, titleFromText(raw)) : titleFromText(raw),
+    title: draft.title?.trim() || deriveTitle(extracted, raw),
     shape: extracted?.shape ?? 'triangle',
     activityType: extracted?.activityType?.trim() || undefined,
     location: fieldOr(extracted?.location),

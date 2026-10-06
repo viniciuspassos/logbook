@@ -20,6 +20,8 @@ function App() {
     draft,
     captureError,
     isRegenerating,
+    photos,
+    photoError,
     transcript,
     interimTranscript,
     entries,
@@ -35,6 +37,9 @@ function App() {
     submitTyped,
     regenerateStory,
     editStory,
+    editTitle,
+    addPhotos,
+    removeNewEntryPhoto,
     saveEntry,
     deleteEntry,
     exportActions,
@@ -114,6 +119,8 @@ function App() {
           draft={draft}
           captureError={captureError}
           isRegenerating={isRegenerating}
+          photos={photos}
+          photoError={photoError}
           transcript={transcript}
           interimTranscript={interimTranscript}
           onClose={closeOverlay}
@@ -122,6 +129,9 @@ function App() {
           onSubmitTyped={submitTyped}
           onRegenerate={regenerateStory}
           onEditStory={editStory}
+          onEditTitle={editTitle}
+          onAddPhotos={addPhotos}
+          onRemovePhoto={removeNewEntryPhoto}
           onSave={saveEntry}
         />
       )}
