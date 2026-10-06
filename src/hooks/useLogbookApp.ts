@@ -1,6 +1,7 @@
 import { entries as seedEntries } from '../data/entries.ts'
 import { buildEntryFromDraft, nextEntryId } from '../lib/buildEntry.ts'
 import { shouldUseMockData } from '../lib/config/mockData.ts'
+import type { Entry } from '../types/entry.ts'
 import { useAuth } from './useAuth.ts'
 import { useEntries } from './useEntries.ts'
 import { useEntryAttachments } from './useEntryAttachments.ts'
@@ -13,6 +14,17 @@ export type { Tab, Overlay, TimelineView } from './useNavigation.ts'
 export type { NewEntryStep } from './useNewEntryFlow.ts'
 export type { AttachmentPreview, AttachmentStatus } from './useEntryAttachments.ts'
 export type { AuthState, UseAuthResult } from './useAuth.ts'
+
+/**
+ * A different account signing in replaces this device's local data, so the
+ * in-memory list (and anything open from it) has to follow.
+ */
+export function localDataReset(closeOverlay: () => void, replaceEntries: (entries: Entry[]) => Promise<void>) {
+  return () => {
+    closeOverlay()
+    void replaceEntries([]).catch(() => {})
+  }
+}
 
 /**
  * Top-level app state: composes navigation, the persisted entries list, the
@@ -37,7 +49,7 @@ export function useLogbookApp() {
   const { entries, addEntry, removeEntry, replaceEntries } = useEntries(shouldUseMockData() ? seedEntries : [])
   const nav = useNavigation(entries)
   const flow = useNewEntryFlow()
-  const auth = useAuth()
+  const auth = useAuth({ onLocalDataReset: localDataReset(nav.closeOverlay, replaceEntries) })
   const syncOutbox = useSyncOutbox({
     onAuthRequired: auth.noteAuthRequired,
   })

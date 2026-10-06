@@ -20,6 +20,21 @@
   display: none;
 }
 
+/* Room for the fixed "sign in again" banner above the shell. */
+.app--with-banner {
+  padding-top: var(--lb-banner-height);
+}
+
+/* "Sign in again", opened from the banner over the still-mounted app so an
+   in-progress draft survives. */
+.reauth {
+  position: fixed;
+  inset: 0;
+  z-index: 50;
+  overflow: auto;
+  background: var(--lb-bg);
+}
+
 /* Shown for the instant it takes to read the cached identity on startup. */
 .splash {
   width: 100%;

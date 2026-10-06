@@ -10,7 +10,15 @@ jest.mock('../lib/auth/googleIdentity.ts', () => ({
 const renderMock = renderGoogleSignInButton as jest.Mock
 
 function makeProps(overrides: Partial<LoginScreenProps> = {}): LoginScreenProps {
-  return { pending: false, error: null, onCredential: jest.fn(), ...overrides }
+  return {
+    pending: false,
+    error: null,
+    onCredential: jest.fn(),
+    pendingSwitch: null,
+    onConfirmSwitch: jest.fn(),
+    onCancelSwitch: jest.fn(),
+    ...overrides,
+  }
 }
 
 async function renderScreen(props: LoginScreenProps = makeProps()) {
@@ -122,5 +130,95 @@ describe('LoginScreen', () => {
     resolveWith({ status: 'unavailable', reason: 'offline' })
     await renderScreen(makeProps({ error: 'Sign-in expired. Try again.' }))
     expect(screen.getByRole('status')).toHaveTextContent('Sign-in expired. Try again.')
+  })
+
+  it('does not re-render Google\'s button when the parent passes a new callback, but uses the latest one', async () => {
+    const first = jest.fn()
+    const second = jest.fn()
+    const { rerender } = await renderScreen(makeProps({ onCredential: first }))
+
+    rerender(<LoginScreen {...makeProps({ onCredential: second })} />)
+    await act(async () => {})
+
+    expect(renderMock).toHaveBeenCalledTimes(1)
+    renderMock.mock.calls[0][1].onCredential('id-token')
+    expect(first).not.toHaveBeenCalled()
+    expect(second).toHaveBeenCalledWith('id-token')
+  })
+
+  it('removes the rendered button from its slot on unmount', async () => {
+    const { container, unmount } = await renderScreen()
+    const slot = container.querySelector('.login__google') as HTMLElement
+    slot.appendChild(document.createElement('iframe'))
+
+    unmount()
+
+    expect(slot.childElementCount).toBe(0)
+  })
+
+  it('un-hides the slot before measuring and rendering on a retry', async () => {
+    const user = userEvent.setup()
+    resolveWith({ status: 'unavailable', reason: 'offline' })
+    const { container } = await renderScreen()
+    const hiddenAtRender: boolean[] = []
+    renderMock.mockImplementation(async (slot: HTMLElement) => {
+      hiddenAtRender.push(slot.hasAttribute('hidden'))
+      return { status: 'rendered' }
+    })
+
+    await user.click(screen.getByRole('button', { name: 'Try again' }))
+
+    expect(hiddenAtRender).toEqual([false])
+    expect(container.querySelector('.login__google')).not.toHaveAttribute('hidden')
+  })
+
+  describe('when a different account must confirm', () => {
+    const grace = { id: 'u2', email: 'grace@example.com', name: 'Grace', picture: null }
+
+    it('warns what will be removed, and hides Google\'s button', async () => {
+      const { container } = await renderScreen(makeProps({ pendingSwitch: grace }))
+      expect(screen.getByText(/different Google account/)).toHaveTextContent('grace@example.com')
+      expect(screen.getByText(/hasn.t synced/)).toBeInTheDocument()
+      expect(container.querySelector('.login__google')).toHaveAttribute('hidden')
+    })
+
+    it('confirms or cancels through the callbacks', async () => {
+      const user = userEvent.setup()
+      const props = makeProps({ pendingSwitch: grace })
+      await renderScreen(props)
+
+      await user.click(screen.getByRole('button', { name: 'Remove them and continue' }))
+      await user.click(screen.getByRole('button', { name: 'Cancel' }))
+
+      expect(props.onConfirmSwitch).toHaveBeenCalledTimes(1)
+      expect(props.onCancelSwitch).toHaveBeenCalledTimes(1)
+    })
+
+    it('disables both choices while working', async () => {
+      await renderScreen(makeProps({ pendingSwitch: grace, pending: true }))
+      expect(screen.getByRole('button', { name: 'Remove them and continue' })).toBeDisabled()
+      expect(screen.getByRole('button', { name: 'Cancel' })).toBeDisabled()
+    })
+
+    it('does not offer the offline retry on top of the confirmation', async () => {
+      resolveWith({ status: 'unavailable', reason: 'offline' })
+      await renderScreen(makeProps({ pendingSwitch: grace }))
+      expect(screen.queryByRole('button', { name: 'Try again' })).not.toBeInTheDocument()
+    })
+  })
+
+  describe('over the running app', () => {
+    it('offers "Not now" only when it can be dismissed', async () => {
+      const user = userEvent.setup()
+      const onDismiss = jest.fn()
+      const { unmount } = await renderScreen(makeProps({ onDismiss }))
+
+      await user.click(screen.getByRole('button', { name: 'Not now' }))
+      expect(onDismiss).toHaveBeenCalledTimes(1)
+
+      unmount()
+      await renderScreen()
+      expect(screen.queryByRole('button', { name: 'Not now' })).not.toBeInTheDocument()
+    })
   })
 })

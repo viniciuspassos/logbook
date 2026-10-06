@@ -1,3 +1,6 @@
+import { useState } from 'react'
+import { cx } from './lib/cx.ts'
+import { SignInBanner } from './components/SignInBanner.tsx'
 import { TabBar } from './components/TabBar.tsx'
 import { mostRecentEntry } from './hooks/useEntries.ts'
 import { useIsDesktop } from './hooks/useIsDesktop.ts'
@@ -49,12 +52,16 @@ function App() {
     syncStatus,
   } = useLogbookApp()
   const isDesktop = useIsDesktop()
+  // Pure UI: whether the "sign in again" screen is open over the running app.
+  const [reauthOpen, setReauthOpen] = useState(false)
 
   // The sign-in gate (#122): the shell only opens with a known identity. It
-  // keys off `auth.state`, which counts the last signed-in profile cached on
-  // this device as known, so reopening offline never lands here — see
-  // useAuth.ts and docs/ARCHITECTURE.md. The hooks above stay mounted, so
-  // local data and the outbox are untouched while the gate is up.
+  // keys off `auth.state`, which counts a cached profile (or local entries) on
+  // this device as known, so reopening offline never lands here, and a
+  // background 401 only raises the banner below instead of unmounting the app
+  // (it would lose an in-progress draft) — see useAuth.ts and
+  // docs/ARCHITECTURE.md. The hooks above stay mounted, so local data and the
+  // outbox are untouched while the gate is up.
   if (auth.state === 'loading') {
     return (
       <main className="splash">
@@ -65,7 +72,16 @@ function App() {
     )
   }
   if (auth.state === 'signedOut') {
-    return <LoginScreen pending={auth.pending} error={auth.error} onCredential={auth.signInWithGoogle} />
+    return (
+      <LoginScreen
+        pending={auth.pending}
+        error={auth.error}
+        onCredential={auth.signInWithGoogle}
+        pendingSwitch={auth.pendingSwitch}
+        onConfirmSwitch={auth.confirmSwitch}
+        onCancelSwitch={auth.cancelSwitch}
+      />
+    )
   }
 
   // Below the desktop breakpoint an overlay is a full-screen cover, so the
@@ -84,7 +100,22 @@ function App() {
   const readingId = shownEntry?.id
 
   return (
-    <div className="app">
+    <>
+    {auth.needsSignIn && <SignInBanner onSignIn={() => setReauthOpen(true)} />}
+    {auth.needsSignIn && reauthOpen && (
+      <div className="reauth">
+        <LoginScreen
+          pending={auth.pending}
+          error={auth.error}
+          onCredential={auth.signInWithGoogle}
+          pendingSwitch={auth.pendingSwitch}
+          onConfirmSwitch={auth.confirmSwitch}
+          onCancelSwitch={auth.cancelSwitch}
+          onDismiss={() => setReauthOpen(false)}
+        />
+      </div>
+    )}
+    <div className={cx('app', auth.needsSignIn && 'app--with-banner')}>
       <div className="app-screen">
         {tab === 'timeline' && (
           <TimelineScreen
@@ -156,6 +187,7 @@ function App() {
         />
       )}
     </div>
+    </>
   )
 }
 

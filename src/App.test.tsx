@@ -5,6 +5,7 @@ import { entries } from './data/entries.ts'
 import { subscribeToDrains } from './lib/sync/outboxRunner.ts'
 import { getMe, loginWithGoogle } from './lib/sync/authApi.ts'
 import { getCachedIdentity } from './lib/db/identityStore.ts'
+import { hasLocalData } from './lib/db/localOwner.ts'
 import { renderGoogleSignInButton } from './lib/auth/googleIdentity.ts'
 import { SyncAuthError, SyncNetworkError } from './lib/sync/errors.ts'
 
@@ -26,6 +27,14 @@ jest.mock('./lib/db/identityStore.ts', () => ({
   getCachedIdentity: jest.fn().mockResolvedValue(null),
   putCachedIdentity: jest.fn().mockResolvedValue(undefined),
   clearCachedIdentity: jest.fn().mockResolvedValue(undefined),
+  hasPendingLogout: jest.fn().mockResolvedValue(false),
+  setPendingLogout: jest.fn().mockResolvedValue(undefined),
+  clearPendingLogout: jest.fn().mockResolvedValue(undefined),
+}))
+jest.mock('./lib/db/localOwner.ts', () => ({
+  checkLocalOwner: jest.fn().mockResolvedValue('ok'),
+  claimLocalData: jest.fn().mockResolvedValue(undefined),
+  hasLocalData: jest.fn().mockResolvedValue(false),
 }))
 jest.mock('./lib/auth/googleIdentity.ts', () => ({
   renderGoogleSignInButton: jest.fn().mockResolvedValue({ status: 'rendered' }),
@@ -180,9 +189,15 @@ describe('App', () => {
   describe('sign-in gate', () => {
     const ada = { id: 'u1', email: 'ada@example.com', name: 'Ada', picture: null }
 
+    function emitDrain(summary: object) {
+      const listeners = (subscribeToDrains as jest.Mock).mock.calls.map((call) => call[0])
+      act(() => listeners.forEach((listener) => listener(summary)))
+    }
+
     beforeEach(() => {
       delete (globalThis as { __LOGBOOK_MOCKED__?: boolean }).__LOGBOOK_MOCKED__
       ;(getCachedIdentity as jest.Mock).mockResolvedValue(null)
+      ;(hasLocalData as jest.Mock).mockResolvedValue(false)
       ;(getMe as jest.Mock).mockRejectedValue(new SyncAuthError(401, null))
     })
 
@@ -223,7 +238,16 @@ describe('App', () => {
       await act(async () => {})
     })
 
-    it('brings the gate back on a 401 without touching local entries', async () => {
+    it('opens the app offline for an existing user who has local entries but no cached identity', async () => {
+      ;(hasLocalData as jest.Mock).mockResolvedValue(true)
+      ;(getMe as jest.Mock).mockRejectedValue(new SyncNetworkError())
+      render(<App />)
+
+      expect(await screen.findByRole('button', { name: /new entry/i })).toBeInTheDocument()
+      await act(async () => {})
+    })
+
+    it('brings the gate back when the session is rejected at startup, even with a cached identity', async () => {
       ;(getCachedIdentity as jest.Mock).mockResolvedValue(ada)
       render(<App />)
 
@@ -231,16 +255,53 @@ describe('App', () => {
       await act(async () => {})
     })
 
-    it('brings the gate back when a sync attempt finds the session gone', async () => {
-      ;(getCachedIdentity as jest.Mock).mockResolvedValue(ada)
+    it('keeps the app mounted, with a banner, when a background sync finds the session gone', async () => {
+      const user = userEvent.setup()
+      ;(getMe as jest.Mock).mockResolvedValue(ada)
+      render(<App />)
+      await user.click(await screen.findByRole('button', { name: /new entry/i }))
+      await user.click(screen.getByRole('button', { name: 'Type instead' }))
+      await user.type(screen.getByRole('textbox', { name: 'Adventure notes' }), 'Half-written draft')
+
+      emitDrain({ processed: 0, stoppedReason: 'auth' })
+
+      expect(await screen.findByText('Sign in again to resume syncing.')).toBeInTheDocument()
+      expect(screen.getByRole('textbox', { name: 'Adventure notes' })).toHaveValue('Half-written draft')
+      await act(async () => {})
+    })
+
+    it('signs in again from the banner over the running app, then drops the banner', async () => {
+      const user = userEvent.setup()
+      ;(getMe as jest.Mock).mockResolvedValue(ada)
+      ;(loginWithGoogle as jest.Mock).mockResolvedValue({ status: 'ok' })
+      render(<App />)
+      await screen.findByRole('button', { name: /new entry/i })
+      emitDrain({ processed: 0, stoppedReason: 'auth' })
+
+      await user.click(await screen.findByRole('button', { name: 'Sign in' }))
+      expect(screen.getByText('Record climbs and jumps, even with no signal.')).toBeInTheDocument()
+      expect(screen.getByRole('button', { name: /new entry/i })).toBeInTheDocument()
+
+      const options = (renderGoogleSignInButton as jest.Mock).mock.calls.at(-1)?.[1]
+      await act(async () => options.onCredential('id-token'))
+
+      expect(screen.queryByText('Sign in again to resume syncing.')).not.toBeInTheDocument()
+      expect(screen.queryByRole('button', { name: 'Not now' })).not.toBeInTheDocument()
+      await act(async () => {})
+    })
+
+    it('lets the user dismiss the sign-in screen opened from the banner', async () => {
+      const user = userEvent.setup()
       ;(getMe as jest.Mock).mockResolvedValue(ada)
       render(<App />)
       await screen.findByRole('button', { name: /new entry/i })
+      emitDrain({ processed: 0, stoppedReason: 'auth' })
 
-      const listener = (subscribeToDrains as jest.Mock).mock.calls.at(-1)?.[0]
-      act(() => listener({ processed: 0, stoppedReason: 'auth' }))
+      await user.click(await screen.findByRole('button', { name: 'Sign in' }))
+      await user.click(screen.getByRole('button', { name: 'Not now' }))
 
-      expect(await screen.findByRole('heading', { name: 'Logbook', level: 1 })).toBeInTheDocument()
+      expect(screen.queryByRole('button', { name: 'Not now' })).not.toBeInTheDocument()
+      expect(screen.getByText('Sign in again to resume syncing.')).toBeInTheDocument()
       await act(async () => {})
     })
 

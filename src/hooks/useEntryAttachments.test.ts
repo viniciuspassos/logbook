@@ -287,7 +287,7 @@ describe('useEntryAttachments', () => {
     await waitFor(() =>
       expect(result.current.status).toEqual({
         tone: 'info',
-        message: "Photo queued — it will upload once you're signed in.",
+        message: "Photo queued — sign in to sync it.",
       }),
     )
     expect(onAuthRequired).toHaveBeenCalledTimes(1)

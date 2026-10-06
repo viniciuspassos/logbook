@@ -74,7 +74,7 @@ Tests must never be deleted to make a change land. If a test's behavior is genui
 - `useNewEntryFlow` — the capture → listening → processing → review state machine, speech, and AI orchestration.
 - `useExportActions` — Markdown/PDF/backup/restore, with a `busy` guard and a status message.
 - `useSyncOutbox` — registers the reconnect trigger and does a mount-time drain against the backend outbox (`src/lib/sync/`); exposes `queueEntryCreate` for `saveEntry` to call, `queueEntryDeletion` for `deleteEntry`, and `queueEntryCreates` for a backup restore (after the awaited `replaceEntries`, so entries that didn't persist locally never sync), and `syncStatus` (the timeline's sync line). It reads every finished drain, wherever it started, through `outboxRunner`'s `subscribeToDrains`, and forwards what each one learns about the session to `useAuth`.
-- `useAuth` — who is signed in: `state` (`'loading' | 'signedIn' | 'signedOut'`), `profile`, `signInWithGoogle`, `logout`. Resolved on mount from the identity cached in IndexedDB (`src/lib/db/identityStore.ts`) plus `GET /auth/me`; `App.tsx` gates on it (not a navigation overlay), and `noteAuthRequired` (a 401 from a drain) flips it to `'signedOut'`.
+- `useAuth` — who is signed in: `state` (`'loading' | 'signedIn' | 'signedOut'`), `profile`, `unverified`, `needsSignIn`, `pendingSwitch`, `signInWithGoogle`, `confirmSwitch`, `logout`. The decisions live in `src/lib/auth/sessionFlows.ts`; it resolves on mount from the identity cached in IndexedDB (`src/lib/db/identityStore.ts`) plus `GET /auth/me`. `App.tsx` gates on `state` (not a navigation overlay); `noteAuthRequired` (a 401 from a drain) only raises `needsSignIn` and never gates.
 - `useEntryAttachments` — the attachment gallery (server-confirmed + locally-queued photos) for whichever entry is open, the upload flow, and removing a single photo.
 
 Keep these concerns separate: put new state in the hook that owns that concern (or a new one) rather than growing `useLogbookApp` back into a god hook.
@@ -86,10 +86,10 @@ Keep these concerns separate: put new state in the hook that owns that concern (
 Screens and hooks must not touch flag-gated browser globals directly. All browser-API access goes through thin, individually-tested wrappers:
 
 - `src/lib/ai/` — `availability`, `extractEntry`, `rewriteStory`, `searchEntries` (Prompt + Rewriter APIs)
-- `src/lib/db/` — IndexedDB: `entriesStore.ts` (entries), `outboxStore.ts` (pending sync ops), `syncStateStore.ts` (local-id ↔ server-id/version mapping)
+- `src/lib/db/` — IndexedDB: `entriesStore.ts` (entries), `outboxStore.ts` (pending sync ops), `syncStateStore.ts` (local-id ↔ server-id/version mapping), `identityStore.ts` (cached profile, durable sign-out marker, owner id) and `localOwner.ts` (which account owns the local data)
 - `src/lib/backup/` — File System Access (JSON snapshot export/import)
 - `src/lib/export/` — pure Markdown/printable-HTML formatters; shared field rules live in `entryFields.ts` so formats can't drift apart
-- `src/lib/auth/` — `googleIdentity` (the only module that touches Google Identity Services; lazy-loads the GIS script and renders Google's button) and `config` (`window.__LOGBOOK_GOOGLE_CLIENT_ID__`)
+- `src/lib/auth/` — `googleIdentity` (the only module that touches Google Identity Services; lazy-loads the GIS script and renders Google's button), `config` (`window.__LOGBOOK_GOOGLE_CLIENT_ID__`) and `sessionFlows` (the gate's decisions: restore, verify, sign in/out, account switch)
 - `src/lib/sync/` — the HTTP client for the `server/` backend (`httpClient`, `entriesApi`, `attachmentsApi`, `authApi`, `health`) plus the offline outbox (`outboxQueue`, `outboxRunner`)
 - `src/types/*.d.ts` — ambient declarations for APIs missing from the DOM lib (speech, Chrome AI, File System Access)
 
@@ -97,7 +97,15 @@ This is what keeps a shifting origin-trial API surface a one-file change.
 
 ## Sign-in gate vs. offline-first
 
-The app is behind a mandatory Google sign-in, but **the gate must never lock a signed-in user out of their own local logbook**. It applies only when there is *no known identity*: after one successful sign-in the profile is cached in IndexedDB, so reopening offline (or with the backend down) opens the app directly. A later 401 from the server shows the gate again but never touches local entries, photos or the outbox, and keeps the cached identity; only an explicit Sign out clears it. Only the very first sign-in needs a network. New code must keep it that way: never add a startup check that blocks the shell on a live request, and never clear local data or the outbox on an auth failure. Why: `docs/ARCHITECTURE.md` → "Authentication: Sign in with Google".
+The app is behind a mandatory Google sign-in, but **the gate must never lock a signed-in user out of their own local logbook, and must never throw away what they are doing**. Rules (decisions in `docs/ARCHITECTURE.md` → "Authentication: Sign in with Google"):
+
+- The full-screen gate shows only (a) at startup with no known identity and no local entries, (b) after an explicit sign-out, (c) when `GET /auth/me` returns 401 at startup, (d) when a different account must confirm replacing this device's data. Nothing else may show it.
+- A cached profile (IndexedDB `identityStore`) **or** existing local entries open the app offline, as an *unverified* session confirmed later by `GET /auth/me` once a sync attempt reaches the server. IndexedDB being unavailable counts the same. A startup that hangs (e.g. IndexedDB blocked by another tab) opens unverified after a timeout.
+- A **background 401** (outbox drain, photo upload) never unmounts the app, because that would lose an in-progress capture draft. It only sets `needsSignIn`, shown as a non-blocking banner with a "Sign in" action. It never touches local entries, photos or the outbox either.
+- **Sign-out is durable.** A `pendingLogout` marker is written first and removed only when the server confirms the logout; startup retries the server logout before ever calling `GET /auth/me`, so a user who signed out offline is never silently signed back in. The outbox is flushed before sign-out while the session is still valid.
+- **Local data is per account.** The device records the owning account id (`src/lib/db/localOwner.ts`). Signing in as the same account keeps everything; a different account must confirm, then entries, outbox and sync state are cleared. Never drain the outbox or sync under an account that doesn't own it.
+- A slow startup check must never overwrite a newer sign-in/sign-out (`useAuth` supersedes it) or re-cache a signed-out identity.
+- Only the very first sign-in needs a network. Never add a startup check that blocks the shell on a live request.
 
 ## Browser AI rules
 

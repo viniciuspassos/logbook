@@ -6,7 +6,16 @@ if (typeof globalThis.structuredClone === 'undefined') {
 }
 import 'fake-indexeddb/auto'
 import { IDBFactory } from 'fake-indexeddb'
-import { clearCachedIdentity, getCachedIdentity, putCachedIdentity } from './identityStore.ts'
+import {
+  clearCachedIdentity,
+  clearPendingLogout,
+  getCachedIdentity,
+  getLocalOwnerId,
+  hasPendingLogout,
+  putCachedIdentity,
+  putLocalOwnerId,
+  setPendingLogout,
+} from './identityStore.ts'
 import type { AuthProfile } from '../../types/auth.ts'
 
 const ada: AuthProfile = { id: 'u1', email: 'ada@example.com', name: 'Ada', picture: null }
@@ -84,5 +93,52 @@ describe('clearCachedIdentity', () => {
     // @ts-expect-error simulating an environment without IndexedDB
     delete globalThis.indexedDB
     await expect(clearCachedIdentity()).resolves.toBeUndefined()
+  })
+})
+
+describe('pending logout marker', () => {
+  it('is absent until a sign-out sets it', async () => {
+    expect(await hasPendingLogout()).toBe(false)
+  })
+
+  it('persists once set and is removed by clearPendingLogout', async () => {
+    await setPendingLogout()
+    expect(await hasPendingLogout()).toBe(true)
+
+    await clearPendingLogout()
+    expect(await hasPendingLogout()).toBe(false)
+  })
+
+  it('does not clobber the cached identity', async () => {
+    await putCachedIdentity(ada)
+    await setPendingLogout()
+    expect(await getCachedIdentity()).toEqual(ada)
+  })
+
+  it('degrades when IndexedDB is unavailable', async () => {
+    // @ts-expect-error simulating an environment without IndexedDB
+    delete globalThis.indexedDB
+    expect(await hasPendingLogout()).toBe(false)
+    await expect(setPendingLogout()).resolves.toBeUndefined()
+    await expect(clearPendingLogout()).resolves.toBeUndefined()
+  })
+})
+
+describe('local owner id', () => {
+  it('is null until recorded', async () => {
+    expect(await getLocalOwnerId()).toBeNull()
+  })
+
+  it('round-trips and is overwritten by a later put', async () => {
+    await putLocalOwnerId('u1')
+    expect(await getLocalOwnerId()).toBe('u1')
+    await putLocalOwnerId('u2')
+    expect(await getLocalOwnerId()).toBe('u2')
+  })
+
+  it('survives a sign-out clearing the cached identity', async () => {
+    await putLocalOwnerId('u1')
+    await clearCachedIdentity()
+    expect(await getLocalOwnerId()).toBe('u1')
   })
 })

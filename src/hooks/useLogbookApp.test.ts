@@ -1,5 +1,5 @@
 import { act, renderHook } from '@testing-library/react'
-import { useLogbookApp } from './useLogbookApp.ts'
+import { localDataReset, useLogbookApp } from './useLogbookApp.ts'
 import { extractEntry } from '../lib/ai/extractEntry.ts'
 import { rewriteStory } from '../lib/ai/rewriteStory.ts'
 import { importBackup } from '../lib/backup/exportBackup.ts'
@@ -418,5 +418,24 @@ describe('useLogbookApp', () => {
     const { result } = renderHook(() => useLogbookApp())
     expect(result.current.entries).toEqual([])
     globalThis.__LOGBOOK_MOCKED__ = true
+  })
+})
+
+describe('localDataReset', () => {
+  it('closes whatever is open and empties the in-memory list', () => {
+    const closeOverlay = jest.fn()
+    const replaceEntries = jest.fn().mockResolvedValue(undefined)
+
+    localDataReset(closeOverlay, replaceEntries)()
+
+    expect(closeOverlay).toHaveBeenCalledTimes(1)
+    expect(replaceEntries).toHaveBeenCalledWith([])
+  })
+
+  it('swallows a failed write instead of leaving an unhandled rejection', async () => {
+    const replaceEntries = jest.fn().mockRejectedValue(new Error('boom'))
+
+    expect(() => localDataReset(jest.fn(), replaceEntries)()).not.toThrow()
+    await Promise.resolve()
   })
 })

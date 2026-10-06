@@ -54,6 +54,9 @@ export function openLogbookDb(): Promise<IDBDatabase> {
       reject(new Error('IndexedDB is not available in this environment.'))
       return
     }
+    // The first of success/blocked/error to fire settles the promise; whatever
+    // comes after must not leave a connection behind.
+    let settled = false
     const request = indexedDB.open(getDbName(), DB_VERSION)
     request.onupgradeneeded = () => {
       const db = request.result
@@ -70,7 +73,29 @@ export function openLogbookDb(): Promise<IDBDatabase> {
         db.createObjectStore(IDENTITY_STORE, { keyPath: 'key' })
       }
     }
-    request.onsuccess = () => resolve(request.result)
-    request.onerror = () => reject(request.error)
+    // Another tab still holds an older version open, so the upgrade can't run
+    // until it closes. Waiting forever would leave the app on its splash screen,
+    // so report it and let callers take their offline-aware path.
+    request.onblocked = () => {
+      if (settled) return
+      settled = true
+      reject(new Error('IndexedDB upgrade is blocked by another open tab.'))
+    }
+    request.onsuccess = () => {
+      const db = request.result
+      if (settled) {
+        db.close()
+        return
+      }
+      settled = true
+      // Let a newer version in another tab upgrade instead of blocking on us.
+      db.onversionchange = () => db.close()
+      resolve(db)
+    }
+    request.onerror = () => {
+      if (settled) return
+      settled = true
+      reject(request.error)
+    }
   })
 }

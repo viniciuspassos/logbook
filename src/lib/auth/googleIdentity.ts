@@ -96,14 +96,22 @@ export function clampButtonWidth(containerWidth: number): number {
   return Math.min(MAX_BUTTON_WIDTH, Math.max(MIN_BUTTON_WIDTH, width))
 }
 
-function handleCredential(
-  response: GoogleCredentialResponse,
-  { onCredential, signal }: GoogleSignInOptions,
-): void {
-  if (signal?.aborted) return
+// GIS warns if `initialize` is called twice, so it runs once per GIS instance
+// and always delegates to whichever button was rendered last.
+let initializedGis: unknown = null
+let activeOptions: GoogleSignInOptions | null = null
+
+function handleCredential(response: GoogleCredentialResponse): void {
+  if (!activeOptions || activeOptions.signal?.aborted) return
   if (typeof response.credential === 'string' && response.credential !== '') {
-    onCredential(response.credential)
+    activeOptions.onCredential(response.credential)
   }
+}
+
+function initializeOnce(clientId: string): void {
+  if (initializedGis === google.accounts.id) return
+  google.accounts.id.initialize({ client_id: clientId, callback: handleCredential, auto_select: false })
+  initializedGis = google.accounts.id
 }
 
 /**
@@ -123,11 +131,8 @@ export async function renderGoogleSignInButton(
   if (loaded === 'aborted' || options.signal?.aborted) return { status: 'cancelled' }
   if (!loaded) return { status: 'unavailable', reason: 'offline' }
 
-  google.accounts.id.initialize({
-    client_id: clientId,
-    callback: (response) => handleCredential(response, options),
-    auto_select: false,
-  })
+  activeOptions = options
+  initializeOnce(clientId)
   google.accounts.id.renderButton(container, {
     type: 'standard',
     theme: preferredButtonTheme(),

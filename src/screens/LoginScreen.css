@@ -93,6 +93,57 @@
   outline-offset: 2px;
 }
 
+.login__retry:disabled,
+.login__primary:disabled {
+  cursor: default;
+  opacity: 0.5;
+}
+
+/* Replaces Google's button when a different account must confirm. */
+.login__switch {
+  max-width: 36ch;
+}
+.login__switch-text {
+  margin: 0 0 var(--lb-space-3);
+  font-size: 15px;
+  line-height: 1.4;
+  overflow-wrap: anywhere;
+}
+.login__switch-actions {
+  display: flex;
+  flex-direction: column;
+  align-items: flex-start;
+  gap: var(--lb-space-2);
+}
+.login__primary {
+  min-height: 44px;
+  padding: 0 var(--lb-space-4);
+  border: none;
+  border-radius: var(--lb-radius-sm);
+  font: inherit;
+  font-weight: 600;
+  color: var(--lb-on-accent);
+  background: var(--lb-accent-fill);
+  cursor: pointer;
+}
+.login__primary:focus-visible,
+.login__dismiss:focus-visible {
+  outline: 2px solid var(--lb-accent-ink);
+  outline-offset: 2px;
+}
+
+.login__dismiss {
+  min-height: 44px;
+  margin-top: var(--lb-space-2);
+  padding: 0;
+  border: none;
+  font: inherit;
+  font-weight: 600;
+  color: var(--lb-accent-ink);
+  background: none;
+  cursor: pointer;
+}
+
 /* Reserves two lines so an error never shifts the layout. */
 .login__status {
   min-height: 2.9em;

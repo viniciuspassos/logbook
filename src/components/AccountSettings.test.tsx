@@ -6,6 +6,7 @@ function makeProps(overrides: Partial<AccountSettingsProps> = {}): AccountSettin
   return {
     profile: { id: 'u1', email: 'ada@example.com', name: 'Ada Lovelace', picture: null },
     pending: false,
+    status: null,
     onLogout: jest.fn(),
     ...overrides,
   }
@@ -77,5 +78,26 @@ describe('AccountSettings', () => {
   it('disables Sign out while pending', () => {
     render(<AccountSettings {...makeProps({ pending: true })} />)
     expect(screen.getByRole('button', { name: /sign out/i })).toBeDisabled()
+  })
+
+  it('resets the picture fallback when the account or its picture changes', () => {
+    const withPicture = { id: 1, email: 'a@b.co', name: 'Ada', picture: 'https://example.com/a.png' }
+    const { container, rerender } = render(<AccountSettings {...makeProps({ profile: withPicture })} />)
+    fireEvent.error(container.querySelector('img') as HTMLImageElement)
+    expect(container.querySelector('img')).toBeNull()
+
+    rerender(<AccountSettings {...makeProps({ profile: { ...withPicture, picture: 'https://example.com/b.png' } })} />)
+
+    expect(container.querySelector('img')).toHaveAttribute('src', 'https://example.com/b.png')
+  })
+
+  it('announces sign-out progress or errors politely', () => {
+    const { container, rerender } = render(<AccountSettings {...makeProps({ status: 'Signing out…' })} />)
+    const region = container.querySelector('.account-settings__status')
+    expect(region).toHaveAttribute('aria-live', 'polite')
+    expect(region).toHaveTextContent('Signing out…')
+
+    rerender(<AccountSettings {...makeProps({ status: null })} />)
+    expect(container.querySelector('.account-settings__status')).toBeEmptyDOMElement()
   })
 })

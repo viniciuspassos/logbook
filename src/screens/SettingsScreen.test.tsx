@@ -38,10 +38,15 @@ function makeExports(overrides: Partial<ExportActions> = {}): ExportActions {
 function makeAuth(overrides: Partial<UseAuthResult> = {}): UseAuthResult {
   return {
     state: 'signedIn',
+    unverified: false,
+    needsSignIn: false,
+    pendingSwitch: null,
     profile: { id: 'u1', email: 'ada@example.com', name: 'Ada Lovelace', picture: null },
     pending: false,
     error: null,
     signInWithGoogle: jest.fn().mockResolvedValue(true),
+    confirmSwitch: jest.fn(),
+    cancelSwitch: jest.fn(),
     logout: jest.fn(),
     noteAuthRequired: jest.fn(),
     clearError: jest.fn(),
@@ -195,5 +200,10 @@ describe('SettingsScreen', () => {
     await user.click(screen.getByRole('button', { name: /sign out/i }))
 
     expect(auth.logout).toHaveBeenCalledTimes(1)
+  })
+
+  it('announces sign-out progress in the Account section', async () => {
+    await renderScreen({ auth: { pending: true } })
+    expect(screen.getByText('Signing out…')).toBeInTheDocument()
   })
 })

@@ -119,7 +119,12 @@ export function SettingsScreen({ entryCount, exports, auth }: SettingsScreenProp
 
       {/* Who is signed in + Sign out; signing in is the login gate's job. */}
       <SettingsGroup label="Account">
-        <AccountSettings profile={auth.profile} pending={auth.pending} onLogout={auth.logout} />
+        <AccountSettings
+          profile={auth.profile}
+          pending={auth.pending}
+          status={auth.pending ? 'Signing out…' : auth.error}
+          onLogout={auth.logout}
+        />
       </SettingsGroup>
 
       <SettingsGroup label="Data">

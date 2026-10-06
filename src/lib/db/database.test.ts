@@ -100,6 +100,55 @@ describe('openLogbookDb', () => {
     }
   })
 
+  it('rejects instead of hanging when another open tab holds an older version open (blocked upgrade)', async () => {
+    // A tab still on v2 never closes its connection, so the v3 upgrade blocks.
+    const holder = await new Promise<IDBDatabase>((resolve, reject) => {
+      const request = indexedDB.open(getDbName(), 2)
+      request.onupgradeneeded = () => request.result.createObjectStore(ENTRIES_STORE, { keyPath: 'id' })
+      request.onsuccess = () => resolve(request.result)
+      request.onerror = () => reject(request.error)
+    })
+
+    await expect(openLogbookDb()).rejects.toThrow(/blocked/i)
+
+    holder.close()
+  })
+
+  it('closes a connection it opened when a newer version wants to upgrade (versionchange)', async () => {
+    const db = await openLogbookDb()
+    const upgraded = await new Promise<IDBDatabase>((resolve, reject) => {
+      const request = indexedDB.open(getDbName(), DB_VERSION + 1)
+      request.onblocked = () => reject(new Error('the old connection stayed open'))
+      request.onsuccess = () => resolve(request.result)
+      request.onerror = () => reject(request.error)
+    })
+
+    expect(() => db.transaction(ENTRIES_STORE)).toThrow()
+    upgraded.close()
+  })
+
+  it('closes the connection that finally opens after an earlier blocked rejection', async () => {
+    const holder = await new Promise<IDBDatabase>((resolve, reject) => {
+      const request = indexedDB.open(getDbName(), 2)
+      request.onupgradeneeded = () => request.result.createObjectStore(ENTRIES_STORE, { keyPath: 'id' })
+      request.onsuccess = () => resolve(request.result)
+      request.onerror = () => reject(request.error)
+    })
+    await expect(openLogbookDb()).rejects.toThrow(/blocked/i)
+
+    holder.close()
+    // The abandoned upgrade now completes and must not leave a connection open,
+    // or the next open at a higher version would block on it.
+    await new Promise((resolve) => setTimeout(resolve, 20))
+    const upgraded = await new Promise<IDBDatabase>((resolve, reject) => {
+      const request = indexedDB.open(getDbName(), DB_VERSION + 1)
+      request.onblocked = () => reject(new Error('left open'))
+      request.onsuccess = () => resolve(request.result)
+      request.onerror = () => reject(request.error)
+    })
+    upgraded.close()
+  })
+
   it('rejects when indexedDB is unavailable', async () => {
     // @ts-expect-error deliberately simulating an environment without IndexedDB
     delete globalThis.indexedDB

@@ -7,6 +7,8 @@ export interface AccountSettingsProps {
   /** The signed-in account; `null` when it isn't known (shows a plain row). */
   profile: AuthProfile | null
   pending: boolean
+  /** Sign-out progress or an error, announced politely; `null` when there is nothing to say. */
+  status: string | null
   onLogout: () => void
 }
 
@@ -37,13 +39,13 @@ function Avatar({ profile }: { profile: AuthProfile }) {
  * Signing in lives on the login gate (`LoginScreen`), not here — by the time
  * Settings is reachable there is a known identity.
  */
-export function AccountSettings({ profile, pending, onLogout }: AccountSettingsProps) {
+export function AccountSettings({ profile, pending, status, onLogout }: AccountSettingsProps) {
   return (
     <div className="account-settings">
       <div className="account-settings__row">
         {profile ? (
           <div className="account-settings__identity">
-            <Avatar profile={profile} />
+            <Avatar key={`${profile.id}:${profile.picture}`} profile={profile} />
             <div className="account-settings__text">
               {profile.name && <span className="account-settings__name">{profile.name}</span>}
               <span className="account-settings__email">{profile.email}</span>
@@ -60,6 +62,10 @@ export function AccountSettings({ profile, pending, onLogout }: AccountSettingsP
         >
           Sign out
         </button>
+      </div>
+      {/* Reserved height, so progress or an error never shifts the group. */}
+      <div className="account-settings__status" aria-live="polite">
+        {status}
       </div>
     </div>
   )

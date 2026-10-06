@@ -66,6 +66,8 @@
   --lb-radius-sm: 8px;
   --lb-radius-md: 14px;
   --lb-radius-lg: 18px;
+  /* Height of the "sign in again" banner; the app shell is pushed down by it. */
+  --lb-banner-height: 60px;
 
   --sans: system-ui, -apple-system, 'Segoe UI', Roboto, sans-serif;
   --display: 'Archivo', var(--sans);

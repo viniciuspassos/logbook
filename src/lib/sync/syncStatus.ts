@@ -13,8 +13,7 @@ export function syncStatusLabel(lastDrain: DrainSummary | null): string {
     case 'empty':
       return 'Saved locally · synced'
     case 'auth':
-      // The login gate handles signing back in; until then nothing syncs.
-      return 'Saved locally · sync paused'
+      return 'Saved locally · sign in to sync'
     case 'error':
       return 'Saved locally · sync failed'
     case 'rejected':

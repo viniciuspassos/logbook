@@ -95,6 +95,20 @@ describe('renderGoogleSignInButton', () => {
     expect(gsiScript()).toBeNull()
   })
 
+  it('initializes GIS once, and credentials go to the most recently rendered button', async () => {
+    const gis = installGoogle()
+    const first = jest.fn()
+    const second = jest.fn()
+    await renderGoogleSignInButton(document.createElement('div'), { onCredential: first })
+    await renderGoogleSignInButton(document.createElement('div'), { onCredential: second })
+
+    expect(gis.initialize).toHaveBeenCalledTimes(1)
+    expect(gis.renderButton).toHaveBeenCalledTimes(2)
+    gis.initialize.mock.calls[0][0].callback({ credential: 'tok' })
+    expect(first).not.toHaveBeenCalled()
+    expect(second).toHaveBeenCalledWith('tok')
+  })
+
   it('forwards the ID token from the GIS callback', async () => {
     const gis = installGoogle()
     const onCredential = jest.fn()

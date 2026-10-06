@@ -105,9 +105,12 @@ One-time setup:
 
 **Offline.** The first sign-in needs a connection (Google's script loads from Google). After that
 the signed-in profile is cached on the device, so reopening Logbook with no signal goes straight to
-your entries. A session that expires while you're online brings the sign-in screen back; your local
-entries and the sync queue are left untouched. `npm run dev:mocked` skips the screen (sample data,
-no backend).
+your entries (so does an existing logbook that predates sign-in). If the session expires while
+you're using the app, a "Sign in again to resume syncing" banner appears instead of kicking you out,
+so a half-written entry survives; your local entries and the sync queue are left untouched. Signing
+out works offline too and is remembered until the server confirms it. Signing in as a different
+Google account on the same device asks first, because it removes the previous account's entries from
+that device. `npm run dev:mocked` skips the screen (sample data, no backend).
 
 ---
 
@@ -201,8 +204,9 @@ src/
   lib/
     ai/                  # Chrome built-in AI wrappers: availability, extractEntry,
                          #   rewriteStory, searchEntries
-    db/                  # entriesStore, outboxStore, syncStateStore, identityStore — IndexedDB wrappers
-    auth/                # googleIdentity (Google Identity Services wrapper), config (client ID)
+    db/                  # entriesStore, outboxStore, syncStateStore, identityStore, localOwner — IndexedDB wrappers
+    auth/                # googleIdentity (Google Identity Services wrapper), config (client ID),
+                         #   sessionFlows (the sign-in gate's decisions)
     backup/              # JSON snapshot export/import (File System Access)
     export/              # Markdown + printable-PDF formatters
     sync/                # Backend HTTP client (entriesApi, attachmentsApi, authApi, health)
