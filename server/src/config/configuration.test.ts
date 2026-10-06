@@ -74,6 +74,26 @@ describe('loadConfig', () => {
     expect(config.allowedEmails).toEqual(['me@example.com', 'friend@example.com'])
   })
 
+  it.each([
+    ['PORT', 'abc'],
+    ['PORT', '0'],
+    ['PORT', '65536'],
+    ['PORT', '80.5'],
+    ['SESSION_TTL_DAYS', 'abc'],
+    ['SESSION_TTL_DAYS', '0'],
+    ['SESSION_TTL_DAYS', '-3'],
+    ['SESSION_TTL_DAYS', '1.5'],
+    ['MAX_UPLOAD_SIZE_BYTES', 'lots'],
+    ['MAX_UPLOAD_SIZE_BYTES', '0'],
+  ])('throws a clear error when %s is %p (not a valid number)', (name, value) => {
+    expect(() => loadConfig({ ...baseEnv, [name]: value })).toThrow(new RegExp(name))
+  })
+
+  it('accepts the PORT boundaries 1 and 65535', () => {
+    expect(loadConfig({ ...baseEnv, PORT: '1' }).port).toBe(1)
+    expect(loadConfig({ ...baseEnv, PORT: '65535' }).port).toBe(65535)
+  })
+
   it('treats NODE_ENV=production as requiring secure cookies', () => {
     const config = loadConfig({ ...baseEnv, NODE_ENV: 'production' })
 

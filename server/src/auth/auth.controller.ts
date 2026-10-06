@@ -41,6 +41,17 @@ export class AuthController {
     return this.authService.getProfile(userId)
   }
 
+  /**
+   * `@Public()` on purpose: logout must work with no valid session, or a
+   * client whose session expired/was revoked (including by an allowlist
+   * removal) gets a 401 and its stale cookies are never cleared. It always
+   * answers 200 and clears both cookies, and revokes the session only when a
+   * token is present. Skipping the CSRF check is safe here: with no (or an
+   * already-dead) session there is nothing to protect, and the worst a forged
+   * cross-site logout can do is sign the user out, which they can undo by
+   * signing in again.
+   */
+  @Public()
   @Post('logout')
   @HttpCode(HttpStatus.OK)
   async logout(

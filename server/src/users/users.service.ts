@@ -22,7 +22,7 @@ export class UsersService {
 
     const existing = await this.usersRepository.findByGoogleSub(identity.sub)
     if (!existing) {
-      return this.usersRepository.createClaimingLegacyRowsIfFirst({
+      return this.usersRepository.findOrCreateClaimingLegacyRowsIfFirst({
         googleSub: identity.sub,
         ...profile,
       })

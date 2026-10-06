@@ -183,6 +183,20 @@ describe('Auth (e2e)', () => {
     })
   })
 
+  it('revokes a live session on its next request once the user is no longer allowlisted', async () => {
+    const auth = await loginForTests(app, TEST_USER_B_EMAIL)
+    await withAuth(request(app.getHttpServer()).get('/auth/me'), auth).expect(200)
+    // Simulates the address being taken off ALLOWED_EMAILS: the stored e-mail
+    // no longer matches the allowlist.
+    await dataSource
+      .getRepository(User)
+      .update({ email: TEST_USER_B_EMAIL }, { email: 'removed@example.com' })
+
+    await withAuth(request(app.getHttpServer()).get('/auth/me'), auth).expect(401)
+    // The session row was deleted, not just refused once.
+    await withAuth(request(app.getHttpServer()).get('/auth/me'), auth).expect(401)
+  })
+
   it('the first user to sign in inherits every ownerless entry and attachment; a later user takes nothing', async () => {
     const entries = dataSource.getRepository(Entry)
     const attachments = dataSource.getRepository(Attachment)
@@ -221,6 +235,24 @@ describe('Auth (e2e)', () => {
     await expect(entries.findOneByOrFail({ id: legacyEntry.id })).resolves.toMatchObject({
       userId: userA.id,
     })
+  })
+
+  it('logout with no session at all still answers 200 and clears both cookies', async () => {
+    const res = await request(app.getHttpServer()).post('/auth/logout').expect(200)
+
+    const cleared = res.headers['set-cookie'] as unknown as string[]
+    expect(cleared.some((c) => c.startsWith(`${SESSION_COOKIE_NAME}=;`))).toBe(true)
+    expect(cleared.some((c) => c.startsWith(`${CSRF_COOKIE_NAME}=;`))).toBe(true)
+  })
+
+  it('logout with a stale/unknown session cookie still answers 200 and clears the cookies', async () => {
+    const res = await request(app.getHttpServer())
+      .post('/auth/logout')
+      .set('Cookie', `${SESSION_COOKIE_NAME}=not-a-real-session`)
+      .expect(200)
+
+    const cleared = res.headers['set-cookie'] as unknown as string[]
+    expect(cleared.some((c) => c.startsWith(`${SESSION_COOKIE_NAME}=;`))).toBe(true)
   })
 
   it('logout clears both cookies and invalidates the session for future requests', async () => {

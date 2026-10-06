@@ -7,6 +7,7 @@ import { ValidationPipe, type INestApplication } from '@nestjs/common'
 import { ConfigModule } from '@nestjs/config'
 import { TypeOrmModule } from '@nestjs/typeorm'
 import request from 'supertest'
+import { DataSource } from 'typeorm'
 import { Attachment } from '../attachments/attachment.entity'
 import { AttachmentsModule } from '../attachments/attachments.module'
 import { AuthModule } from '../auth/auth.module'
@@ -57,6 +58,7 @@ const entryPayload = {
  */
 describe('Per-user isolation (e2e)', () => {
   let app: INestApplication
+  let dataSource: DataSource
   let uploadDir: string
   let userA: AuthenticatedRequestContext
   let userB: AuthenticatedRequestContext
@@ -96,6 +98,7 @@ describe('Per-user isolation (e2e)', () => {
       .useValue(fakeGoogleTokenVerifier)
       .compile()
 
+    dataSource = moduleRef.get(DataSource)
     app = moduleRef.createNestApplication()
     app.use(cookieParser())
     app.useGlobalPipes(
@@ -204,6 +207,31 @@ describe('Per-user isolation (e2e)', () => {
         userA,
       ).expect(200)
     })
+  })
+
+  it("an attachment whose own userId is NULL follows its entry: reachable by the entry's owner, never by another user", async () => {
+    await dataSource.getRepository(Attachment).update({ id: attachmentId }, { userId: null })
+
+    const list = await withAuth(
+      request(app.getHttpServer()).get(`/entries/${entryId}/attachments`),
+      userA,
+    ).expect(200)
+    expect((list.body as Attachment[]).map((a) => a.id)).toEqual([attachmentId])
+    await withAuth(request(app.getHttpServer()).get(`/attachments/${attachmentId}`), userA).expect(
+      200,
+    )
+    await withAuth(
+      request(app.getHttpServer()).get(`/attachments/${attachmentId}/file`),
+      userA,
+    ).expect(200)
+
+    await withAuth(request(app.getHttpServer()).get(`/attachments/${attachmentId}`), userB).expect(
+      404,
+    )
+    await withAuth(
+      request(app.getHttpServer()).get(`/attachments/${attachmentId}/file`),
+      userB,
+    ).expect(404)
   })
 
   it("user A still sees exactly their own data, and B's entries never leak to A", async () => {

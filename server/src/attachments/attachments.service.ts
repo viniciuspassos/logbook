@@ -67,14 +67,19 @@ export class AttachmentsService {
     }
     const stored = await this.fileStorage.save(saveInput)
 
-    return this.attachmentsRepository.create({
-      entryId,
-      userId,
-      originalFilename: file.originalFilename,
-      storageKey: stored.key,
-      mimeType: detectedMimeType,
-      sizeBytes: stored.sizeBytes,
-    })
+    try {
+      return await this.attachmentsRepository.create({
+        entryId,
+        userId,
+        originalFilename: file.originalFilename,
+        storageKey: stored.key,
+        mimeType: detectedMimeType,
+        sizeBytes: stored.sizeBytes,
+      })
+    } catch (error) {
+      await this.discardOrphanedBlob(stored.key)
+      throw error
+    }
   }
 
   async listForEntry(entryId: number, userId: number): Promise<Attachment[]> {
@@ -134,6 +139,18 @@ export class AttachmentsService {
       this.logger.warn(
         `Failed to delete file for attachment ${id} ` +
           `(storageKey="${attachment.storageKey}") after removing its row: ${reason}`,
+      )
+    }
+  }
+
+  /** Best-effort: the blob was saved before its row, so a failed insert must not strand it. */
+  private async discardOrphanedBlob(storageKey: string): Promise<void> {
+    try {
+      await this.fileStorage.delete(storageKey)
+    } catch (error) {
+      const reason = error instanceof Error ? error.message : String(error)
+      this.logger.warn(
+        `Failed to delete orphaned file (storageKey="${storageKey}") after the attachment row insert failed: ${reason}`,
       )
     }
   }

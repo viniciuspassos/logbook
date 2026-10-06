@@ -16,7 +16,7 @@ function fakeSession(overrides: Partial<Session> = {}): Session {
 
 function makeRepoMock() {
   return {
-    findOneBy: jest.fn(),
+    findOne: jest.fn(),
     create: jest.fn(),
     save: jest.fn(),
     update: jest.fn(),
@@ -28,18 +28,21 @@ describe('SessionsRepository', () => {
   it('findByTokenHash returns the session when found', async () => {
     const ormRepo = makeRepoMock()
     const session = fakeSession()
-    ormRepo.findOneBy.mockResolvedValue(session)
+    ormRepo.findOne.mockResolvedValue(session)
     const repo = new SessionsRepository(ormRepo)
 
     const result = await repo.findByTokenHash('hash-of-token')
 
-    expect(ormRepo.findOneBy).toHaveBeenCalledWith({ tokenHash: 'hash-of-token' })
+    expect(ormRepo.findOne).toHaveBeenCalledWith({
+      where: { tokenHash: 'hash-of-token' },
+      relations: { user: true },
+    })
     expect(result).toBe(session)
   })
 
   it('findByTokenHash returns null when not found', async () => {
     const ormRepo = makeRepoMock()
-    ormRepo.findOneBy.mockResolvedValue(null)
+    ormRepo.findOne.mockResolvedValue(null)
     const repo = new SessionsRepository(ormRepo)
 
     const result = await repo.findByTokenHash('missing')

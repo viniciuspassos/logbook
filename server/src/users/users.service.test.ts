@@ -27,7 +27,7 @@ function makeRepoMock() {
     findByGoogleSub: jest.fn(),
     findById: jest.fn(),
     updateProfile: jest.fn(),
-    createClaimingLegacyRowsIfFirst: jest.fn(),
+    findOrCreateClaimingLegacyRowsIfFirst: jest.fn(),
   } as unknown as jest.Mocked<UsersRepository>
 }
 
@@ -37,13 +37,13 @@ describe('UsersService', () => {
       const repo = makeRepoMock()
       const created = fakeUser({ id: 9 })
       repo.findByGoogleSub.mockResolvedValue(null)
-      repo.createClaimingLegacyRowsIfFirst.mockResolvedValue(created)
+      repo.findOrCreateClaimingLegacyRowsIfFirst.mockResolvedValue(created)
       const service = new UsersService(repo)
 
       await expect(service.findOrCreateFromGoogle(identity)).resolves.toBe(created)
 
       expect(repo.findByGoogleSub).toHaveBeenCalledWith('sub-1')
-      expect(repo.createClaimingLegacyRowsIfFirst).toHaveBeenCalledWith({
+      expect(repo.findOrCreateClaimingLegacyRowsIfFirst).toHaveBeenCalledWith({
         googleSub: 'sub-1',
         email: 'me@example.com',
         name: 'Me',
@@ -60,7 +60,7 @@ describe('UsersService', () => {
       await expect(service.findOrCreateFromGoogle(identity)).resolves.toBe(existing)
 
       expect(repo.updateProfile).not.toHaveBeenCalled()
-      expect(repo.createClaimingLegacyRowsIfFirst).not.toHaveBeenCalled()
+      expect(repo.findOrCreateClaimingLegacyRowsIfFirst).not.toHaveBeenCalled()
     })
 
     it('refreshes the profile snapshot when e-mail, name or picture changed, matching by sub and never by e-mail', async () => {

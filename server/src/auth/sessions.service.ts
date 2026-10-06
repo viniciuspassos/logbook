@@ -7,6 +7,14 @@ const DAY_MS = 24 * 60 * 60 * 1000
 
 export interface SessionsServiceOptions {
   sessionTtlDays: number
+  /** Lowercased e-mail addresses allowed to hold a session (see AppConfig.allowedEmails). */
+  allowedEmails: string[]
+}
+
+/** A live session, plus whether this very call slid its expiry forward (so callers re-issue cookies only then). */
+export interface ValidatedSession {
+  session: Session
+  renewed: boolean
 }
 
 export interface CreatedSession {
@@ -20,6 +28,9 @@ export interface CreatedSession {
  * forward on use (so a long field trip doesn't strand the client's offline
  * write queue behind an expired cookie — see the auth report for the full
  * rationale), and revoke (logout).
+ *
+ * The user's e-mail must still be on the allowlist (checked on every
+ * validate); otherwise the session is deleted and treated as absent.
  *
  * Renewal is deliberately conditional, not unconditional-on-every-request:
  * the expiry is only pushed back out once less than half the configured TTL
@@ -48,7 +59,7 @@ export class SessionsService {
     return { sessionToken, csrfToken, expiresAt }
   }
 
-  async validate(sessionToken: string): Promise<Session | null> {
+  async validate(sessionToken: string): Promise<ValidatedSession | null> {
     const session = await this.sessionsRepository.findByTokenHash(hashToken(sessionToken))
     if (!session) {
       return null
@@ -59,19 +70,32 @@ export class SessionsService {
       return null
     }
 
+    // The allowlist is enforced on every request, not just at sign-in: an
+    // address removed from ALLOWED_EMAILS loses its live sessions on their
+    // next use (the user row came back with the session, so this is free).
+    if (!this.isAllowed(session)) {
+      await this.sessionsRepository.removeById(session.id)
+      return null
+    }
+
     const ttlMs = this.options.sessionTtlDays * DAY_MS
     const remainingMs = session.expiresAt.getTime() - Date.now()
     if (remainingMs < ttlMs / 2) {
       const renewedExpiry = this.newExpiry()
       await this.sessionsRepository.updateExpiresAt(session.id, renewedExpiry)
-      return { ...session, expiresAt: renewedExpiry }
+      return { session: { ...session, expiresAt: renewedExpiry }, renewed: true }
     }
 
-    return session
+    return { session, renewed: false }
   }
 
   async revoke(sessionToken: string): Promise<void> {
     await this.sessionsRepository.removeByTokenHash(hashToken(sessionToken))
+  }
+
+  private isAllowed(session: Session): boolean {
+    const email = session.user?.email
+    return email !== undefined && this.options.allowedEmails.includes(email.toLowerCase())
   }
 
   private newExpiry(): Date {

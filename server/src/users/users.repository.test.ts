@@ -1,4 +1,4 @@
-import { IsNull, type Repository } from 'typeorm'
+import { DataSource, IsNull, type Repository } from 'typeorm'
 import { Attachment } from '../attachments/attachment.entity'
 import { Entry } from '../entries/entry.entity'
 import { User } from './user.entity'
@@ -16,8 +16,11 @@ function fakeUser(overrides: Partial<User> = {}): User {
   }
 }
 
-function makeFakeManager() {
+function makeFakeManager(driver: string) {
   return {
+    connection: { options: { type: driver } },
+    query: jest.fn(),
+    findOneBy: jest.fn(),
     create: jest.fn(),
     save: jest.fn(),
     count: jest.fn(),
@@ -25,8 +28,8 @@ function makeFakeManager() {
   }
 }
 
-function makeRepoMock() {
-  const fakeManager = makeFakeManager()
+function makeRepoMock(driver = 'postgres') {
+  const fakeManager = makeFakeManager(driver)
   const ormRepo = {
     findOneBy: jest.fn(),
     update: jest.fn(),
@@ -72,20 +75,28 @@ describe('UsersRepository', () => {
     })
   })
 
-  describe('createClaimingLegacyRowsIfFirst', () => {
+  describe('findOrCreateClaimingLegacyRowsIfFirst', () => {
     const profile = { googleSub: 'sub-1', email: 'me@example.com', name: 'Me', picture: null }
 
-    it('creates the user and hands every ownerless entry and attachment to them when they are the first user', async () => {
-      const { ormRepo, fakeManager } = makeRepoMock()
+    it('takes the advisory lock first on Postgres, then creates the user and claims every ownerless entry and attachment when they are the first user', async () => {
+      const { ormRepo, fakeManager } = makeRepoMock('postgres')
       const saved = fakeUser({ id: 4 })
+      fakeManager.findOneBy.mockResolvedValue(null)
+      fakeManager.count.mockResolvedValue(0)
       fakeManager.create.mockReturnValue(profile)
       fakeManager.save.mockResolvedValue(saved)
-      fakeManager.count.mockResolvedValue(1)
       const repo = new UsersRepository(ormRepo)
 
-      const result = await repo.createClaimingLegacyRowsIfFirst(profile)
+      const result = await repo.findOrCreateClaimingLegacyRowsIfFirst(profile)
 
       expect(ormRepo.manager.transaction).toHaveBeenCalledTimes(1)
+      expect(fakeManager.query).toHaveBeenCalledWith(
+        expect.stringContaining('pg_advisory_xact_lock'),
+        [expect.any(Number)],
+      )
+      expect(fakeManager.query.mock.invocationCallOrder[0]).toBeLessThan(
+        fakeManager.findOneBy.mock.invocationCallOrder[0],
+      )
       expect(fakeManager.create).toHaveBeenCalledWith(User, profile)
       expect(fakeManager.update).toHaveBeenCalledWith(Entry, { userId: IsNull() }, { userId: 4 })
       expect(fakeManager.update).toHaveBeenCalledWith(
@@ -96,18 +107,107 @@ describe('UsersRepository', () => {
       expect(result).toBe(saved)
     })
 
+    it('does not take the Postgres advisory lock on other drivers (sql.js in tests)', async () => {
+      const { ormRepo, fakeManager } = makeRepoMock('sqljs')
+      fakeManager.findOneBy.mockResolvedValue(null)
+      fakeManager.count.mockResolvedValue(0)
+      fakeManager.create.mockReturnValue(profile)
+      fakeManager.save.mockResolvedValue(fakeUser())
+      const repo = new UsersRepository(ormRepo)
+
+      await repo.findOrCreateClaimingLegacyRowsIfFirst(profile)
+
+      expect(fakeManager.query).not.toHaveBeenCalled()
+    })
+
     it('creates the user without touching existing rows when another user already exists', async () => {
       const { ormRepo, fakeManager } = makeRepoMock()
       const saved = fakeUser({ id: 5 })
+      fakeManager.findOneBy.mockResolvedValue(null)
+      fakeManager.count.mockResolvedValue(1)
       fakeManager.create.mockReturnValue(profile)
       fakeManager.save.mockResolvedValue(saved)
-      fakeManager.count.mockResolvedValue(2)
       const repo = new UsersRepository(ormRepo)
 
-      const result = await repo.createClaimingLegacyRowsIfFirst(profile)
+      const result = await repo.findOrCreateClaimingLegacyRowsIfFirst(profile)
 
       expect(fakeManager.update).not.toHaveBeenCalled()
       expect(result).toBe(saved)
+    })
+
+    it('is idempotent: when the sub already exists under the lock (a racing sign-in won), it returns that user without inserting or claiming', async () => {
+      const { ormRepo, fakeManager } = makeRepoMock()
+      const existing = fakeUser({ id: 2 })
+      fakeManager.findOneBy.mockResolvedValue(existing)
+      const repo = new UsersRepository(ormRepo)
+
+      const result = await repo.findOrCreateClaimingLegacyRowsIfFirst(profile)
+
+      expect(fakeManager.findOneBy).toHaveBeenCalledWith(User, { googleSub: 'sub-1' })
+      expect(result).toBe(existing)
+      expect(fakeManager.save).not.toHaveBeenCalled()
+      expect(fakeManager.update).not.toHaveBeenCalled()
+    })
+  })
+
+  describe('findOrCreateClaimingLegacyRowsIfFirst (real sqljs driver)', () => {
+    let dataSource: DataSource
+
+    beforeEach(async () => {
+      dataSource = new DataSource({
+        type: 'sqljs',
+        autoSave: false,
+        synchronize: true,
+        entities: [Entry, Attachment, User],
+      })
+      await dataSource.initialize()
+    })
+
+    afterEach(async () => {
+      await dataSource.destroy()
+    })
+
+    it('claims legacy rows for the first user only; a second user and a repeat call neither claim nor duplicate', async () => {
+      const entries = dataSource.getRepository(Entry)
+      const orphan = await entries.save(
+        entries.create({
+          title: 't',
+          shape: 'circle',
+          location: 'l',
+          date: 'd',
+          metric: 'm',
+          excerpt: 'e',
+          weather: 'w',
+          duration: 'du',
+          difficulty: 'di',
+          equipment: 'eq',
+          participants: 'p',
+          raw: 'r',
+          story: 's',
+          photoHint: 'h',
+          media: ['a', 'b', 'c'],
+          mapX: 1,
+          mapY: 2,
+          userId: null,
+        }),
+      )
+      const repo = new UsersRepository(dataSource.getRepository(User))
+      const base = { email: 'a@example.com', name: null, picture: null }
+
+      const first = await repo.findOrCreateClaimingLegacyRowsIfFirst({ ...base, googleSub: 'a' })
+      const again = await repo.findOrCreateClaimingLegacyRowsIfFirst({ ...base, googleSub: 'a' })
+      const second = await repo.findOrCreateClaimingLegacyRowsIfFirst({
+        ...base,
+        email: 'b@example.com',
+        googleSub: 'b',
+      })
+
+      expect(again.id).toBe(first.id)
+      expect(second.id).not.toBe(first.id)
+      await expect(dataSource.getRepository(User).count()).resolves.toBe(2)
+      await expect(entries.findOneByOrFail({ id: orphan.id })).resolves.toMatchObject({
+        userId: first.id,
+      })
     })
   })
 })

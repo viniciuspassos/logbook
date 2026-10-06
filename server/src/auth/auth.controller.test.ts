@@ -3,6 +3,7 @@ import type { Request, Response } from 'express'
 import { AuthController } from './auth.controller'
 import type { AuthService } from './auth.service'
 import type { GoogleLoginDto } from './dto/google-login.dto'
+import { IS_PUBLIC_KEY } from './public.decorator'
 import { CSRF_COOKIE_NAME, SESSION_COOKIE_NAME } from './cookies'
 
 function makeAuthServiceMock() {
@@ -79,6 +80,10 @@ describe('AuthController', () => {
   })
 
   describe('logout', () => {
+    it('is public, so it works (and clears cookies) without a valid session', () => {
+      expect(Reflect.getMetadata(IS_PUBLIC_KEY, AuthController.prototype.logout)).toBe(true)
+    })
+
     it('revokes the session from the request cookie and clears both cookies', async () => {
       const authService = makeAuthServiceMock()
       const controller = new AuthController(authService, makeConfigServiceMock())

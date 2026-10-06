@@ -115,6 +115,38 @@ describe('AttachmentsService', () => {
     expect(result).toBe(created)
   })
 
+  it('uploadForEntry deletes the just-saved blob and rethrows when the row insert fails', async () => {
+    const { attachmentsRepository, entriesRepository, fileStorage } = makeMocks()
+    entriesRepository.findById.mockResolvedValue(fakeEntry())
+    fileStorage.save.mockResolvedValue({ key: 'orphan-key', sizeBytes: JPEG_BYTES.byteLength })
+    fileStorage.delete.mockResolvedValue(undefined)
+    attachmentsRepository.create.mockRejectedValue(new Error('db down'))
+    const service = new AttachmentsService(attachmentsRepository, entriesRepository, fileStorage)
+
+    await expect(
+      service.uploadForEntry(10, USER_ID, { buffer: JPEG_BYTES, originalFilename: 'a.jpg' }),
+    ).rejects.toThrow('db down')
+
+    expect(fileStorage.delete).toHaveBeenCalledWith('orphan-key')
+  })
+
+  it('uploadForEntry still rethrows the original insert error when cleaning up the blob also fails', async () => {
+    const { attachmentsRepository, entriesRepository, fileStorage } = makeMocks()
+    entriesRepository.findById.mockResolvedValue(fakeEntry())
+    fileStorage.save.mockResolvedValue({ key: 'orphan-key', sizeBytes: 1 })
+    fileStorage.delete.mockRejectedValue(new Error('EACCES'))
+    attachmentsRepository.create.mockRejectedValue(new Error('db down'))
+    const warnSpy = jest.spyOn(Logger.prototype, 'warn').mockImplementation(() => undefined)
+    const service = new AttachmentsService(attachmentsRepository, entriesRepository, fileStorage)
+
+    await expect(
+      service.uploadForEntry(10, USER_ID, { buffer: JPEG_BYTES, originalFilename: 'a.jpg' }),
+    ).rejects.toThrow('db down')
+
+    expect(warnSpy).toHaveBeenCalledWith(expect.stringContaining('orphan-key'))
+    warnSpy.mockRestore()
+  })
+
   it('uploadForEntry throws NotFoundException without touching storage when the entry does not exist', async () => {
     const { attachmentsRepository, entriesRepository, fileStorage } = makeMocks()
     entriesRepository.findById.mockResolvedValue(null)

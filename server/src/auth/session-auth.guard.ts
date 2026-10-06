@@ -23,9 +23,10 @@ import { SessionsService } from './sessions.service'
  * unless someone remembered to wire the guard onto it. Opt-out-by-exception
  * makes the safe behaviour the path of least resistance instead.
  *
- * On every authenticated request it also re-issues both cookies with the
- * (possibly just-renewed, see SessionsService) expiry, so the browser's
- * cookie never lags the server's idea of when the session actually expires.
+ * When SessionsService slides the expiry forward it also re-issues both
+ * cookies with the new expiry, so the browser's cookie never lags the
+ * server's idea of when the session actually expires; otherwise it sets no
+ * cookies.
  */
 @Injectable()
 export class SessionAuthGuard implements CanActivate {
@@ -50,21 +51,26 @@ export class SessionAuthGuard implements CanActivate {
       throw new UnauthorizedException('Authentication required')
     }
 
-    const session = await this.sessionsService.validate(sessionToken)
-    if (!session) {
+    const validated = await this.sessionsService.validate(sessionToken)
+    if (!validated) {
       throw new UnauthorizedException('Authentication required')
     }
+    const { session, renewed } = validated
 
     request.session = session
     request.userId = session.userId
 
-    const response = context.switchToHttp().getResponse<Response>()
-    const { cookieSecure } = this.configService.getOrThrow<AppConfig>('app')
-    setSessionCookies(
-      response,
-      { sessionToken, csrfToken: session.csrfToken, expiresAt: session.expiresAt },
-      { secure: cookieSecure },
-    )
+    // Cookies are only re-issued when the expiry actually slid forward; on
+    // every other request the browser's existing cookies are still correct.
+    if (renewed) {
+      const response = context.switchToHttp().getResponse<Response>()
+      const { cookieSecure } = this.configService.getOrThrow<AppConfig>('app')
+      setSessionCookies(
+        response,
+        { sessionToken, csrfToken: session.csrfToken, expiresAt: session.expiresAt },
+        { secure: cookieSecure },
+      )
+    }
 
     return true
   }

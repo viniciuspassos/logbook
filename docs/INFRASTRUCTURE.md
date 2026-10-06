@@ -176,9 +176,21 @@ rationale lives in the auth PR descriptions; this section is the operational sum
   (`server/src/auth/google-token-verifier.service.ts`, a thin adapter over `google-auth-library`)
   checks the signature, `aud` (must equal `GOOGLE_CLIENT_ID`), `iss` and `exp`, and requires
   `email_verified`. A bad token or unverified e-mail is `401`; a verified e-mail that is not in
-  `ALLOWED_EMAILS` is `403`. On success the same httpOnly session + CSRF cookies as before are set.
+  `ALLOWED_EMAILS` is `403`. If Google itself can't be reached (network error, cert fetch failure,
+  upstream 5xx) the failure is logged and answered with `503` so the client can retry instead of
+  treating it as a rejected sign-in. On success the same httpOnly session + CSRF cookies as before
+  are set.
   `GET /auth/me` (protected) returns `{ id, email, name, picture }` for the session's user, and
-  `POST /auth/logout` is unchanged.
+  `POST /auth/logout` is `@Public()` and
+  **always answers 200 and clears both cookies**, revoking the session only when a token is
+  present: a client with an expired or revoked session must still be able to clear its stale
+  cookies. It skips the CSRF check because with no live session there is nothing to protect (a
+  forged cross-site logout can only sign the user out).
+- **The allowlist is enforced on every request**, not just at sign-in: the session is loaded
+  together with its user row (one join), and a user whose e-mail is no longer in `ALLOWED_EMAILS`
+  gets `401` and the session is deleted. Removing an address therefore takes effect on that
+  user's next request. Sessions renew (slide) only when less than half the TTL remains, and the
+  cookies are re-issued only on that request.
 - **`GOOGLE_CLIENT_ID`** (required, no default) — the OAuth 2.0 *Web application* client ID from
   Google Cloud Console. It is public (the frontend ships it too), not a secret, but specific to
   your Google project, so `docker-compose.yml` reads it from the shell / a git-ignored root `.env`
@@ -191,9 +203,15 @@ rationale lives in the auth PR descriptions; this section is the operational sum
   every entries/attachments query is filtered by the session's user, and an id belonging to
   another user answers `404` (not `403`) so ids can't be probed. **The first user to sign in
   inherits every pre-existing `entries`/`attachments` row with `userId IS NULL`**, in the same
-  transaction that creates their account; later users never take rows from them. Migration
+  transaction that creates their account; later users never take rows from them. User creation takes a Postgres advisory transaction
+  lock, so concurrent first sign-ins can't both claim the rows and a double sign-in of the same
+  new account reuses one user instead of failing on the unique `googleSub`. Attachment access
+  follows the *parent entry's* owner (a join on `entries.userId`), not the attachment's own
+  nullable `userId`. Numeric env vars (`PORT` 1-65535, `SESSION_TTL_DAYS`,
+  `MAX_UPLOAD_SIZE_BYTES`) are validated as positive integers at boot. Migration
   `GoogleUsers` deletes existing sessions (they were password sessions with no user), so everyone
-  signs in again once after upgrading.
+  signs in again once after upgrading, and nulls any pre-existing `userId` on entries/attachments
+  before adding the foreign keys. Its `down` cannot restore the deleted sessions or ownership.
 - **`SESSION_TTL_DAYS`** (optional, default `30`) — how long a session cookie lives before
   expiring. It slides forward on use (renewed once less than half the TTL remains) rather than on
   a fixed schedule, so a session doesn't get a full database write on every single request. The

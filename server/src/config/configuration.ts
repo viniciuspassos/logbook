@@ -26,6 +26,32 @@ const DEFAULT_PORT = 3000
 const DEFAULT_MAX_UPLOAD_SIZE_BYTES = 25 * 1024 * 1024
 const DEFAULT_SESSION_TTL_DAYS = 30
 
+const MAX_PORT = 65535
+
+/**
+ * Parses an optional numeric env var as a positive integer (at most `max`),
+ * falling back to `fallback` when unset/empty. Throws at boot with the
+ * variable's name instead of letting `Number('abc')` become a NaN that
+ * silently breaks listening, session expiry or the upload limit later.
+ */
+function parsePositiveInt(
+  name: string,
+  raw: string | undefined,
+  fallback: number,
+  max: number = Number.MAX_SAFE_INTEGER,
+): number {
+  if (!raw) {
+    return fallback
+  }
+  const value = Number(raw)
+  if (!Number.isInteger(value) || value < 1 || value > max) {
+    throw new Error(
+      `${name} must be an integer between 1 and ${max}, got "${raw}" (see server/.env.example).`,
+    )
+  }
+  return value
+}
+
 function parseAllowedEmails(raw: string | undefined): string[] {
   return (raw ?? '')
     .split(',')
@@ -64,18 +90,22 @@ export function loadConfig(env: Env = process.env): AppConfig {
   const nodeEnv = env.NODE_ENV ?? 'development'
 
   return {
-    port: env.PORT ? Number(env.PORT) : DEFAULT_PORT,
+    port: parsePositiveInt('PORT', env.PORT, DEFAULT_PORT, MAX_PORT),
     nodeEnv,
     databaseUrl,
     uploadDir: env.UPLOAD_DIR ?? path.resolve(process.cwd(), 'uploads'),
-    maxUploadSizeBytes: env.MAX_UPLOAD_SIZE_BYTES
-      ? Number(env.MAX_UPLOAD_SIZE_BYTES)
-      : DEFAULT_MAX_UPLOAD_SIZE_BYTES,
+    maxUploadSizeBytes: parsePositiveInt(
+      'MAX_UPLOAD_SIZE_BYTES',
+      env.MAX_UPLOAD_SIZE_BYTES,
+      DEFAULT_MAX_UPLOAD_SIZE_BYTES,
+    ),
     googleClientId,
     allowedEmails,
-    sessionTtlDays: env.SESSION_TTL_DAYS
-      ? Number(env.SESSION_TTL_DAYS)
-      : DEFAULT_SESSION_TTL_DAYS,
+    sessionTtlDays: parsePositiveInt(
+      'SESSION_TTL_DAYS',
+      env.SESSION_TTL_DAYS,
+      DEFAULT_SESSION_TTL_DAYS,
+    ),
     cookieSecure: nodeEnv === 'production',
   }
 }

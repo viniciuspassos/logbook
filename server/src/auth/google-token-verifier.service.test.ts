@@ -1,4 +1,4 @@
-import { UnauthorizedException } from '@nestjs/common'
+import { Logger, ServiceUnavailableException, UnauthorizedException } from '@nestjs/common'
 import type { ConfigService } from '@nestjs/config'
 import { OAuth2Client, type LoginTicket, type TokenPayload } from 'google-auth-library'
 import { GoogleTokenVerifier } from './google-token-verifier.service'
@@ -77,6 +77,34 @@ describe('GoogleTokenVerifier', () => {
 
     await expect(verifier.verify('forged')).rejects.toBeInstanceOf(UnauthorizedException)
     await expect(verifier.verify('forged')).rejects.toThrow('Invalid Google ID token')
+  })
+
+  it.each([
+    ['a network error code', Object.assign(new Error('getaddrinfo ENOTFOUND'), { code: 'ENOTFOUND' })],
+    ['a timeout', Object.assign(new Error('timed out'), { code: 'ETIMEDOUT' })],
+    [
+      "the library's cert-fetch failure",
+      new Error('Failed to retrieve verification certificates: Request failed with status code 503'),
+    ],
+    ['an upstream 5xx', Object.assign(new Error('bad gateway'), { status: 502 })],
+    ['an upstream 5xx on the response', Object.assign(new Error('x'), { response: { status: 500 } })],
+  ])('answers 503 and logs (not a generic 401) when verification fails with %s', async (_label, error) => {
+    const { verifier, verifyIdToken } = setup()
+    const warnSpy = jest.spyOn(Logger.prototype, 'warn').mockImplementation(() => undefined)
+    verifyIdToken.mockRejectedValue(error)
+
+    await expect(verifier.verify('valid-token')).rejects.toBeInstanceOf(
+      ServiceUnavailableException,
+    )
+    expect(warnSpy).toHaveBeenCalled()
+    warnSpy.mockRestore()
+  })
+
+  it('still answers 401 for a non-Error rejection from the library', async () => {
+    const { verifier, verifyIdToken } = setup()
+    verifyIdToken.mockRejectedValue('weird')
+
+    await expect(verifier.verify('t')).rejects.toBeInstanceOf(UnauthorizedException)
   })
 
   it('rejects a token with no payload', async () => {

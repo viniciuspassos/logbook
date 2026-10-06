@@ -90,7 +90,7 @@ describe('SessionAuthGuard', () => {
   it('attaches the resolved session and its user id to the request and allows the request through', async () => {
     const sessionsService = makeSessionsServiceMock()
     const session = fakeSession()
-    sessionsService.validate.mockResolvedValue(session)
+    sessionsService.validate.mockResolvedValue({ session, renewed: false })
     const guard = new SessionAuthGuard(
       sessionsService,
       makeReflectorMock(false),
@@ -109,10 +109,26 @@ describe('SessionAuthGuard', () => {
     expect(sessionsService.validate).toHaveBeenCalledWith('valid-token')
   })
 
-  it('mirrors the (possibly renewed) session expiry onto both cookies on every authenticated request', async () => {
+  it('does not set any cookie when the session was not renewed', async () => {
+    const sessionsService = makeSessionsServiceMock()
+    sessionsService.validate.mockResolvedValue({ session: fakeSession(), renewed: false })
+    const guard = new SessionAuthGuard(
+      sessionsService,
+      makeReflectorMock(false),
+      makeConfigServiceMock(true),
+    )
+    const req = { cookies: { [SESSION_COOKIE_NAME]: 'valid-token' } } as unknown as Request
+    const res = { cookie: jest.fn() } as unknown as jest.Mocked<Response>
+
+    await guard.canActivate(makeContext(req, res))
+
+    expect(res.cookie).not.toHaveBeenCalled()
+  })
+
+  it('mirrors the renewed session expiry onto both cookies when the session was just renewed', async () => {
     const sessionsService = makeSessionsServiceMock()
     const session = fakeSession({ csrfToken: 'fresh-csrf' })
-    sessionsService.validate.mockResolvedValue(session)
+    sessionsService.validate.mockResolvedValue({ session, renewed: true })
     const guard = new SessionAuthGuard(
       sessionsService,
       makeReflectorMock(false),

@@ -34,6 +34,7 @@ import { SessionsService } from './sessions.service'
       useFactory: (sessionsRepository: SessionsRepository, configService: ConfigService) =>
         new SessionsService(sessionsRepository, {
           sessionTtlDays: configService.getOrThrow<AppConfig>('app').sessionTtlDays,
+          allowedEmails: configService.getOrThrow<AppConfig>('app').allowedEmails,
         }),
     },
     {

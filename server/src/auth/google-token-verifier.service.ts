@@ -1,4 +1,9 @@
-import { Injectable, UnauthorizedException } from '@nestjs/common'
+import {
+  Injectable,
+  Logger,
+  ServiceUnavailableException,
+  UnauthorizedException,
+} from '@nestjs/common'
 import { ConfigService } from '@nestjs/config'
 import { OAuth2Client, type TokenPayload } from 'google-auth-library'
 import type { AppConfig } from '../config/configuration'
@@ -21,11 +26,15 @@ export interface GoogleIdentity {
  * on top of that this requires `email_verified`, because an unverified
  * address must never be matched against the allowlist.
  *
- * Every failure collapses into one generic 401 so a caller can't learn from
- * the response why a token was refused.
+ * A bad token collapses into one generic 401 so a caller can't learn from
+ * the response why it was refused. Failing to reach Google at all (network,
+ * cert fetch, upstream 5xx) is not the caller's fault: it is logged and
+ * answered with 503 so the client can retry instead of treating it as a
+ * rejected sign-in.
  */
 @Injectable()
 export class GoogleTokenVerifier {
+  private readonly logger = new Logger(GoogleTokenVerifier.name)
   private readonly client: OAuth2Client
   private readonly clientId: string
 
@@ -51,10 +60,43 @@ export class GoogleTokenVerifier {
     try {
       const ticket = await this.client.verifyIdToken({ idToken, audience: this.clientId })
       return ticket.getPayload()
-    } catch {
+    } catch (error) {
+      if (isInfrastructureError(error)) {
+        const reason = error instanceof Error ? error.message : String(error)
+        this.logger.warn(`Could not reach Google to verify an ID token: ${reason}`)
+        throw new ServiceUnavailableException('Google sign-in is temporarily unavailable')
+      }
       throw invalidToken()
     }
   }
+}
+
+const NETWORK_ERROR_CODE = /^(E[A-Z]+|ERR_[A-Z_]+)$/
+// Prefix google-auth-library puts on failures fetching Google's signing certs.
+const CERT_FETCH_FAILURE = 'Failed to retrieve verification certificates'
+
+/**
+ * True when verification failed because Google (or the network to it) could
+ * not be reached, as opposed to the token itself being bad. Only recognised
+ * signals count; anything unrecognised stays an invalid-token 401, the safe
+ * side for an authentication check.
+ */
+function isInfrastructureError(error: unknown): boolean {
+  if (typeof error !== 'object' || error === null) {
+    return false
+  }
+  const { code, status, response, message } = error as {
+    code?: unknown
+    status?: unknown
+    response?: { status?: unknown }
+    message?: unknown
+  }
+  const httpStatus = typeof status === 'number' ? status : response?.status
+  return (
+    (typeof code === 'string' && NETWORK_ERROR_CODE.test(code)) ||
+    (typeof httpStatus === 'number' && httpStatus >= 500) ||
+    (typeof message === 'string' && message.startsWith(CERT_FETCH_FAILURE))
+  )
 }
 
 function invalidToken(): UnauthorizedException {
