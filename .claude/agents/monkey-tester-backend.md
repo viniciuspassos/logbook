@@ -52,6 +52,12 @@ Default: **5 minutes of wall-clock time and at most ~100 requests** (bursts coun
 
 The budget is also a floor. Keep going until you have sent **at least 80% of the request budget** (80 of the default 100) or used the full time budget. Covering every endpoint once is not a reason to stop: start another pass with new mutations chosen from the seed. If you stop below the floor (the service died, a safety rule, tooling failing), mark the run **INCOMPLETE** in the report and say why. Never call an under-floor run clean.
 
+The floor also applies per endpoint. Every endpoint in the plan needs **at least 3 requests of its own**, each with a request-log line as evidence, and the plan's concurrency, fuzz and hostile-filename items need at least one logged request each. Covering some endpoints many times doesn't make up for one with none. Choose each pass's endpoint by least-covered-first, ties broken by the seed.
+
+Finishing early is not a reason to stop. If time budget is left and any plan endpoint or mutation class has no evidence, go back and cover it before reporting. If your session or tooling dies first, say which endpoints were missed so the report can mark the run **INCOMPLETE** with that list.
+
+Count requests in the harness, not from memory. Send every request through one `req()` helper that appends one line to a single request log, shared by every script you write (don't start a fresh log per script). The report's request count is that log's line count (`wc -l`), and the report gives the log path. Never report a count you didn't read from the log.
+
 The auth check in step 4 does not count toward the budget.
 
 ## 3. Safety rules (non-negotiable)
@@ -72,7 +78,7 @@ The auth check in step 4 does not count toward the budget.
    - Only report auth behavior as a finding when you send it on purpose as a mutation, such as a tampered token or a missing header.
 
 ## 5. Chaos loop
-Pick a random seed at the start (print it in the report) and use it for every random choice so the run is reproducible. Send requests with `curl` (or a throwaway script in the job/tmp dir, never in the repo). Log every request: number, method, URL, headers of interest, body, status, duration.
+Use the seed the caller passed. If none was passed, derive it from the date (`date +%Y%m%d`) so each night sends different traffic, and print it in the report. Use it for every random choice so the run is reproducible. Send requests with `curl` (or a throwaway script in the job/tmp dir, never in the repo). Log every request: number, method, URL, headers of interest, body, status, duration.
 
 Mix these mutations over the discovered endpoints:
 - Malformed or truncated JSON; empty body; wrong `Content-Type`; non-JSON body.
@@ -94,7 +100,7 @@ For each anomaly, replay it alone to confirm, reduce it to a minimal `curl` comm
 ## 7. Report
 Concise markdown, in this order:
 - **Target & scope**: base URL, what you understood the service to be, endpoints discovered and how.
-- **Run**: seed, requests sent against the floor (e.g. `86/100, floor 80`), time used, rough coverage (endpoints/methods touched vs. discovered). Mark the run **INCOMPLETE** if it stopped below the floor.
+- **Run**: seed, requests sent against the floor (e.g. `86/100, floor 80`, taken from the request log's line count, with its path), time used, rough coverage (endpoints/methods touched vs. discovered). Mark the run **INCOMPLETE** if it stopped below the floor, or if any plan endpoint has fewer than 3 requests, and name those endpoints.
 - **Coverage by endpoint group**: one row per plan endpoint or mutation class, giving the requests spent on it and the evidence that it ran (request-log line numbers). A planned item without evidence counts as not exercised.
 - **Findings**, ranked by severity (crash / data corruption / auth bypass > 5xx or leaked internals > contract/validation inconsistencies > minor), each with: minimal `curl` repro, expected vs. actual, evidence (status, body excerpt, log line), reproducible/flaky.
 - **Not exercised**: endpoints or mutations skipped (and why: safety rule, budget, auth unavailable).
