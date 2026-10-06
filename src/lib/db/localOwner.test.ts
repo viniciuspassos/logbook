@@ -62,10 +62,11 @@ describe('claimLocalData', () => {
       error: Error
       onerror?: () => void
       onabort?: () => void
-      objectStore: () => { clear: () => void }
+      objectStore: () => { clear: () => void; put: () => void }
+      abort: () => void
     }
     const spy = jest.spyOn(IDBDatabase.prototype, 'transaction').mockImplementation(() => {
-      const tx: FakeTx = { error: new Error('boom'), objectStore: () => ({ clear: () => undefined }) }
+      const tx: FakeTx = { error: new Error('boom'), objectStore: () => ({ clear: () => undefined, put: () => undefined }), abort: () => undefined }
       queueMicrotask(() => tx[handler]?.())
       return tx as unknown as IDBTransaction
     })
@@ -75,6 +76,35 @@ describe('claimLocalData', () => {
     } finally {
       spy.mockRestore()
     }
+  })
+
+  it('is atomic: when the owner write fails nothing is wiped and the call rejects', async () => {
+    await seedLocalData()
+    await putLocalOwnerId('u1')
+    const spy = jest.spyOn(IDBObjectStore.prototype, 'put').mockImplementation(() => {
+      throw new Error('owner write failed')
+    })
+    try {
+      await expect(claimLocalData('u2')).rejects.toThrow('owner write failed')
+    } finally {
+      spy.mockRestore()
+    }
+
+    expect(await getAllEntries()).toHaveLength(1)
+    expect(await getAllRecords()).toHaveLength(1)
+    expect(await getSyncState(1)).toBeDefined()
+    expect(await getLocalOwnerId()).toBe('u1')
+  })
+
+  it('writes the owner in the same transaction as the wipe', async () => {
+    await seedLocalData()
+    const spy = jest.spyOn(IDBDatabase.prototype, 'transaction')
+
+    await claimLocalData('u2')
+
+    expect(spy).toHaveBeenCalledTimes(1)
+    spy.mockRestore()
+    expect(await getLocalOwnerId()).toBe('u2')
   })
 
   it('rejects, and does not record the owner, when the data cannot be cleared', async () => {

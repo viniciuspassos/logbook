@@ -3,6 +3,9 @@ import {
   SIGNED_OUT,
   adoptAccount,
   drainReachedServer,
+  LOCAL_PROBE_TIMEOUT_MS,
+  SIGN_OUT_FLUSH_TIMEOUT_MS,
+  resolveStuckStartup,
   restoreSession,
   settleProfile,
   signInWithIdToken,
@@ -23,7 +26,7 @@ import {
 import { checkLocalOwner, claimLocalData, hasLocalData } from '../db/localOwner.ts'
 import { getMe, loginWithGoogle, logout } from '../sync/authApi.ts'
 import { SyncAuthError, SyncNetworkError } from '../sync/errors.ts'
-import { drainOutbox } from '../sync/outboxRunner.ts'
+import { drainOutbox, pauseDrains, resumeDrains } from '../sync/outboxRunner.ts'
 import type { AuthProfile, Session } from '../../types/auth.ts'
 
 jest.mock('./googleIdentity.ts', () => ({ disableGoogleAutoSelect: jest.fn() }))
@@ -87,6 +90,17 @@ describe('settleProfile', () => {
     const session = await settleProfile(grace)
     expect(session).toEqual({ ...SIGNED_OUT, pendingSwitch: grace })
     expect(putCachedIdentity).not.toHaveBeenCalled()
+  })
+
+  it('pauses every drain on a mismatch, so the previous account\'s queue can\'t go up under the new session', async () => {
+    mocked(checkLocalOwner).mockResolvedValue('mismatch')
+    await settleProfile(grace)
+    expect(pauseDrains).toHaveBeenCalled()
+  })
+
+  it('leaves drains alone for the device owner', async () => {
+    await settleProfile(ada)
+    expect(pauseDrains).not.toHaveBeenCalled()
   })
 
   it('does not cache when the signal has aborted', async () => {
@@ -259,9 +273,36 @@ describe('signInWithIdToken', () => {
     expect(clearPendingLogout).not.toHaveBeenCalled()
   })
 
-  it('returns the pending switch for a different account', async () => {
+  it('returns the pending switch for a different account, and leaves drains paused', async () => {
     mocked(checkLocalOwner).mockResolvedValue('mismatch')
     expect(await signInWithIdToken('tok')).toEqual({ ...SIGNED_OUT, pendingSwitch: ada })
+    expect(resumeDrains).not.toHaveBeenCalled()
+  })
+
+  it('pauses drains before the new session exists, then resumes them once the account is the owner', async () => {
+    const order: string[] = []
+    mocked(pauseDrains).mockImplementation(async () => void order.push('pause'))
+    mocked(loginWithGoogle).mockImplementation(async () => {
+      order.push('login')
+      return { status: 'ok' }
+    })
+    mocked(resumeDrains).mockImplementation(() => void order.push('resume'))
+
+    await signInWithIdToken('tok')
+
+    expect(order).toEqual(['pause', 'login', 'resume'])
+  })
+
+  it('resumes drains when /auth/google fails', async () => {
+    mocked(loginWithGoogle).mockRejectedValue(new SyncNetworkError())
+    await expect(signInWithIdToken('tok')).rejects.toBeInstanceOf(SyncNetworkError)
+    expect(resumeDrains).toHaveBeenCalled()
+  })
+
+  it('resumes drains for an unverified sign-in (the profile could not be fetched)', async () => {
+    mocked(getMe).mockRejectedValue(new SyncNetworkError())
+    await signInWithIdToken('tok')
+    expect(resumeDrains).toHaveBeenCalled()
   })
 })
 
@@ -271,6 +312,20 @@ describe('adoptAccount', () => {
     expect(claimLocalData).toHaveBeenCalledWith('u2')
     expect(putCachedIdentity).toHaveBeenCalledWith(grace)
     expect(clearPendingLogout).toHaveBeenCalled()
+  })
+
+  it('resumes drains only after the old data is gone', async () => {
+    const order: string[] = []
+    mocked(claimLocalData).mockImplementation(async () => void order.push('claim'))
+    mocked(resumeDrains).mockImplementation(() => void order.push('resume'))
+    await adoptAccount(grace)
+    expect(order).toEqual(['claim', 'resume'])
+  })
+
+  it('keeps drains paused when the old data cannot be cleared', async () => {
+    mocked(claimLocalData).mockRejectedValue(new Error('boom'))
+    await expect(adoptAccount(grace)).rejects.toThrow('boom')
+    expect(resumeDrains).not.toHaveBeenCalled()
   })
 
   it('stops, caching nothing, when the old data cannot be cleared', async () => {
@@ -317,10 +372,58 @@ describe('signOut', () => {
     expect(setPendingLogout).toHaveBeenCalled()
   })
 
+  describe('with a flush that never finishes', () => {
+    beforeEach(() => jest.useFakeTimers())
+    afterEach(() => jest.useRealTimers())
+
+    it('gives up on the flush after a bound and still signs out durably', async () => {
+      mocked(drainOutbox).mockReturnValue(new Promise(() => undefined))
+      const done = signOut(true)
+
+      await jest.advanceTimersByTimeAsync(SIGN_OUT_FLUSH_TIMEOUT_MS)
+      await done
+
+      expect(setPendingLogout).toHaveBeenCalled()
+      expect(clearCachedIdentity).toHaveBeenCalled()
+      expect(logout).toHaveBeenCalled()
+    })
+
+    it('does not wait out the bound when the flush finishes', async () => {
+      const done = signOut(true)
+      await done
+      expect(setPendingLogout).toHaveBeenCalled()
+      expect(jest.getTimerCount()).toBe(0)
+    })
+  })
+
   it('keeps the marker when the server cannot be reached (offline sign-out)', async () => {
     mocked(logout).mockRejectedValue(new SyncNetworkError())
     await signOut(false)
     expect(setPendingLogout).toHaveBeenCalled()
     expect(clearPendingLogout).not.toHaveBeenCalled()
+  })
+})
+
+describe('resolveStuckStartup', () => {
+  beforeEach(() => jest.useFakeTimers())
+  afterEach(() => jest.useRealTimers())
+
+  it('opens unverified when this device has local data (an existing user)', async () => {
+    mocked(hasLocalData).mockResolvedValue(true)
+    expect(await resolveStuckStartup()).toEqual(unverifiedSession(null))
+  })
+
+  it('returns null, so a first-time user keeps waiting on the splash, when there is nothing local', async () => {
+    mocked(hasLocalData).mockResolvedValue(false)
+    expect(await resolveStuckStartup()).toBeNull()
+  })
+
+  it('falls through to the gate when IndexedDB itself is what is stuck', async () => {
+    mocked(hasLocalData).mockReturnValue(new Promise(() => undefined))
+    const result = resolveStuckStartup()
+
+    await jest.advanceTimersByTimeAsync(LOCAL_PROBE_TIMEOUT_MS)
+
+    expect(await result).toEqual(SIGNED_OUT)
   })
 })

@@ -25,7 +25,7 @@ import type { AuthProfile } from '../../types/auth.ts'
 
 type RecordKey = 'current' | 'pendingLogout' | 'owner'
 
-interface IdentityRecord {
+export interface IdentityRecord {
   key: RecordKey
   profile?: AuthProfile
   ownerId?: string
@@ -115,7 +115,12 @@ export async function getLocalOwnerId(): Promise<string | null> {
   return typeof record?.ownerId === 'string' ? record.ownerId : null
 }
 
+/** The `owner` record, for callers that must write it inside their own transaction (see localOwner.ts). */
+export function ownerRecord(ownerId: string): IdentityRecord {
+  return { key: 'owner', ownerId }
+}
+
 /** Records which account owns this device's local data. */
 export function putLocalOwnerId(ownerId: string): Promise<void> {
-  return writeRecord({ key: 'owner', ownerId })
+  return writeRecord(ownerRecord(ownerId))
 }

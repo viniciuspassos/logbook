@@ -54,6 +54,10 @@ function App() {
   const isDesktop = useIsDesktop()
   // Pure UI: whether the "sign in again" screen is open over the running app.
   const [reauthOpen, setReauthOpen] = useState(false)
+  // Once the session is good again, forget that the screen was open, so the
+  // next background 401 shows just the banner (adjusting state while rendering
+  // is React's pattern for deriving state from a prop).
+  if (!auth.needsSignIn && reauthOpen) setReauthOpen(false)
 
   // The sign-in gate (#122): the shell only opens with a known identity. It
   // keys off `auth.state`, which counts a cached profile (or local entries) on

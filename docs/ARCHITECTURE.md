@@ -146,15 +146,20 @@ shows only when there is **no known identity**, and a handful of rules keep it f
 user their data or their work. The logic lives in `src/lib/auth/sessionFlows.ts`; `useAuth` wires it.
 
 - *Where the gate shows.* At startup with no cached profile and no local entries; after an explicit
-  sign-out; when `GET /auth/me` returns 401 at startup; and when a different account must confirm
-  replacing this device's data. Nowhere else.
+  sign-out; when `GET /auth/me` returns 401 at startup; when a different account must confirm
+  replacing this device's data; and when a session that was never verified (opened offline on local
+  entries alone, no cached identity) later gets a 401, because it has no standing. A session that
+  *was* verified before only gets the banner. A 5xx from `/auth/me` is not a verdict and leaves the
+  session unverified. Nowhere else.
 - *Offline open.* A cached profile, or just existing local entries (an existing user from before
   sign-in shipped, with no cached identity yet), opens the app as an **unverified** session. A later
   drain that reaches the server triggers `GET /auth/me`, which fills in the profile or, on a 401,
-  raises the banner below. IndexedDB being unavailable is treated like "entries exist", and a startup
-  that hangs (another tab blocking the v3 upgrade, or a stuck read) opens unverified after a short
-  timeout rather than leaving the splash up. `openLogbookDb` rejects on `blocked` and closes on
-  `versionchange` so one old tab can't wedge the new one.
+  raises the banner below. IndexedDB being unavailable is treated like "entries exist". A startup that is slow
+  opens unverified after a timeout only when there is a cached identity or local data. A first-time
+  user with nothing local keeps the splash until the server answers (opening the app for them would
+  gate them again mid-capture, so it would be worse), and if IndexedDB itself is what is stuck (another
+  tab blocking the v3 upgrade) the gate is shown after a second short probe. `openLogbookDb` rejects
+  on `blocked` and closes on `versionchange` so one old tab can't wedge the new one.
 - *A background 401 never gates.* An outbox drain or a photo upload that gets a 401 only sets
   `needsSignIn`, shown as a non-blocking banner ("Sign in again to resume syncing") whose action opens
   the sign-in screen *over* the still-mounted app. Unmounting the app would lose an in-progress
@@ -169,8 +174,18 @@ user their data or their work. The logic lives in `src/lib/auth/sessionFlows.ts`
   Data with no recorded owner belongs to the first account to sign in (matching the backend's
   first-user claim). Re-signing in as the same account keeps everything; a different account is a
   `pendingSwitch`: the sign-in screen asks, warning that unsynced entries are removed, and only then
-  `claimLocalData` clears the three stores and records the new owner. Cancelling signs the new session
-  back out. The previous account's outbox is never drained under the new account's session.
+  `claimLocalData` clears the three stores and records the new owner in a single transaction (all or
+  nothing; if it fails the confirmation stays open with an error). Cancelling signs the new session
+  back out. The previous account's outbox is never drained under the new account's session:
+  `pauseDrains()` in `outboxRunner` turns every drain trigger into a no-op (they all go through
+  `drainOutbox`) and waits for an in-flight drain to stop. It is taken before `POST /auth/google`
+  (so there is no gap before the ownership check), kept through a pending or cancelled switch, and
+  released by `resumeDrains()` after a confirmed switch or the next same-account sign-in.
+  (One gap remains: at startup the mount-time drain starts alongside `GET /auth/me`, so if the
+  cookie already belongs to a different account than the local data, that first drain can race the
+  ownership check; the pause takes effect as soon as the mismatch is seen.)
+  Sign-out's final flush is bounded (a hung drain can't keep the user signed in), and so is the
+  Google script load (a stalled request turns into the offline message with a retry).
 - *Races.* Sign-in and sign-out supersede a slow startup check (abort signal plus an epoch counter),
   so a late `GET /auth/me` can neither overwrite newer state nor re-cache a signed-out identity.
 - *First sign-in needs a network.* This is unavoidable: Google and the backend both have to be
@@ -182,9 +197,6 @@ of their own logbook on a mountain, which is the product's core scenario, and a 
 the app on any background 401 would throw away a half-dictated entry. The identity cache is not a
 security boundary (the session cookie is what authorises sync), so keeping the profile for offline
 reopening gives nothing to someone holding the unlocked device that they didn't already have.
-Known limit: between a different account's sign-in and its confirmation, a background reconnect
-drain could in principle send the previous account's remaining queue under the new session; the
-flush-before-sign-out step makes that queue normally empty, but it is not blocked outright.
 
 ## State composition
 

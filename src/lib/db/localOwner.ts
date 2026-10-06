@@ -1,6 +1,6 @@
-import { ENTRIES_STORE, OUTBOX_STORE, SYNC_STATE_STORE, isPersistenceSupported, openLogbookDb } from './database.ts'
+import { ENTRIES_STORE, IDENTITY_STORE, OUTBOX_STORE, SYNC_STATE_STORE, isPersistenceSupported, openLogbookDb } from './database.ts'
 import { getAllEntries } from './entriesStore.ts'
-import { getLocalOwnerId, putLocalOwnerId } from './identityStore.ts'
+import { getLocalOwnerId, ownerRecord, putLocalOwnerId } from './identityStore.ts'
 
 /**
  * Keeps one account's local data from leaking into another's. Entries, the
@@ -29,31 +29,38 @@ export async function checkLocalOwner(accountId: string | number): Promise<Owner
   return owner === id ? 'ok' : 'mismatch'
 }
 
-function clearStores(db: IDBDatabase): Promise<void> {
+function wipeAndRecordOwner(db: IDBDatabase, ownerId: string): Promise<void> {
   return new Promise((resolve, reject) => {
-    const names = [ENTRIES_STORE, OUTBOX_STORE, SYNC_STATE_STORE]
-    const tx = db.transaction(names, 'readwrite')
-    for (const name of names) tx.objectStore(name).clear()
+    const wiped = [ENTRIES_STORE, OUTBOX_STORE, SYNC_STATE_STORE]
+    const tx = db.transaction([...wiped, IDENTITY_STORE], 'readwrite')
     tx.oncomplete = () => resolve()
     tx.onerror = () => reject(tx.error)
     tx.onabort = () => reject(tx.error)
+    try {
+      for (const name of wiped) tx.objectStore(name).clear()
+      tx.objectStore(IDENTITY_STORE).put(ownerRecord(ownerId))
+    } catch (error) {
+      // Roll back whatever was already queued, so a failure never leaves the
+      // device wiped but still owned by the previous account.
+      tx.abort()
+      reject(error)
+    }
   })
 }
 
 /**
- * Removes the previous account's entries, outbox and sync state in one
- * transaction, then records `accountId` as the owner. Rejects (leaving the
- * owner untouched) if the data can't be cleared, so the caller never opens the
- * app on a half-wiped device.
+ * Removes the previous account's entries, outbox and sync state and records
+ * `accountId` as the owner, all in ONE transaction: it either fully happens
+ * or the device is left exactly as it was, and the returned promise rejects so
+ * the caller never opens the app on a half-switched device.
  */
 export async function claimLocalData(accountId: string | number): Promise<void> {
   const db = await openLogbookDb()
   try {
-    await clearStores(db)
+    await wipeAndRecordOwner(db, String(accountId))
   } finally {
     db.close()
   }
-  await putLocalOwnerId(String(accountId))
 }
 
 /**

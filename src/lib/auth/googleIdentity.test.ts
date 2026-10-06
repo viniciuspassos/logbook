@@ -1,5 +1,6 @@
 import {
   clampButtonWidth,
+  SCRIPT_LOAD_TIMEOUT_MS,
   disableGoogleAutoSelect,
   preferredButtonTheme,
   renderGoogleSignInButton,
@@ -176,6 +177,44 @@ describe('renderGoogleSignInButton', () => {
     expect(gsiScript()).not.toBeNull()
     gsiScript()?.onerror?.(new Event('error'))
     await retry
+  })
+
+  describe('when the request stalls (neither load nor error)', () => {
+    beforeEach(() => jest.useFakeTimers())
+    afterEach(() => jest.useRealTimers())
+
+    it('gives up after the load timeout: unavailable (offline), stale tag removed', async () => {
+      const pending = renderGoogleSignInButton(document.createElement('div'), { onCredential: jest.fn() })
+      expect(gsiScript()).not.toBeNull()
+
+      await jest.advanceTimersByTimeAsync(SCRIPT_LOAD_TIMEOUT_MS)
+
+      await expect(pending).resolves.toEqual({ status: 'unavailable', reason: 'offline' })
+      expect(gsiScript()).toBeNull()
+    })
+
+    it('lets a retry inject a fresh script instead of reusing the dead load', async () => {
+      const first = renderGoogleSignInButton(document.createElement('div'), { onCredential: jest.fn() })
+      await jest.advanceTimersByTimeAsync(SCRIPT_LOAD_TIMEOUT_MS)
+      await first
+
+      const retry = renderGoogleSignInButton(document.createElement('div'), { onCredential: jest.fn() })
+      const gis = installGoogle()
+      expect(gsiScript()).not.toBeNull()
+      gsiScript()?.onload?.(new Event('load'))
+
+      await expect(retry).resolves.toEqual({ status: 'rendered' })
+      expect(gis.renderButton).toHaveBeenCalled()
+    })
+
+    it('does not fire the timeout after a normal load', async () => {
+      const pending = renderGoogleSignInButton(document.createElement('div'), { onCredential: jest.fn() })
+      installGoogle()
+      gsiScript()?.onload?.(new Event('load'))
+      await pending
+
+      expect(jest.getTimerCount()).toBe(0)
+    })
   })
 
   it('is unavailable when the script loads but defines no google global', async () => {

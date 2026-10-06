@@ -35,6 +35,9 @@ export interface GoogleSignInOptions {
   signal?: AbortSignal
 }
 
+/** How long the GIS script may take before the load counts as failed (offline, blocked, stalled). */
+export const SCRIPT_LOAD_TIMEOUT_MS = 8000
+
 // Shared while the script is loading, so two callers don't inject it twice.
 let pendingLoad: Promise<boolean> | null = null
 
@@ -51,11 +54,21 @@ function loadGoogleScript(): Promise<boolean> {
     const script = document.createElement('script')
     script.src = GSI_SRC
     script.async = true
-    script.onload = () => resolve(isGoogleLoaded())
+    // A request that stalls (neither load nor error, e.g. a captive portal)
+    // must not leave every retry waiting on the same dead promise.
+    const timer = setTimeout(() => {
+      script.remove()
+      resolve(false)
+    }, SCRIPT_LOAD_TIMEOUT_MS)
+    const finish = (loaded: boolean) => {
+      clearTimeout(timer)
+      resolve(loaded)
+    }
+    script.onload = () => finish(isGoogleLoaded())
     script.onerror = () => {
       // Remove it so a later retry injects a fresh tag instead of a dead one.
       script.remove()
-      resolve(false)
+      finish(false)
     }
     document.head.appendChild(script)
   }).finally(() => {

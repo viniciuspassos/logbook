@@ -1,5 +1,6 @@
 import { act, renderHook, waitFor } from '@testing-library/react'
-import { RESTORE_TIMEOUT_MS, useAuth, type UseAuthOptions } from './useAuth.ts'
+import { useAuth, type UseAuthOptions } from './useAuth.ts'
+import { LOCAL_PROBE_TIMEOUT_MS, RESTORE_TIMEOUT_MS } from '../lib/auth/sessionFlows.ts'
 import { getMe, loginWithGoogle, logout } from '../lib/sync/authApi.ts'
 import { disableGoogleAutoSelect } from '../lib/auth/googleIdentity.ts'
 import {
@@ -152,40 +153,89 @@ describe('useAuth: startup', () => {
     expect(getMe).not.toHaveBeenCalled()
   })
 
-  it('opens unverified instead of sitting on the splash forever when startup hangs (e.g. IndexedDB blocked)', async () => {
-    jest.useFakeTimers()
-    mocked(hasPendingLogout).mockReturnValue(new Promise(() => undefined))
-    const { result } = renderHook(() => useAuth())
-    expect(result.current.state).toBe('loading')
+  describe('a startup that is taking too long', () => {
+    beforeEach(() => jest.useFakeTimers())
 
-    act(() => {
-      jest.advanceTimersByTime(RESTORE_TIMEOUT_MS)
+    async function advance(ms: number) {
+      await act(async () => {
+        await jest.advanceTimersByTimeAsync(ms)
+      })
+    }
+
+    it('opens unverified after the timeout for an existing user (local entries), instead of the splash forever', async () => {
+      mocked(getMe).mockReturnValue(new Promise(() => undefined))
+      mocked(hasLocalData).mockResolvedValue(true)
+      const { result } = renderHook(() => useAuth())
+      expect(result.current.state).toBe('loading')
+
+      await advance(RESTORE_TIMEOUT_MS)
+
+      expect(result.current.state).toBe('signedIn')
+      expect(result.current.unverified).toBe(true)
     })
 
-    expect(result.current.state).toBe('signedIn')
-    expect(result.current.unverified).toBe(true)
-  })
+    it('keeps a first-time user (nothing local) on the splash until the server answers', async () => {
+      let resolveMe: ((profile: AuthProfile) => void) | undefined
+      mocked(getMe).mockReturnValue(new Promise((resolve) => (resolveMe = resolve)))
+      mocked(hasLocalData).mockResolvedValue(false)
+      const { result } = renderHook(() => useAuth())
 
-  it('does not apply the timeout fallback once startup has resolved', async () => {
-    jest.useFakeTimers()
-    const { result } = renderHook(() => useAuth())
-    await act(async () => {
-      await Promise.resolve()
-    })
-    await waitFor(() => expect(result.current.profile).toEqual(ada))
+      await advance(RESTORE_TIMEOUT_MS + LOCAL_PROBE_TIMEOUT_MS)
+      expect(result.current.state).toBe('loading')
 
-    act(() => {
-      jest.advanceTimersByTime(RESTORE_TIMEOUT_MS)
+      await act(async () => resolveMe?.(ada))
+      expect(result.current.state).toBe('signedIn')
+      expect(result.current.unverified).toBe(false)
     })
 
-    expect(result.current.unverified).toBe(false)
-  })
+    it('falls through to the gate when IndexedDB itself is what is stuck', async () => {
+      mocked(hasPendingLogout).mockReturnValue(new Promise(() => undefined))
+      mocked(hasLocalData).mockReturnValue(new Promise(() => undefined))
+      const { result } = renderHook(() => useAuth())
 
-  it('opens unverified when startup itself throws', async () => {
-    mocked(hasPendingLogout).mockRejectedValue(new Error('boom'))
-    const { result } = renderHook(() => useAuth())
-    await waitFor(() => expect(result.current.state).toBe('signedIn'))
-    expect(result.current.unverified).toBe(true)
+      await advance(RESTORE_TIMEOUT_MS + LOCAL_PROBE_TIMEOUT_MS)
+
+      expect(result.current.state).toBe('signedOut')
+    })
+
+    it('does not apply the timeout fallback once startup has resolved', async () => {
+      const { result } = renderHook(() => useAuth())
+      await advance(10)
+      expect(result.current.profile).toEqual(ada)
+
+      await advance(RESTORE_TIMEOUT_MS + LOCAL_PROBE_TIMEOUT_MS)
+
+      expect(result.current.unverified).toBe(false)
+    })
+
+    it('does not let a late fallback overwrite a session that arrived in the meantime', async () => {
+      let resolveLocal: ((has: boolean) => void) | undefined
+      mocked(getMe).mockReturnValue(new Promise(() => undefined))
+      mocked(hasLocalData).mockReturnValue(new Promise((resolve) => (resolveLocal = resolve)))
+      mocked(getCachedIdentity).mockResolvedValue(grace)
+      const { result } = renderHook(() => useAuth())
+      await advance(RESTORE_TIMEOUT_MS)
+
+      await act(async () => resolveLocal?.(true))
+
+      expect(result.current.profile).toEqual(grace)
+    })
+
+    it('shows the gate, not an open app, when startup itself throws and there is no local data', async () => {
+      mocked(hasPendingLogout).mockRejectedValue(new Error('boom'))
+      const { result } = renderHook(() => useAuth())
+      await advance(0)
+      expect(result.current.state).toBe('signedOut')
+    })
+
+    it('opens unverified when startup itself throws but there is local data', async () => {
+      mocked(hasPendingLogout).mockRejectedValue(new Error('boom'))
+      mocked(hasLocalData).mockResolvedValue(true)
+      const { result } = renderHook(() => useAuth())
+      await advance(0)
+      expect(result.current.state).toBe('signedIn')
+      expect(result.current.unverified).toBe(true)
+    })
   })
 })
 
@@ -227,6 +277,35 @@ describe('useAuth: verifying an unverified session', () => {
 
     await waitFor(() => expect(result.current.needsSignIn).toBe(true))
     expect(result.current.state).toBe('signedIn')
+  })
+
+  it('shows the full gate when a never-verified session (no cached identity) turns out to be a 401', async () => {
+    mocked(getMe).mockRejectedValue(new SyncNetworkError())
+    mocked(hasLocalData).mockResolvedValue(true)
+    const hook = renderHook(() => useAuth())
+    await waitFor(() => expect(hook.result.current.unverified).toBe(true))
+    await waitFor(() => expect(drainListeners).toHaveLength(1))
+    mocked(getMe).mockRejectedValue(new SyncAuthError(401, null))
+
+    emitDrain({ processed: 0, stoppedReason: 'error', error: 'x' })
+
+    await waitFor(() => expect(hook.result.current.state).toBe('signedOut'))
+  })
+
+  it('keeps a never-verified session open on a 5xx from /auth/me (that is not a verdict)', async () => {
+    mocked(getMe).mockRejectedValue(new SyncNetworkError())
+    mocked(hasLocalData).mockResolvedValue(true)
+    const hook = renderHook(() => useAuth())
+    await waitFor(() => expect(hook.result.current.unverified).toBe(true))
+    await waitFor(() => expect(drainListeners).toHaveLength(1))
+    mocked(getMe).mockRejectedValue(new SyncHttpError(503, null, 'down'))
+
+    emitDrain({ processed: 0, stoppedReason: 'empty' })
+    await act(async () => {})
+
+    expect(hook.result.current.state).toBe('signedIn')
+    expect(hook.result.current.unverified).toBe(true)
+    expect(hook.result.current.needsSignIn).toBe(false)
   })
 
   it('stays unverified if the server still cannot be reached', async () => {
@@ -502,6 +581,17 @@ describe('useAuth: logout', () => {
     })
 
     expect(result.current.state).toBe('signedOut')
+  })
+
+  it('leaves no error text behind when a sign-out step fails (an empty string would hide the status line)', async () => {
+    const { result } = await renderSignedIn()
+    mocked(setPendingLogout).mockRejectedValue(new Error('boom'))
+
+    await act(async () => {
+      await result.current.logout()
+    })
+
+    expect(result.current.error).toBeNull()
   })
 
   it('wins over a slow startup check: it cannot sign the user back in or re-cache them', async () => {

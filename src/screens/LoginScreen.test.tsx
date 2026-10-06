@@ -126,6 +126,12 @@ describe('LoginScreen', () => {
     expect(screen.queryByRole('button', { name: 'Try again' })).not.toBeInTheDocument()
   })
 
+  it('treats an empty error as no error, so Google\'s own status still shows', async () => {
+    resolveWith({ status: 'unavailable', reason: 'offline' })
+    await renderScreen(makeProps({ error: '' }))
+    expect(screen.getByRole('status')).toHaveTextContent("Couldn't reach Google. Check your connection and try again.")
+  })
+
   it('prefers the server error over the offline hint', async () => {
     resolveWith({ status: 'unavailable', reason: 'offline' })
     await renderScreen(makeProps({ error: 'Sign-in expired. Try again.' }))

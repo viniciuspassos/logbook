@@ -32,7 +32,8 @@ const BUTTON_MESSAGE: Record<ButtonState, string> = {
 /** One line for the live region: progress first, then a server error, then Google's own state. */
 function statusFor(pending: boolean, error: string | null, buttonState: ButtonState): string {
   if (pending) return 'Signing in…'
-  return error ?? BUTTON_MESSAGE[buttonState]
+  // `||`, not `??`: an empty error must not hide Google's own status.
+  return error || BUTTON_MESSAGE[buttonState]
 }
 
 /** Loads and renders Google's button into the returned slot; `retry` tries again after an offline failure. */

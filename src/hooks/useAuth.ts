@@ -1,6 +1,7 @@
 import {
   useCallback,
   useEffect,
+  useMemo,
   useRef,
   useState,
   type Dispatch,
@@ -9,13 +10,14 @@ import {
 } from 'react'
 import {
   LOADING,
+  RESTORE_TIMEOUT_MS,
   SIGNED_OUT,
   adoptAccount,
   drainReachedServer,
+  resolveStuckStartup,
   restoreSession,
   signInWithIdToken,
   signOut,
-  unverifiedSession,
   verifiedSession,
   verifySession,
 } from '../lib/auth/sessionFlows.ts'
@@ -49,9 +51,6 @@ export type { AuthState } from '../types/auth.ts'
  *
  * Under `npm run dev:mocked` (sample data, no backend) the gate is skipped.
  */
-
-/** How long startup may stay on the splash before opening unverified. */
-export const RESTORE_TIMEOUT_MS = 4000
 
 export interface UseAuthOptions {
   /** The device's local data was replaced (an account switch), so cached lists must reload. */
@@ -99,12 +98,7 @@ function messageForSignInError(error: unknown): string {
   return 'Something went wrong. Try again.'
 }
 
-/** A startup that hasn't resolved opens unverified rather than staying on the splash. */
-function openIfStillLoading(current: Session): Session {
-  return current.state === 'loading' ? unverifiedSession(null) : current
-}
-
-interface AccountControls {
+interface AccountDeps {
   session: Session
   needsSignIn: boolean
   setSession: (session: Session) => void
@@ -127,12 +121,19 @@ function useRestoreOnMount(
     const apply = (next: Session) => {
       if (!controller.signal.aborted) setSession(next)
     }
-    restoreSession(controller.signal, apply).catch(() => {
-      if (!controller.signal.aborted) setSession(openIfStillLoading)
-    })
-    const timer = setTimeout(() => {
-      if (!controller.signal.aborted) setSession(openIfStillLoading)
-    }, RESTORE_TIMEOUT_MS)
+    // Only fills in a startup that is still waiting; never overwrites a real answer.
+    const settleIfLoading = (next: Session | null) => {
+      if (next && !controller.signal.aborted) setSession((cur) => (cur.state === 'loading' ? next : cur))
+    }
+    // If startup itself blows up there is nothing to wait for: open for an
+    // existing user, otherwise show the gate.
+    restoreSession(controller.signal, apply).catch(() =>
+      resolveStuckStartup().then((next) => settleIfLoading(next ?? SIGNED_OUT)),
+    )
+    // Opening unverified is only right for someone who has local data. A
+    // first-time user keeps waiting for the server (opening the app for them
+    // would only gate them again mid-capture); stuck storage falls to the gate.
+    const timer = setTimeout(() => void resolveStuckStartup().then(settleIfLoading), RESTORE_TIMEOUT_MS)
     return () => {
       clearTimeout(timer)
       controller.abort()
@@ -140,33 +141,46 @@ function useRestoreOnMount(
   }, [setSession, restoreRef])
 }
 
+interface VerifyDeps {
+  awaiting: boolean
+  hasProfile: boolean
+  epochRef: MutableRefObject<number>
+  setSession: (session: Session) => void
+  setNeedsSignIn: (needed: boolean) => void
+}
+
 /** While unverified, confirm the session as soon as a sync attempt reaches the server again. */
-function useVerifyWhenReachable(
-  awaiting: boolean,
-  epochRef: MutableRefObject<number>,
-  setSession: (session: Session) => void,
-  setNeedsSignIn: (needed: boolean) => void,
-) {
+function useVerifyWhenReachable({ awaiting, hasProfile, epochRef, setSession, setNeedsSignIn }: VerifyDeps) {
   useEffect(() => {
     if (!awaiting) return
     const verify = async () => {
       const epoch = epochRef.current
       const result = await verifySession()
       if (epoch !== epochRef.current) return
-      if (result === 'expired') setNeedsSignIn(true)
-      else if (result) setSession(result)
+      if (result === 'expired') {
+        // A session that was verified before only needs a banner. One that
+        // never was (no cached identity) has no standing: show the gate.
+        if (hasProfile) setNeedsSignIn(true)
+        else setSession(SIGNED_OUT)
+      } else if (result) setSession(result)
     }
     return subscribeToDrains((summary) => {
       if (drainReachedServer(summary)) void verify()
     })
-  }, [awaiting, epochRef, setSession, setNeedsSignIn])
+  }, [awaiting, hasProfile, epochRef, setSession, setNeedsSignIn])
+}
+
+interface Lifecycle {
+  supersede: () => void
+  setPending: (pending: boolean) => void
+  setError: (error: string | null) => void
 }
 
 /** Runs one async account action behind the shared pending/error handling. */
 async function runAction(
-  { supersede, setPending, setError }: AccountControls,
+  { supersede, setPending, setError }: Lifecycle,
   action: () => Promise<void>,
-  failureMessage: (error: unknown) => string,
+  failureMessage: (error: unknown) => string | null,
 ): Promise<boolean> {
   supersede()
   setPending(true)
@@ -182,14 +196,15 @@ async function runAction(
   }
 }
 
-function useAccountActions(controls: AccountControls) {
-  const { session, needsSignIn, setSession, setNeedsSignIn, onLocalDataReset } = controls
+function useAccountActions(deps: AccountDeps) {
+  const { session, needsSignIn, setSession, setNeedsSignIn, setPending, setError, supersede, onLocalDataReset } = deps
   const { unverified, pendingSwitch } = session
+  const lifecycle = useMemo(() => ({ supersede, setPending, setError }), [supersede, setPending, setError])
 
   const signInWithGoogle = useCallback(
     (idToken: string) =>
       runAction(
-        controls,
+        lifecycle,
         async () => {
           const next = await signInWithIdToken(idToken)
           setSession(next)
@@ -200,23 +215,22 @@ function useAccountActions(controls: AccountControls) {
         },
         messageForSignInError,
       ),
-    // eslint-disable-next-line react-hooks/exhaustive-deps
-    [controls.supersede, controls.setPending, controls.setError, setSession, setNeedsSignIn],
+    [lifecycle, setSession, setNeedsSignIn],
   )
 
   const logout = useCallback(async () => {
     // Push unsynced entries to the right account while its session still works.
     const flushFirst = session.state === 'signedIn' && !unverified && !needsSignIn
-    await runAction(controls, () => signOut(flushFirst), () => '')
+    // Signing out locally never depends on the network, so a failed step has no message to show.
+    await runAction(lifecycle, () => signOut(flushFirst), () => null)
     setSession(SIGNED_OUT)
     setNeedsSignIn(false)
-    // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [session.state, unverified, needsSignIn, controls.supersede, controls.setPending, controls.setError, setSession, setNeedsSignIn])
+  }, [lifecycle, session.state, unverified, needsSignIn, setSession, setNeedsSignIn])
 
   const confirmSwitch = useCallback(async () => {
     if (!pendingSwitch) return
     await runAction(
-      controls,
+      lifecycle,
       async () => {
         const next = await adoptAccount(pendingSwitch)
         onLocalDataReset?.()
@@ -226,8 +240,7 @@ function useAccountActions(controls: AccountControls) {
       },
       () => "Couldn't remove the previous account's entries from this device. Try again.",
     )
-    // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [pendingSwitch, onLocalDataReset, controls.supersede, controls.setPending, controls.setError, setSession, setNeedsSignIn])
+  }, [lifecycle, pendingSwitch, onLocalDataReset, setSession, setNeedsSignIn])
 
   return { signInWithGoogle, logout, confirmSwitch }
 }
@@ -248,7 +261,13 @@ export function useAuth(options: UseAuthOptions = {}): UseAuthResult {
   }, [])
 
   useRestoreOnMount(setSession, restoreRef)
-  useVerifyWhenReachable(session.state === 'signedIn' && session.unverified, epochRef, setSession, setNeedsSignIn)
+  useVerifyWhenReachable({
+    awaiting: session.state === 'signedIn' && session.unverified,
+    hasProfile: session.profile !== null,
+    epochRef,
+    setSession,
+    setNeedsSignIn,
+  })
   const { signInWithGoogle, logout, confirmSwitch } = useAccountActions({
     session,
     needsSignIn,

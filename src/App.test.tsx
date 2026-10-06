@@ -290,6 +290,25 @@ describe('App', () => {
       await act(async () => {})
     })
 
+    it('after signing in again, a second background 401 shows only the banner, not the full-screen sign-in', async () => {
+      const user = userEvent.setup()
+      ;(getMe as jest.Mock).mockResolvedValue(ada)
+      ;(loginWithGoogle as jest.Mock).mockResolvedValue({ status: 'ok' })
+      render(<App />)
+      await screen.findByRole('button', { name: /new entry/i })
+      emitDrain({ processed: 0, stoppedReason: 'auth' })
+      await user.click(await screen.findByRole('button', { name: 'Sign in' }))
+      const options = (renderGoogleSignInButton as jest.Mock).mock.calls.at(-1)?.[1]
+      await act(async () => options.onCredential('id-token'))
+      expect(screen.queryByText('Sign in again to resume syncing.')).not.toBeInTheDocument()
+
+      emitDrain({ processed: 0, stoppedReason: 'auth' })
+
+      expect(await screen.findByText('Sign in again to resume syncing.')).toBeInTheDocument()
+      expect(screen.queryByRole('button', { name: 'Not now' })).not.toBeInTheDocument()
+      await act(async () => {})
+    })
+
     it('lets the user dismiss the sign-in screen opened from the banner', async () => {
       const user = userEvent.setup()
       ;(getMe as jest.Mock).mockResolvedValue(ada)

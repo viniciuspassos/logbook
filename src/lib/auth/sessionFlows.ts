@@ -10,7 +10,7 @@ import {
 import { checkLocalOwner, claimLocalData, hasLocalData } from '../db/localOwner.ts'
 import { getMe, loginWithGoogle, logout as logoutRequest } from '../sync/authApi.ts'
 import { SyncAuthError } from '../sync/errors.ts'
-import { drainOutbox, type DrainSummary } from '../sync/outboxRunner.ts'
+import { drainOutbox, pauseDrains, resumeDrains, type DrainSummary } from '../sync/outboxRunner.ts'
 import type { AuthProfile, Session } from '../../types/auth.ts'
 
 /**
@@ -50,7 +50,12 @@ export function drainReachedServer(summary: DrainSummary): boolean {
  * profile as `pendingSwitch` and caches nothing.
  */
 export async function settleProfile(profile: AuthProfile, signal?: AbortSignal): Promise<Session> {
-  if ((await checkLocalOwner(profile.id)) === 'mismatch') return { ...SIGNED_OUT, pendingSwitch: profile }
+  if ((await checkLocalOwner(profile.id)) === 'mismatch') {
+    // The new account's session may already be live while the previous
+    // account's queue is still here: block every drain until this is resolved.
+    await pauseDrains()
+    return { ...SIGNED_OUT, pendingSwitch: profile }
+  }
   if (!signal?.aborted) await putCachedIdentity(profile)
   return verifiedSession(profile)
 }
@@ -127,12 +132,26 @@ async function fetchProfileWithRetry(): Promise<AuthProfile | null> {
  * `POST /auth/google` itself fails. If the follow-up profile lookup fails the
  * session is live server-side, so the user opens unverified rather than being
  * stuck at the gate; the profile is filled in later by `verifySession`.
+ *
+ * Drains are paused *before* the new session exists and stay paused if the
+ * account turns out to be a different one (`pendingSwitch`), so the previous
+ * account's queue can't be uploaded under it, not even in the gap before the
+ * ownership check.
  */
 export async function signInWithIdToken(idToken: string): Promise<Session> {
-  await loginWithGoogle(idToken)
-  await clearPendingLogout()
-  const profile = await fetchProfileWithRetry()
-  return profile ? settleProfile(profile) : unverifiedSession(null)
+  await pauseDrains()
+  let session: Session
+  try {
+    await loginWithGoogle(idToken)
+    await clearPendingLogout()
+    const profile = await fetchProfileWithRetry()
+    session = profile ? await settleProfile(profile) : unverifiedSession(null)
+  } catch (error) {
+    resumeDrains()
+    throw error
+  }
+  if (session.pendingSwitch === null) resumeDrains()
+  return session
 }
 
 /** The user confirmed a switch: remove the previous account's local data and open as the new one. */
@@ -140,14 +159,27 @@ export async function adoptAccount(profile: AuthProfile): Promise<Session> {
   await claimLocalData(profile.id)
   await putCachedIdentity(profile)
   await clearPendingLogout()
+  resumeDrains()
   return verifiedSession(profile)
 }
 
+/** How long sign-out waits for the final flush before signing out regardless. */
+export const SIGN_OUT_FLUSH_TIMEOUT_MS = 5000
+
 async function drainBeforeSignOut(): Promise<void> {
+  const controller = new AbortController()
+  let timer: ReturnType<typeof setTimeout> | undefined
+  const bound = new Promise<void>((resolve) => {
+    timer = setTimeout(() => {
+      controller.abort()
+      resolve()
+    }, SIGN_OUT_FLUSH_TIMEOUT_MS)
+  })
   try {
-    await drainOutbox()
-  } catch {
-    // Best-effort: whatever can't be sent stays queued for the same account.
+    // Best-effort and bounded: a hung drain must never keep the user signed in.
+    await Promise.race([drainOutbox(controller.signal).then(() => undefined, () => undefined), bound])
+  } finally {
+    clearTimeout(timer)
   }
 }
 
@@ -163,4 +195,30 @@ export async function signOut(flushFirst: boolean): Promise<void> {
   await clearCachedIdentity()
   await retryServerLogout()
   disableGoogleAutoSelect()
+}
+
+/** How long a startup with no cached identity may wait before checking what is on this device. */
+export const RESTORE_TIMEOUT_MS = 4000
+/** How long that check itself may take before IndexedDB is considered stuck. */
+export const LOCAL_PROBE_TIMEOUT_MS = 1000
+
+/**
+ * Decides what a startup that is still waiting should do. An existing user
+ * (local entries) opens unverified; a first-time user (nothing local) returns
+ * `null` and keeps waiting on the splash for the server's answer, since opening
+ * the app for them would only gate them again mid-capture. If IndexedDB is the
+ * thing that's stuck, there is nothing to open: show the gate.
+ */
+export async function resolveStuckStartup(): Promise<Session | null> {
+  let timer: ReturnType<typeof setTimeout> | undefined
+  const stuck = new Promise<'stuck'>((resolve) => {
+    timer = setTimeout(() => resolve('stuck'), LOCAL_PROBE_TIMEOUT_MS)
+  })
+  try {
+    const hasData = await Promise.race([hasLocalData(), stuck])
+    if (hasData === 'stuck') return SIGNED_OUT
+    return hasData ? unverifiedSession(null) : null
+  } finally {
+    clearTimeout(timer)
+  }
 }
