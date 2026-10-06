@@ -6,6 +6,13 @@ export interface AppConfig {
   databaseUrl: string
   uploadDir: string
   maxUploadSizeBytes: number
+  /**
+   * Feature flag (`GOOGLE_AUTH_ENABLED`, default false). Off means no sign-in
+   * route and therefore no session: the API stays closed. The three Google
+   * settings below are only required (and validated) when this is on; when
+   * off they are '' / [].
+   */
+  googleAuthEnabled: boolean
   /** OAuth Web client ID a Google ID token's `aud` must equal, see auth/google-token-verifier.service.ts. */
   googleClientId: string
   /** Lowercased e-mail addresses allowed to sign in; anyone else gets 403. */
@@ -83,6 +90,58 @@ function resolveLegacyOwnerEmail(raw: string | undefined, allowedEmails: string[
   return configured
 }
 
+type GoogleSettings = Pick<AppConfig, 'googleClientId' | 'allowedEmails' | 'legacyOwnerEmail'>
+
+const DISABLED_GOOGLE_SETTINGS: GoogleSettings = {
+  googleClientId: '',
+  allowedEmails: [],
+  legacyOwnerEmail: '',
+}
+
+/** Reads and validates the Google settings, which only matter (and are only required) when the flag is on. */
+function loadGoogleSettings(env: Env): GoogleSettings {
+  const googleClientId = env.GOOGLE_CLIENT_ID
+  if (!googleClientId) {
+    throw new Error(
+      'GOOGLE_CLIENT_ID environment variable is required when GOOGLE_AUTH_ENABLED is true ' +
+        '(see server/.env.example).',
+    )
+  }
+
+  const allowedEmails = parseAllowedEmails(env.ALLOWED_EMAILS)
+  if (allowedEmails.length === 0) {
+    throw new Error(
+      'ALLOWED_EMAILS environment variable is required when GOOGLE_AUTH_ENABLED is true: a ' +
+        'comma-separated list of e-mail addresses allowed to sign in (see server/.env.example).',
+    )
+  }
+
+  return {
+    googleClientId,
+    allowedEmails,
+    legacyOwnerEmail: resolveLegacyOwnerEmail(env.LEGACY_OWNER_EMAIL, allowedEmails),
+  }
+}
+
+/**
+ * Strict boolean env var: 'true'/'1' or 'false'/'0', case-insensitive; unset
+ * or empty means false. Anything else (including 'yes', 'on') throws, so a
+ * typo can't silently leave login off — or on.
+ */
+function parseBoolean(name: string, raw: string | undefined): boolean {
+  if (raw === undefined || raw === '') {
+    return false
+  }
+  const value = raw.trim().toLowerCase()
+  if (value === 'true' || value === '1') {
+    return true
+  }
+  if (value === 'false' || value === '0') {
+    return false
+  }
+  throw new Error(`${name} must be true, false, 1 or 0, got "${raw}" (see server/.env.example).`)
+}
+
 function parseAllowedEmails(raw: string | undefined): string[] {
   return (raw ?? '')
     .split(',')
@@ -103,22 +162,8 @@ export function loadConfig(env: Env = process.env): AppConfig {
     )
   }
 
-  const googleClientId = env.GOOGLE_CLIENT_ID
-  if (!googleClientId) {
-    throw new Error(
-      'GOOGLE_CLIENT_ID environment variable is required (see server/.env.example).',
-    )
-  }
-
-  const allowedEmails = parseAllowedEmails(env.ALLOWED_EMAILS)
-  if (allowedEmails.length === 0) {
-    throw new Error(
-      'ALLOWED_EMAILS environment variable is required: a comma-separated list of ' +
-        'e-mail addresses allowed to sign in (see server/.env.example).',
-    )
-  }
-
-  const legacyOwnerEmail = resolveLegacyOwnerEmail(env.LEGACY_OWNER_EMAIL, allowedEmails)
+  const googleAuthEnabled = parseBoolean('GOOGLE_AUTH_ENABLED', env.GOOGLE_AUTH_ENABLED)
+  const google = googleAuthEnabled ? loadGoogleSettings(env) : DISABLED_GOOGLE_SETTINGS
 
   const nodeEnv = env.NODE_ENV ?? 'development'
 
@@ -134,9 +179,8 @@ export function loadConfig(env: Env = process.env): AppConfig {
       DEFAULT_MAX_UPLOAD_SIZE_BYTES,
       { min: 1 },
     ),
-    googleClientId,
-    allowedEmails,
-    legacyOwnerEmail,
+    googleAuthEnabled,
+    ...google,
     sessionTtlDays: parseInteger(
       'SESSION_TTL_DAYS',
       env.SESSION_TTL_DAYS,

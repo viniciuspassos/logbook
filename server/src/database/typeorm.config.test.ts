@@ -9,6 +9,7 @@ function fakeConfig(overrides: Partial<AppConfig> = {}): AppConfig {
     databaseUrl: 'postgres://user:pass@localhost:5432/logbook',
     uploadDir: '/tmp/uploads',
     maxUploadSizeBytes: 1024,
+    googleAuthEnabled: true,
     googleClientId: 'client-id.apps.googleusercontent.com',
     allowedEmails: ['me@example.com'],
     legacyOwnerEmail: 'me@example.com',

@@ -5,6 +5,7 @@ import type { AuthService } from './auth.service'
 import type { RequestWithSession } from './request-with-session'
 import type { Session } from './session.entity'
 import type { GoogleLoginDto } from './dto/google-login.dto'
+import { GoogleAuthEnabledGuard } from './google-auth-enabled.guard'
 import { IS_PUBLIC_KEY } from './public.decorator'
 import { IS_SESSION_OPTIONAL_KEY } from './optional-session.decorator'
 import { CSRF_COOKIE_NAME, SESSION_COOKIE_NAME } from './cookies'
@@ -28,6 +29,36 @@ function makeResMock() {
 }
 
 describe('AuthController', () => {
+  describe('config', () => {
+    function configServiceFor(app: object) {
+      return { getOrThrow: jest.fn().mockReturnValue(app) } as unknown as jest.Mocked<ConfigService>
+    }
+
+    it('exposes the client ID along with googleEnabled:true when Google login is on', () => {
+      const controller = new AuthController(
+        makeAuthServiceMock(),
+        configServiceFor({ googleAuthEnabled: true, googleClientId: 'client-id' }),
+      )
+
+      expect(controller.config()).toEqual({ googleEnabled: true, googleClientId: 'client-id' })
+    })
+
+    it('exposes only googleEnabled:false, never the client ID, when Google login is off', () => {
+      const controller = new AuthController(
+        makeAuthServiceMock(),
+        configServiceFor({ googleAuthEnabled: false, googleClientId: 'leaky-if-returned' }),
+      )
+
+      expect(controller.config()).toEqual({ googleEnabled: false })
+    })
+
+    it('is public (readable before sign-in) and the Google sign-in route is gated by the flag guard', () => {
+      expect(Reflect.getMetadata(IS_PUBLIC_KEY, AuthController.prototype.config)).toBe(true)
+      const guards = Reflect.getMetadata('__guards__', AuthController.prototype.loginWithGoogle)
+      expect(guards).toContain(GoogleAuthEnabledGuard)
+    })
+  })
+
   describe('loginWithGoogle', () => {
     it('signs in via the service and sets the session + csrf cookies', async () => {
       const authService = makeAuthServiceMock()

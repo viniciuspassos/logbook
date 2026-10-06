@@ -22,6 +22,7 @@ function ticketWith(payload: Partial<TokenPayload> | undefined): LoginTicket {
 function setup() {
   const verifyIdToken = jest.fn()
   const MockedClient = jest.mocked(OAuth2Client)
+  MockedClient.mockClear()
   MockedClient.mockImplementation(
     () => ({ verifyIdToken }) as unknown as InstanceType<typeof OAuth2Client>,
   )
@@ -30,9 +31,22 @@ function setup() {
 }
 
 describe('GoogleTokenVerifier', () => {
-  it('builds its OAuth2Client from the configured client ID', () => {
+  it('builds nothing at construction (so a disabled deployment never creates a Google client)', () => {
     const { MockedClient } = setup()
 
+    expect(MockedClient).not.toHaveBeenCalled()
+  })
+
+  it('builds its OAuth2Client from the configured client ID on first use, and only once', async () => {
+    const { verifier, verifyIdToken, MockedClient } = setup()
+    verifyIdToken.mockResolvedValue(
+      ticketWith({ sub: 's', email: 'me@example.com', email_verified: true }),
+    )
+
+    await verifier.verify('a')
+    await verifier.verify('b')
+
+    expect(MockedClient).toHaveBeenCalledTimes(1)
     expect(MockedClient).toHaveBeenCalledWith(CLIENT_ID)
   })
 

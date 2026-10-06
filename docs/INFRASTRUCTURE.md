@@ -46,8 +46,8 @@ docker compose down           # stop; named volumes (db data, uploads) persist
 docker compose down -v        # stop and also wipe db/upload volumes
 ```
 
-`GOOGLE_CLIENT_ID` and `ALLOWED_EMAILS` (and `LEGACY_OWNER_EMAIL` when several addresses are
-allowed) come from your shell or an uncommitted root `.env` (copy the root `.env.example`). Compose
+`GOOGLE_AUTH_ENABLED` (default `false`), and, when it is `true`, `GOOGLE_CLIENT_ID` and
+`ALLOWED_EMAILS` (and `LEGACY_OWNER_EMAIL` when several addresses are allowed) come from your shell or an uncommitted root `.env` (copy the root `.env.example`). Compose
 defaults them to empty, so `docker compose config/build/down/ps` work without a `.env`; the
 backend itself fails fast at boot with a clear config error (see `docker compose logs backend`)
 until the required ones are set — see "Backend authentication" below.
@@ -174,6 +174,17 @@ entries/attachments route requires a session. **Sign in with Google is the only 
 every row is scoped to the signed-in user. The session is an httpOnly cookie — full design
 rationale lives in the auth PR descriptions; this section is the operational summary.
 
+- **`GOOGLE_AUTH_ENABLED`** (feature flag, default `false`) — strict boolean: `true`/`false` or
+  `1`/`0`, case-insensitive; anything else throws a config error at boot. **Off** (the safe
+  default): `POST /auth/google` answers 404 (a route guard, so not even a 400 for a bad body), the
+  Google verifier never builds a client, `GOOGLE_CLIENT_ID`/`ALLOWED_EMAILS`/`LEGACY_OWNER_EMAIL`
+  are neither required nor validated, and the legacy-row claim never runs. No session can ever be
+  created, so every protected route (including `GET /auth/me`) answers 401: the API stays closed.
+  `POST /auth/logout` keeps working (200 + cleared cookies). **On**: the behaviour described below,
+  with the Google variables required. `GET /auth/config` (public, no secrets) tells clients which
+  mode this is: `{ "googleEnabled": false }`, or `{ "googleEnabled": true, "googleClientId": "..." }`
+  (the client ID is public and only returned when the flag is on).
+
 - **Sign-in flow**: the browser gets an ID token from Google Identity Services and sends it to
   `POST /auth/google` (`{ "idToken": "..." }`). `GoogleTokenVerifier`
   (`server/src/auth/google-token-verifier.service.ts`, a thin adapter over `google-auth-library`)
@@ -202,13 +213,13 @@ rationale lives in the auth PR descriptions; this section is the operational sum
   has changed since the user's last sign-in is only noticed at the next sign-in. Sessions renew
   (slide) only when less than half the TTL remains, and the session cookies are re-issued on that
   request and on `GET /auth/me`.
-- **`GOOGLE_CLIENT_ID`** (required, no default) — the OAuth 2.0 *Web application* client ID from
+- **`GOOGLE_CLIENT_ID`** (required when `GOOGLE_AUTH_ENABLED`, no default) — the OAuth 2.0 *Web application* client ID from
   Google Cloud Console. It is public (the frontend ships it too), not a secret, but specific to
   your Google project, so `docker-compose.yml` reads it from the shell / an uncommitted root `.env`
   (`${GOOGLE_CLIENT_ID:-}`) instead of committing a value; the backend refuses to boot without it.
-- **`ALLOWED_EMAILS`** (required, at least one address) — comma-separated, case-insensitive
+- **`ALLOWED_EMAILS`** (required when `GOOGLE_AUTH_ENABLED`, at least one address) — comma-separated, case-insensitive
   allowlist, parsed once in `loadConfig`. Same compose treatment as `GOOGLE_CLIENT_ID`.
-- **`LEGACY_OWNER_EMAIL`** (optional with exactly one allowed address, otherwise required) — who
+- **`LEGACY_OWNER_EMAIL`** (only read when `GOOGLE_AUTH_ENABLED`; optional with exactly one allowed address, otherwise required) — who
   inherits the entries/attachments that existed before accounts (`userId IS NULL`). Unset with a
   single allowlisted address means that address; with several allowlisted addresses and no owner
   the app throws at config load (guessing "whoever signs in first" could hand the data to the
@@ -248,7 +259,9 @@ rationale lives in the auth PR descriptions; this section is the operational sum
   non-httpOnly `logbook_csrf` cookie, echoed back in an `X-CSRF-Token` header on every mutating
   request and checked against the session's stored copy) is layered on top and doesn't depend on
   that decision. See `server/src/auth/csrf.guard.ts` for the implementation.
-- **`/health` and `POST /auth/google`** are the only public routes (`@Public()`), via a global guard
+- **`/health`, `GET /auth/config` and `POST /auth/google` (404 unless `GOOGLE_AUTH_ENABLED`)** are the
+  only public routes (`@Public()`), plus `POST /auth/logout`, which is `@OptionalSession()` (works with
+  or without a session; see above), via a global guard
   registered in `AuthModule` — every other route is protected by default rather than opted in
   per-controller, so a new controller added later doesn't ship unauthenticated by omission.
 

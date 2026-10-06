@@ -3,6 +3,7 @@ import { loadConfig } from './configuration'
 describe('loadConfig', () => {
   const baseEnv = {
     DATABASE_URL: 'postgres://user:pass@localhost:5432/logbook',
+    GOOGLE_AUTH_ENABLED: 'true',
     GOOGLE_CLIENT_ID: 'client-id.apps.googleusercontent.com',
     ALLOWED_EMAILS: 'me@example.com',
   }
@@ -35,6 +36,7 @@ describe('loadConfig', () => {
       databaseUrl: baseEnv.DATABASE_URL,
       uploadDir: expect.stringContaining('uploads'),
       maxUploadSizeBytes: 25 * 1024 * 1024,
+      googleAuthEnabled: true,
       googleClientId: baseEnv.GOOGLE_CLIENT_ID,
       allowedEmails: ['me@example.com'],
       legacyOwnerEmail: 'me@example.com',
@@ -59,6 +61,7 @@ describe('loadConfig', () => {
       databaseUrl: baseEnv.DATABASE_URL,
       uploadDir: '/data/uploads',
       maxUploadSizeBytes: 2048,
+      googleAuthEnabled: true,
       googleClientId: baseEnv.GOOGLE_CLIENT_ID,
       allowedEmails: ['me@example.com'],
       legacyOwnerEmail: 'me@example.com',
@@ -136,6 +139,63 @@ describe('loadConfig', () => {
       expect(() =>
         loadConfig({ ...baseEnv, LEGACY_OWNER_EMAIL: 'stranger@example.com' }),
       ).toThrow(/LEGACY_OWNER_EMAIL/)
+    })
+  })
+
+  describe('GOOGLE_AUTH_ENABLED feature flag', () => {
+    const dbOnly = { DATABASE_URL: baseEnv.DATABASE_URL }
+
+    it.each([
+      ['true', true],
+      ['TRUE', true],
+      ['True', true],
+      ['1', true],
+      ['false', false],
+      ['FALSE', false],
+      ['0', false],
+    ])('parses %p as %p', (raw, expected) => {
+      const env = expected
+        ? { ...baseEnv, GOOGLE_AUTH_ENABLED: raw }
+        : { ...dbOnly, GOOGLE_AUTH_ENABLED: raw }
+
+      expect(loadConfig(env).googleAuthEnabled).toBe(expected)
+    })
+
+    it.each(['yes', 'no', 'on', 'off', '2', 'enabled', ' '])(
+      'throws a clear config error for the non-boolean value %p',
+      (raw) => {
+        expect(() => loadConfig({ ...baseEnv, GOOGLE_AUTH_ENABLED: raw })).toThrow(
+          /GOOGLE_AUTH_ENABLED/,
+        )
+      },
+    )
+
+    it('defaults to false when unset or empty', () => {
+      expect(loadConfig(dbOnly).googleAuthEnabled).toBe(false)
+      expect(loadConfig({ ...dbOnly, GOOGLE_AUTH_ENABLED: '' }).googleAuthEnabled).toBe(false)
+    })
+
+    it('does not require or validate the Google vars when off', () => {
+      const config = loadConfig({
+        ...dbOnly,
+        GOOGLE_AUTH_ENABLED: 'false',
+        // Would throw if validated while on (no allowlisted owner match).
+        ALLOWED_EMAILS: 'a@example.com,b@example.com',
+        LEGACY_OWNER_EMAIL: 'stranger@example.com',
+      })
+
+      expect(config).toMatchObject({
+        googleAuthEnabled: false,
+        googleClientId: '',
+        allowedEmails: [],
+        legacyOwnerEmail: '',
+      })
+    })
+
+    it('requires the Google vars when on', () => {
+      expect(() =>
+        loadConfig({ ...dbOnly, GOOGLE_AUTH_ENABLED: 'true' }),
+      ).toThrow(/GOOGLE_CLIENT_ID/)
     })
   })
 

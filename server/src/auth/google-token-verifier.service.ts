@@ -26,6 +26,9 @@ export interface GoogleIdentity {
  * on top of that this requires `email_verified`, because an unverified
  * address must never be matched against the allowlist.
  *
+ * The OAuth2Client is created on first use, so a deployment with Google login
+ * disabled (the provider still exists, but the route is gated) never builds one.
+ *
  * A bad token collapses into one generic 401 so a caller can't learn from
  * the response why it was refused. Failing to reach Google at all (network,
  * cert fetch, upstream 5xx) is not the caller's fault: it is logged and
@@ -35,12 +38,11 @@ export interface GoogleIdentity {
 @Injectable()
 export class GoogleTokenVerifier {
   private readonly logger = new Logger(GoogleTokenVerifier.name)
-  private readonly client: OAuth2Client
   private readonly clientId: string
+  private client?: OAuth2Client
 
   constructor(configService: ConfigService) {
     this.clientId = configService.getOrThrow<AppConfig>('app').googleClientId
-    this.client = new OAuth2Client(this.clientId)
   }
 
   async verify(idToken: string): Promise<GoogleIdentity> {
@@ -58,6 +60,7 @@ export class GoogleTokenVerifier {
 
   private async readPayload(idToken: string): Promise<TokenPayload | undefined> {
     try {
+      this.client ??= new OAuth2Client(this.clientId)
       const ticket = await this.client.verifyIdToken({ idToken, audience: this.clientId })
       return ticket.getPayload()
     } catch (error) {

@@ -17,6 +17,7 @@ import { GoogleTokenVerifier } from './google-token-verifier.service'
 import { CSRF_COOKIE_NAME, CSRF_HEADER_NAME, SESSION_COOKIE_NAME } from './cookies'
 import {
   TEST_AUTH_ENV,
+  TEST_GOOGLE_CLIENT_ID,
   TEST_STRANGER_EMAIL,
   TEST_USER_A_EMAIL,
   TEST_USER_B_EMAIL,
@@ -107,6 +108,12 @@ describe('Auth (e2e)', () => {
     const res = await request(app.getHttpServer()).get('/health').expect(200)
 
     expect(res.body.status).toBe('ok')
+  })
+
+  it('GET /auth/config is public and reports Google login on, with the client ID', async () => {
+    const res = await request(app.getHttpServer()).get('/auth/config').expect(200)
+
+    expect(res.body).toEqual({ googleEnabled: true, googleClientId: TEST_GOOGLE_CLIENT_ID })
   })
 
   it('no longer serves the password login route', async () => {
