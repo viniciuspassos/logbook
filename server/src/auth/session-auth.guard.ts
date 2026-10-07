@@ -56,6 +56,7 @@ export class SessionAuthGuard implements CanActivate {
     }
 
     request.session = session
+    request.userId = session.userId
 
     const response = context.switchToHttp().getResponse<Response>()
     const { cookieSecure } = this.configService.getOrThrow<AppConfig>('app')

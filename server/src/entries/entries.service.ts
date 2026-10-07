@@ -15,20 +15,20 @@ export class EntriesService {
     @Inject(FILE_STORAGE) private readonly fileStorage: FileStorage,
   ) {}
 
-  findAll(): Promise<Entry[]> {
-    return this.entriesRepository.findAll()
+  findAll(userId: number): Promise<Entry[]> {
+    return this.entriesRepository.findAll(userId)
   }
 
-  async findOne(id: number): Promise<Entry> {
-    const entry = await this.entriesRepository.findById(id)
+  async findOne(id: number, userId: number): Promise<Entry> {
+    const entry = await this.entriesRepository.findById(id, userId)
     if (!entry) {
       throw new NotFoundException(`Entry ${id} not found`)
     }
     return entry
   }
 
-  create(dto: CreateEntryDto): Promise<Entry> {
-    return this.entriesRepository.create(dto)
+  create(userId: number, dto: CreateEntryDto): Promise<Entry> {
+    return this.entriesRepository.create({ ...dto, userId })
   }
 
   /**
@@ -36,8 +36,8 @@ export class EntriesService {
    * entry's current version or the write is rejected outright — see
    * EntriesRepository.update for the read-compare-write mechanics.
    */
-  async update(id: number, dto: UpdateEntryDto): Promise<Entry> {
-    const result = await this.entriesRepository.update(id, dto)
+  async update(id: number, userId: number, dto: UpdateEntryDto): Promise<Entry> {
+    const result = await this.entriesRepository.update(id, dto, userId)
     switch (result.outcome) {
       case 'not-found':
         throw new NotFoundException(`Entry ${id} not found`)
@@ -57,8 +57,8 @@ export class EntriesService {
    * stranded file is a harmless disk artifact #22's storage work can sweep
    * later. See issue #20.
    */
-  async remove(id: number): Promise<void> {
-    const deletedAttachments = await this.entriesRepository.removeCascade(id)
+  async remove(id: number, userId: number): Promise<void> {
+    const deletedAttachments = await this.entriesRepository.removeCascade(id, userId)
     if (deletedAttachments === null) {
       throw new NotFoundException(`Entry ${id} not found`)
     }

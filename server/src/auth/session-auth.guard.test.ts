@@ -39,6 +39,7 @@ function makeContext(req: Partial<Request>, res: Partial<Response> = {}): Execut
 function fakeSession(overrides: Partial<Session> = {}): Session {
   return {
     id: 1,
+    userId: 7,
     tokenHash: 'hash',
     csrfToken: 'csrf-token',
     expiresAt: new Date('2026-08-01T00:00:00.000Z'),
@@ -86,7 +87,7 @@ describe('SessionAuthGuard', () => {
     await expect(guard.canActivate(context)).rejects.toBeInstanceOf(UnauthorizedException)
   })
 
-  it('attaches the resolved session to the request and allows the request through', async () => {
+  it('attaches the resolved session and its user id to the request and allows the request through', async () => {
     const sessionsService = makeSessionsServiceMock()
     const session = fakeSession()
     sessionsService.validate.mockResolvedValue(session)
@@ -104,6 +105,7 @@ describe('SessionAuthGuard', () => {
 
     expect(result).toBe(true)
     expect((req as unknown as { session: Session }).session).toBe(session)
+    expect((req as unknown as { userId: number }).userId).toBe(7)
     expect(sessionsService.validate).toHaveBeenCalledWith('valid-token')
   })
 

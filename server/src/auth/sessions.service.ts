@@ -7,6 +7,8 @@ const DAY_MS = 24 * 60 * 60 * 1000
 
 export interface SessionsServiceOptions {
   sessionTtlDays: number
+  /** Lowercased e-mail addresses allowed to hold a session (see AppConfig.allowedEmails). */
+  allowedEmails: string[]
 }
 
 export interface CreatedSession {
@@ -21,6 +23,9 @@ export interface CreatedSession {
  * write queue behind an expired cookie — see the auth report for the full
  * rationale), and revoke (logout).
  *
+ * The user's e-mail must still be on the allowlist (checked on every
+ * validate); otherwise the session is deleted and treated as absent.
+ *
  * Renewal is deliberately conditional, not unconditional-on-every-request:
  * the expiry is only pushed back out once less than half the configured TTL
  * remains, trading a small amount of "session outlives last real use" slack
@@ -33,12 +38,13 @@ export class SessionsService {
     private readonly options: SessionsServiceOptions,
   ) {}
 
-  async create(): Promise<CreatedSession> {
+  async create(userId: number): Promise<CreatedSession> {
     const sessionToken = generateToken()
     const csrfToken = generateToken()
     const expiresAt = this.newExpiry()
 
     await this.sessionsRepository.create({
+      userId,
       tokenHash: hashToken(sessionToken),
       csrfToken,
       expiresAt,
@@ -58,6 +64,14 @@ export class SessionsService {
       return null
     }
 
+    // The allowlist is enforced on every request, not just at sign-in: an
+    // address removed from ALLOWED_EMAILS loses its live sessions on their
+    // next use (the user row came back with the session, so this is free).
+    if (!this.isAllowed(session)) {
+      await this.sessionsRepository.removeById(session.id)
+      return null
+    }
+
     const ttlMs = this.options.sessionTtlDays * DAY_MS
     const remainingMs = session.expiresAt.getTime() - Date.now()
     if (remainingMs < ttlMs / 2) {
@@ -71,6 +85,11 @@ export class SessionsService {
 
   async revoke(sessionToken: string): Promise<void> {
     await this.sessionsRepository.removeByTokenHash(hashToken(sessionToken))
+  }
+
+  private isAllowed(session: Session): boolean {
+    const email = session.user?.email
+    return email !== undefined && this.options.allowedEmails.includes(email.toLowerCase())
   }
 
   private newExpiry(): Date {

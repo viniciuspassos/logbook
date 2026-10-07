@@ -9,6 +9,7 @@ import {
   Res,
 } from '@nestjs/common'
 import type { Response } from 'express'
+import { CurrentUserId } from '../auth/current-user.decorator'
 import { AttachmentsService } from './attachments.service'
 import { buildContentDisposition } from '../common/http/content-disposition'
 import type { Attachment } from './attachment.entity'
@@ -19,14 +20,21 @@ export class AttachmentsController {
   constructor(private readonly attachmentsService: AttachmentsService) {}
 
   @Get(':id')
-  metadata(@Param('id', ParseIntPipe) id: number): Promise<Attachment> {
-    return this.attachmentsService.getMetadata(id)
+  metadata(
+    @Param('id', ParseIntPipe) id: number,
+    @CurrentUserId() userId: number,
+  ): Promise<Attachment> {
+    return this.attachmentsService.getMetadata(id, userId)
   }
 
   @Get(':id/file')
-  async file(@Param('id', ParseIntPipe) id: number, @Res() res: Response): Promise<void> {
+  async file(
+    @Param('id', ParseIntPipe) id: number,
+    @CurrentUserId() userId: number,
+    @Res() res: Response,
+  ): Promise<void> {
     const { attachment, buffer, contentType, disposition } =
-      await this.attachmentsService.getFile(id)
+      await this.attachmentsService.getFile(id, userId)
 
     // Belt-and-braces: even though contentType/disposition are already
     // trustworthy (derived from the stored bytes' magic number, never a
@@ -43,7 +51,10 @@ export class AttachmentsController {
 
   @Delete(':id')
   @HttpCode(HttpStatus.NO_CONTENT)
-  remove(@Param('id', ParseIntPipe) id: number): Promise<void> {
-    return this.attachmentsService.remove(id)
+  remove(
+    @Param('id', ParseIntPipe) id: number,
+    @CurrentUserId() userId: number,
+  ): Promise<void> {
+    return this.attachmentsService.remove(id, userId)
   }
 }

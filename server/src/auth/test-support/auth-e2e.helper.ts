@@ -1,20 +1,55 @@
-import type { INestApplication } from '@nestjs/common'
+import { UnauthorizedException, type INestApplication } from '@nestjs/common'
 import request from 'supertest'
-import { PasswordHasherService } from '../password-hasher.service'
 import { CSRF_HEADER_NAME } from '../cookies'
+import type { GoogleIdentity } from '../google-token-verifier.service'
+import { LOGIN_CLIENT_HEADER_NAME, LOGIN_CLIENT_HEADER_VALUE } from '../google-login-request.guard'
 
 /**
- * Test-only helper shared by entries/attachments e2e suites: not
- * independently unit-tested, matching this codebase's convention for
- * fixture helpers (fakeEntry/makeRepoMock/etc. throughout src/**\/*.test.ts
- * are likewise untested — they're test tooling, not production code).
+ * Test-only helper shared by the e2e suites: not independently unit-tested,
+ * matching this codebase's convention for fixture helpers (fakeEntry/
+ * makeRepoMock/etc. throughout src/**\/*.test.ts are likewise untested —
+ * they're test tooling, not production code).
  */
 
-export const TEST_LOGIN_PASSWORD = 'correct horse battery staple'
+export const TEST_GOOGLE_CLIENT_ID = 'test-client.apps.googleusercontent.com'
+export const TEST_USER_A_EMAIL = 'alice@example.com'
+export const TEST_USER_B_EMAIL = 'bob@example.com'
+/** In no allowlist: a verified Google account that must get 403. */
+export const TEST_STRANGER_EMAIL = 'stranger@example.com'
 
-/** Computes an AUTH_PASSWORD_HASH for TEST_LOGIN_PASSWORD, for loadConfig() in e2e test setup. */
-export async function testAuthPasswordHash(): Promise<string> {
-  return new PasswordHasherService().hash(TEST_LOGIN_PASSWORD)
+/** The auth-related env vars for loadConfig() in e2e test setup. */
+export const TEST_AUTH_ENV = {
+  GOOGLE_AUTH_ENABLED: 'true',
+  GOOGLE_CLIENT_ID: TEST_GOOGLE_CLIENT_ID,
+  ALLOWED_EMAILS: `${TEST_USER_A_EMAIL},${TEST_USER_B_EMAIL}`,
+}
+
+const TEST_TOKEN_PREFIX = 'test-token:'
+
+/** The fake "ID token" the e2e suites send for a given Google account. */
+export function idTokenFor(email: string): string {
+  return `${TEST_TOKEN_PREFIX}${email}`
+}
+
+/**
+ * Stand-in for GoogleTokenVerifier (override the provider with this in e2e
+ * modules): accepts `idTokenFor(email)` tokens as a verified Google identity
+ * and rejects everything else like the real verifier would, so no test ever
+ * talks to Google.
+ */
+export const fakeGoogleTokenVerifier = {
+  verify(idToken: string): Promise<GoogleIdentity> {
+    if (!idToken.startsWith(TEST_TOKEN_PREFIX)) {
+      return Promise.reject(new UnauthorizedException('Invalid Google ID token'))
+    }
+    const email = idToken.slice(TEST_TOKEN_PREFIX.length)
+    return Promise.resolve({
+      sub: `sub-${email}`,
+      email,
+      name: email.split('@')[0],
+      picture: null,
+    })
+  },
 }
 
 export interface AuthenticatedRequestContext {
@@ -24,11 +59,15 @@ export interface AuthenticatedRequestContext {
   csrfToken: string
 }
 
-/** Logs in against a booted test app and extracts the session + CSRF cookies supertest needs to replay. */
-export async function loginForTests(app: INestApplication): Promise<AuthenticatedRequestContext> {
+/** Signs in as the given account against a booted test app and extracts the session + CSRF cookies supertest needs to replay. */
+export async function loginForTests(
+  app: INestApplication,
+  email: string = TEST_USER_A_EMAIL,
+): Promise<AuthenticatedRequestContext> {
   const res = await request(app.getHttpServer())
-    .post('/auth/login')
-    .send({ password: TEST_LOGIN_PASSWORD })
+    .post('/auth/google')
+    .set(LOGIN_CLIENT_HEADER_NAME, LOGIN_CLIENT_HEADER_VALUE)
+    .send({ idToken: idTokenFor(email) })
     .expect(200)
 
   const setCookieHeader = res.headers['set-cookie']

@@ -1,4 +1,13 @@
-import { Column, CreateDateColumn, Entity, PrimaryGeneratedColumn } from 'typeorm'
+import {
+  Column,
+  CreateDateColumn,
+  Entity,
+  Index,
+  JoinColumn,
+  ManyToOne,
+  PrimaryGeneratedColumn,
+} from 'typeorm'
+import { User } from '../users/user.entity'
 
 /**
  * Metadata row for an uploaded file, associated with an Entry by id (a
@@ -54,13 +63,20 @@ export class Attachment {
   sizeBytes!: number
 
   /**
-   * Reserved for a future multi-user migration (see server/src/auth for the
-   * current single-user auth model). Always null today — nothing writes it —
-   * but having the column now means that migration needs no backfill against
-   * live data.
+   * Informational only: set at upload time, but NOT what access control
+   * reads. The unit of ownership is the parent entry: every read/delete
+   * resolves ownership through `entries.userId` (see AttachmentsRepository),
+   * so a row whose own `userId` is NULL or stale is still reachable by exactly
+   * its entry's owner. The column is kept (not dropped) so ownership data
+   * stays queryable; nullable for rows that predate accounts.
    */
+  @Index()
   @Column({ type: 'int', nullable: true })
   userId?: number | null
+
+  @ManyToOne(() => User, { nullable: true })
+  @JoinColumn({ name: 'userId' })
+  user?: User | null
 
   @CreateDateColumn()
   createdAt!: Date

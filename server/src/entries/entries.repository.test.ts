@@ -1,8 +1,11 @@
 import { DataSource, IsNull, type Repository } from 'typeorm'
 import { EntriesRepository } from './entries.repository'
 import { Entry } from './entry.entity'
-import type { Attachment } from '../attachments/attachment.entity'
+import { User } from '../users/user.entity'
+import { Attachment } from '../attachments/attachment.entity'
 import type { UpdateEntryDto } from './dto/update-entry.dto'
+
+const USER_ID = 7
 
 function fakeEntry(overrides: Partial<Entry> = {}): Entry {
   return {
@@ -84,10 +87,10 @@ describe('EntriesRepository', () => {
     ormRepo.find.mockResolvedValue(entries)
     const repo = new EntriesRepository(ormRepo)
 
-    const result = await repo.findAll()
+    const result = await repo.findAll(USER_ID)
 
     expect(ormRepo.find).toHaveBeenCalledWith({
-      where: { deletedAt: IsNull() },
+      where: { userId: USER_ID, deletedAt: IsNull() },
       order: { id: 'DESC' },
     })
     expect(result).toBe(entries)
@@ -99,9 +102,13 @@ describe('EntriesRepository', () => {
     ormRepo.findOneBy.mockResolvedValue(entry)
     const repo = new EntriesRepository(ormRepo)
 
-    const result = await repo.findById(1)
+    const result = await repo.findById(1, USER_ID)
 
-    expect(ormRepo.findOneBy).toHaveBeenCalledWith({ id: 1, deletedAt: IsNull() })
+    expect(ormRepo.findOneBy).toHaveBeenCalledWith({
+      id: 1,
+      userId: USER_ID,
+      deletedAt: IsNull(),
+    })
     expect(result).toBe(entry)
   })
 
@@ -110,7 +117,7 @@ describe('EntriesRepository', () => {
     ormRepo.findOneBy.mockResolvedValue(null)
     const repo = new EntriesRepository(ormRepo)
 
-    const result = await repo.findById(999)
+    const result = await repo.findById(999, USER_ID)
 
     expect(result).toBeNull()
   })
@@ -173,10 +180,11 @@ describe('EntriesRepository', () => {
       fakeManager.findOneBy.mockResolvedValue(null)
       const repo = new EntriesRepository(ormRepo)
 
-      const result = await repo.update(999, fakeDto())
+      const result = await repo.update(999, fakeDto(), USER_ID)
 
       expect(fakeManager.findOneBy).toHaveBeenCalledWith(expect.anything(), {
         id: 999,
+        userId: USER_ID,
         deletedAt: IsNull(),
       })
       expect(result).toEqual({ outcome: 'not-found' })
@@ -189,7 +197,7 @@ describe('EntriesRepository', () => {
       fakeManager.findOneBy.mockResolvedValue(current)
       const repo = new EntriesRepository(ormRepo)
 
-      const result = await repo.update(1, fakeDto({ version: 3, title: 'Stale local edit' }))
+      const result = await repo.update(1, fakeDto({ version: 3, title: 'Stale local edit' }), USER_ID)
 
       expect(result).toEqual({ outcome: 'conflict', current })
       expect(fakeManager.update).not.toHaveBeenCalled()
@@ -204,14 +212,17 @@ describe('EntriesRepository', () => {
       fakeManager.findOneByOrFail.mockResolvedValue(reread)
       const repo = new EntriesRepository(ormRepo)
 
-      const result = await repo.update(1, fakeDto({ version: 3, title: 'New title' }))
+      const result = await repo.update(1, fakeDto({ version: 3, title: 'New title' }), USER_ID)
 
       expect(fakeManager.update).toHaveBeenCalledWith(
         expect.anything(),
-        { id: 1, version: 3, deletedAt: IsNull() },
+        { id: 1, userId: USER_ID, version: 3, deletedAt: IsNull() },
         expect.objectContaining({ title: 'New title', version: 4 }),
       )
-      expect(fakeManager.findOneByOrFail).toHaveBeenCalledWith(expect.anything(), { id: 1 })
+      expect(fakeManager.findOneByOrFail).toHaveBeenCalledWith(expect.anything(), {
+        id: 1,
+        userId: USER_ID,
+      })
       expect(result).toEqual({ outcome: 'updated', entry: reread })
     })
 
@@ -226,6 +237,7 @@ describe('EntriesRepository', () => {
       await repo.update(
         1,
         fakeDto({ version: 1, title: 'x', supersededEdit: { title: 'loser' } }),
+        USER_ID,
       )
 
       const columnChanges = fakeManager.update.mock.calls[0][2] as Record<string, unknown>
@@ -248,6 +260,7 @@ describe('EntriesRepository', () => {
       const result = await repo.update(
         1,
         fakeDto({ version: 3, title: 'Winning title', supersededEdit: { title: 'Losing title' } }),
+        USER_ID,
       )
 
       expect(result.outcome).toBe('updated')
@@ -278,7 +291,11 @@ describe('EntriesRepository', () => {
       fakeManager.findOneByOrFail.mockResolvedValue(fakeEntry({ id: 1, version: 3 }))
       const repo = new EntriesRepository(ormRepo)
 
-      await repo.update(1, fakeDto({ version: 2, supersededEdit: { title: 'newer loser' } }))
+      await repo.update(
+        1,
+        fakeDto({ version: 2, supersededEdit: { title: 'newer loser' } }),
+        USER_ID,
+      )
 
       const columnChanges = fakeManager.update.mock.calls[0][2] as {
         supersededEdits: unknown[]
@@ -296,7 +313,7 @@ describe('EntriesRepository', () => {
       fakeManager.findOneByOrFail.mockResolvedValue(fakeEntry({ id: 1, version: 2 }))
       const repo = new EntriesRepository(ormRepo)
 
-      await repo.update(1, fakeDto({ version: 1, title: 'x' }))
+      await repo.update(1, fakeDto({ version: 1, title: 'x' }), USER_ID)
 
       const columnChanges = fakeManager.update.mock.calls[0][2] as Record<string, unknown>
       expect(columnChanges).not.toHaveProperty('supersededEdits')
@@ -320,7 +337,7 @@ describe('EntriesRepository', () => {
       fakeManager.update.mockResolvedValue(fakeUpdateResult(0))
       const repo = new EntriesRepository(ormRepo)
 
-      const result = await repo.update(1, fakeDto({ version: 3, title: 'Stale write' }))
+      const result = await repo.update(1, fakeDto({ version: 3, title: 'Stale write' }), USER_ID)
 
       expect(result).toEqual({ outcome: 'conflict', current: racedCurrent })
       expect(fakeManager.findOneByOrFail).not.toHaveBeenCalled()
@@ -336,7 +353,7 @@ describe('EntriesRepository', () => {
       fakeManager.update.mockResolvedValue(fakeUpdateResult(0))
       const repo = new EntriesRepository(ormRepo)
 
-      const result = await repo.update(1, fakeDto({ version: 3, title: 'Stale write' }))
+      const result = await repo.update(1, fakeDto({ version: 3, title: 'Stale write' }), USER_ID)
 
       expect(result).toEqual({ outcome: 'not-found' })
     })
@@ -362,7 +379,7 @@ describe('EntriesRepository', () => {
         type: 'sqljs',
         autoSave: false,
         synchronize: true,
-        entities: [Entry],
+        entities: [Entry, User],
       })
       await dataSource.initialize()
     })
@@ -416,10 +433,11 @@ describe('EntriesRepository', () => {
       fakeManager.findOneBy.mockResolvedValue(null)
       const repo = new EntriesRepository(ormRepo)
 
-      const result = await repo.removeCascade(999)
+      const result = await repo.removeCascade(999, USER_ID)
 
       expect(fakeManager.findOneBy).toHaveBeenCalledWith(expect.anything(), {
         id: 999,
+        userId: USER_ID,
         deletedAt: IsNull(),
       })
       expect(result).toBeNull()
@@ -438,7 +456,7 @@ describe('EntriesRepository', () => {
       )
       const repo = new EntriesRepository(ormRepo)
 
-      const result = await repo.removeCascade(1)
+      const result = await repo.removeCascade(1, USER_ID)
 
       expect(ormRepo.manager.transaction).toHaveBeenCalledTimes(1)
       expect(fakeManager.delete).toHaveBeenCalledWith(expect.anything(), { entryId: 1 })
@@ -460,13 +478,74 @@ describe('EntriesRepository', () => {
       )
       const repo = new EntriesRepository(ormRepo)
 
-      const result = await repo.removeCascade(1)
+      const result = await repo.removeCascade(1, USER_ID)
 
       expect(result).toEqual([])
       expect(fakeManager.save).toHaveBeenCalledWith(
         expect.anything(),
         expect.objectContaining({ deletedAt: expect.any(Date) }),
       )
+    })
+  })
+
+  describe('removeCascade (real sqljs driver)', () => {
+    let dataSource: DataSource
+
+    beforeAll(async () => {
+      dataSource = new DataSource({
+        type: 'sqljs',
+        autoSave: false,
+        synchronize: true,
+        entities: [Entry, Attachment, User],
+      })
+      await dataSource.initialize()
+    })
+
+    afterAll(async () => {
+      await dataSource.destroy()
+    })
+
+    it("removes only the owned entry's attachments and tombstones only that entry; another user's entry and attachments are untouched", async () => {
+      const users = dataSource.getRepository(User)
+      const alice = await users.save(
+        users.create({ googleSub: 'a', email: 'a@example.com', name: null, picture: null }),
+      )
+      const bob = await users.save(
+        users.create({ googleSub: 'b', email: 'b@example.com', name: null, picture: null }),
+      )
+      const entries = dataSource.getRepository(Entry)
+      const draft = fakeEntry({ id: undefined as unknown as number })
+      const aliceEntry = await entries.save(entries.create({ ...draft, userId: alice.id }))
+      const bobEntry = await entries.save(entries.create({ ...draft, userId: bob.id }))
+      const attachments = dataSource.getRepository(Attachment)
+      const row = (entryId: number) =>
+        attachments.create({
+          entryId,
+          originalFilename: 'p.jpg',
+          storageKey: `k-${entryId}`,
+          mimeType: 'image/jpeg',
+          sizeBytes: 1,
+          // attachments.userId is informational: ownership comes from the entry.
+          userId: null,
+        })
+      const aliceAttachment = await attachments.save(row(aliceEntry.id))
+      const bobAttachment = await attachments.save(row(bobEntry.id))
+      const repo = new EntriesRepository(entries)
+
+      await expect(repo.removeCascade(bobEntry.id, alice.id)).resolves.toBeNull()
+      const removed = await repo.removeCascade(aliceEntry.id, alice.id)
+
+      expect(removed?.map((a) => a.id)).toEqual([aliceAttachment.id])
+      await expect(attachments.findOneBy({ id: aliceAttachment.id })).resolves.toBeNull()
+      await expect(attachments.findOneBy({ id: bobAttachment.id })).resolves.not.toBeNull()
+      await expect(entries.findOneBy({ id: bobEntry.id })).resolves.toMatchObject({
+        deletedAt: null,
+      })
+      const tombstoned = await entries.findOne({
+        where: { id: aliceEntry.id },
+        withDeleted: true,
+      })
+      expect(tombstoned?.deletedAt).toBeInstanceOf(Date)
     })
   })
 })

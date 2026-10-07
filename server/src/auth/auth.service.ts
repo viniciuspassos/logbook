@@ -1,32 +1,51 @@
-import { Injectable, UnauthorizedException } from '@nestjs/common'
-import { PasswordHasherService } from './password-hasher.service'
+import { ForbiddenException, Injectable, UnauthorizedException } from '@nestjs/common'
+import { UsersService } from '../users/users.service'
+import { GoogleTokenVerifier } from './google-token-verifier.service'
 import { SessionsService, type CreatedSession } from './sessions.service'
 
 export interface AuthServiceOptions {
-  authPasswordHash: string
+  /** Lowercased e-mail addresses allowed to sign in (see AppConfig.allowedEmails). */
+  allowedEmails: string[]
+}
+
+/** What `GET /auth/me` returns: the signed-in user's public profile. */
+export interface AuthProfile {
+  id: number
+  email: string
+  name: string | null
+  picture: string | null
 }
 
 /**
- * Business logic for login/logout. Single-user, so there is no "wrong
- * username vs wrong password" distinction to leak — every failed login
- * always runs the same scrypt verify against the one configured hash and
- * throws the same generic message, so a caller can't learn anything from the
- * response content or its timing about *why* a login failed.
+ * Business logic for sign-in/sign-out. Google is the only login method: the
+ * token is verified (401), the verified e-mail is checked against the
+ * allowlist (403), the user is upserted by Google `sub`, and a session is
+ * created for them.
  */
 @Injectable()
 export class AuthService {
   constructor(
-    private readonly passwordHasher: PasswordHasherService,
+    private readonly tokenVerifier: GoogleTokenVerifier,
+    private readonly usersService: UsersService,
     private readonly sessionsService: SessionsService,
     private readonly options: AuthServiceOptions,
   ) {}
 
-  async login(password: string): Promise<CreatedSession> {
-    const isValid = await this.passwordHasher.verify(password, this.options.authPasswordHash)
-    if (!isValid) {
-      throw new UnauthorizedException('Invalid credentials')
+  async loginWithGoogle(idToken: string): Promise<CreatedSession> {
+    const identity = await this.tokenVerifier.verify(idToken)
+    if (!this.options.allowedEmails.includes(identity.email.toLowerCase())) {
+      throw new ForbiddenException('This Google account is not allowed to sign in')
     }
-    return this.sessionsService.create()
+    const user = await this.usersService.findOrCreateFromGoogle(identity)
+    return this.sessionsService.create(user.id)
+  }
+
+  async getProfile(userId: number): Promise<AuthProfile> {
+    const user = await this.usersService.findById(userId)
+    if (!user) {
+      throw new UnauthorizedException('Authentication required')
+    }
+    return { id: user.id, email: user.email, name: user.name, picture: user.picture }
   }
 
   async logout(sessionToken: string): Promise<void> {

@@ -6,9 +6,12 @@ import { TypeOrmModule } from '@nestjs/typeorm'
 import request from 'supertest'
 import { AuthModule } from '../auth/auth.module'
 import { Session } from '../auth/session.entity'
+import { GoogleTokenVerifier } from '../auth/google-token-verifier.service'
+import { User } from '../users/user.entity'
 import {
+  TEST_AUTH_ENV,
+  fakeGoogleTokenVerifier,
   loginForTests,
-  testAuthPasswordHash,
   withAuth,
   type AuthenticatedRequestContext,
 } from '../auth/test-support/auth-e2e.helper'
@@ -75,10 +78,10 @@ describe('Entries (e2e)', () => {
         ConfigModule.forRoot({
           isGlobal: true,
           load: [
-            async () => ({
+            () => ({
               app: loadConfig({
                 DATABASE_URL: 'postgres://unused/in-test',
-                AUTH_PASSWORD_HASH: await testAuthPasswordHash(),
+                ...TEST_AUTH_ENV,
               }),
             }),
           ],
@@ -87,13 +90,16 @@ describe('Entries (e2e)', () => {
           type: 'sqljs',
           autoSave: false,
           synchronize: true,
-          entities: [Entry, Attachment, Session],
+          entities: [Entry, Attachment, Session, User],
         }),
         StorageModule,
         AuthModule,
         EntriesModule,
       ],
-    }).compile()
+    })
+      .overrideProvider(GoogleTokenVerifier)
+      .useValue(fakeGoogleTokenVerifier)
+      .compile()
 
     app = moduleRef.createNestApplication()
     app.use(cookieParser())

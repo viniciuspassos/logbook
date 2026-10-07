@@ -8,8 +8,9 @@ import { Session } from './session.entity'
 export class SessionsRepository {
   constructor(@InjectRepository(Session) private readonly orm: Repository<Session>) {}
 
+  /** Loads the session with its user in the same query (a join), so the allowlist check on every request costs no extra round trip. */
   findByTokenHash(tokenHash: string): Promise<Session | null> {
-    return this.orm.findOneBy({ tokenHash })
+    return this.orm.findOne({ where: { tokenHash }, relations: { user: true } })
   }
 
   async create(data: Omit<Session, 'id' | 'createdAt'>): Promise<Session> {

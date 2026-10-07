@@ -47,8 +47,8 @@ export class AttachmentsService {
     @Inject(FILE_STORAGE) private readonly fileStorage: FileStorage,
   ) {}
 
-  async uploadForEntry(entryId: number, file: UploadedFile): Promise<Attachment> {
-    await this.assertEntryExists(entryId)
+  async uploadForEntry(entryId: number, userId: number, file: UploadedFile): Promise<Attachment> {
+    await this.assertEntryExists(entryId, userId)
 
     // The client-declared Content-Type (Multer's file.mimetype) is never
     // read here — it's attacker-controlled and trivially spoofed. The only
@@ -67,26 +67,32 @@ export class AttachmentsService {
     }
     const stored = await this.fileStorage.save(saveInput)
 
-    return this.attachmentsRepository.create({
-      entryId,
-      originalFilename: file.originalFilename,
-      storageKey: stored.key,
-      mimeType: detectedMimeType,
-      sizeBytes: stored.sizeBytes,
-    })
+    try {
+      return await this.attachmentsRepository.create({
+        entryId,
+        userId,
+        originalFilename: file.originalFilename,
+        storageKey: stored.key,
+        mimeType: detectedMimeType,
+        sizeBytes: stored.sizeBytes,
+      })
+    } catch (error) {
+      await this.discardOrphanedBlob(stored.key)
+      throw error
+    }
   }
 
-  async listForEntry(entryId: number): Promise<Attachment[]> {
-    await this.assertEntryExists(entryId)
-    return this.attachmentsRepository.findByEntryId(entryId)
+  async listForEntry(entryId: number, userId: number): Promise<Attachment[]> {
+    await this.assertEntryExists(entryId, userId)
+    return this.attachmentsRepository.findByEntryId(entryId, userId)
   }
 
-  async getMetadata(id: number): Promise<Attachment> {
-    return this.requireAttachment(id)
+  async getMetadata(id: number, userId: number): Promise<Attachment> {
+    return this.requireAttachment(id, userId)
   }
 
-  async getFile(id: number): Promise<AttachmentFile> {
-    const attachment = await this.requireAttachment(id)
+  async getFile(id: number, userId: number): Promise<AttachmentFile> {
+    const attachment = await this.requireAttachment(id, userId)
     try {
       const buffer = await this.fileStorage.read(attachment.storageKey)
       // Re-sniff the actual stored bytes rather than trusting the DB's
@@ -122,9 +128,15 @@ export class AttachmentsService {
    * retry fails identically. A stranded file is a harmless disk artifact
    * that #22's storage work can sweep; an undeletable row is not.
    */
-  async remove(id: number): Promise<void> {
-    const attachment = await this.requireAttachment(id)
-    await this.attachmentsRepository.remove(id)
+  async remove(id: number, userId: number): Promise<void> {
+    const attachment = await this.requireAttachment(id, userId)
+    // The scoped delete's affected count is the truth: if the row was already
+    // gone or its entry was tombstoned since the lookup, nothing was deleted,
+    // and the blob must not be touched either.
+    const removed = await this.attachmentsRepository.remove(id, userId)
+    if (!removed) {
+      throw new NotFoundException(`Attachment ${id} not found`)
+    }
 
     try {
       await this.fileStorage.delete(attachment.storageKey)
@@ -137,16 +149,28 @@ export class AttachmentsService {
     }
   }
 
-  private async requireAttachment(id: number): Promise<Attachment> {
-    const attachment = await this.attachmentsRepository.findById(id)
+  /** Best-effort: the blob was saved before its row, so a failed insert must not strand it. */
+  private async discardOrphanedBlob(storageKey: string): Promise<void> {
+    try {
+      await this.fileStorage.delete(storageKey)
+    } catch (error) {
+      const reason = error instanceof Error ? error.message : String(error)
+      this.logger.warn(
+        `Failed to delete orphaned file (storageKey="${storageKey}") after the attachment row insert failed: ${reason}`,
+      )
+    }
+  }
+
+  private async requireAttachment(id: number, userId: number): Promise<Attachment> {
+    const attachment = await this.attachmentsRepository.findById(id, userId)
     if (!attachment) {
       throw new NotFoundException(`Attachment ${id} not found`)
     }
     return attachment
   }
 
-  private async assertEntryExists(entryId: number): Promise<void> {
-    const entry = await this.entriesRepository.findById(entryId)
+  private async assertEntryExists(entryId: number, userId: number): Promise<void> {
+    const entry = await this.entriesRepository.findById(entryId, userId)
     if (!entry) {
       throw new NotFoundException(`Entry ${entryId} not found`)
     }

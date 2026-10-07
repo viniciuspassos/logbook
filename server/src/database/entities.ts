@@ -1,6 +1,7 @@
 import { Entry } from '../entries/entry.entity'
 import { Attachment } from '../attachments/attachment.entity'
 import { Session } from '../auth/session.entity'
+import { User } from '../users/user.entity'
 
 /**
  * Every TypeORM entity in this app, as a single explicit list. The running
@@ -13,4 +14,4 @@ import { Session } from '../auth/session.entity'
  * new entity is one line here, not a search for every place entities are
  * enumerated.
  */
-export const allEntities = [Entry, Attachment, Session]
+export const allEntities = [Entry, Attachment, Session, User]

@@ -10,6 +10,7 @@ import {
   Patch,
   Post,
 } from '@nestjs/common'
+import { CurrentUserId } from '../auth/current-user.decorator'
 import { EntriesService } from './entries.service'
 import { CreateEntryDto } from './dto/create-entry.dto'
 import { UpdateEntryDto } from './dto/update-entry.dto'
@@ -25,31 +26,38 @@ export class EntriesController {
   constructor(private readonly entriesService: EntriesService) {}
 
   @Get()
-  findAll(): Promise<Entry[]> {
-    return this.entriesService.findAll()
+  findAll(@CurrentUserId() userId: number): Promise<Entry[]> {
+    return this.entriesService.findAll(userId)
   }
 
   @Get(':id')
-  findOne(@Param('id', ParseIntPipe) id: number): Promise<Entry> {
-    return this.entriesService.findOne(id)
+  findOne(
+    @Param('id', ParseIntPipe) id: number,
+    @CurrentUserId() userId: number,
+  ): Promise<Entry> {
+    return this.entriesService.findOne(id, userId)
   }
 
   @Post()
-  create(@Body() dto: CreateEntryDto): Promise<Entry> {
-    return this.entriesService.create(dto)
+  create(@Body() dto: CreateEntryDto, @CurrentUserId() userId: number): Promise<Entry> {
+    return this.entriesService.create(userId, dto)
   }
 
   @Patch(':id')
   update(
     @Param('id', ParseIntPipe) id: number,
     @Body() dto: UpdateEntryDto,
+    @CurrentUserId() userId: number,
   ): Promise<Entry> {
-    return this.entriesService.update(id, dto)
+    return this.entriesService.update(id, userId, dto)
   }
 
   @Delete(':id')
   @HttpCode(HttpStatus.NO_CONTENT)
-  remove(@Param('id', ParseIntPipe) id: number): Promise<void> {
-    return this.entriesService.remove(id)
+  remove(
+    @Param('id', ParseIntPipe) id: number,
+    @CurrentUserId() userId: number,
+  ): Promise<void> {
+    return this.entriesService.remove(id, userId)
   }
 }

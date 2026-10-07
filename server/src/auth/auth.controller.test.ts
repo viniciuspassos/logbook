@@ -2,11 +2,17 @@ import type { ConfigService } from '@nestjs/config'
 import type { Request, Response } from 'express'
 import { AuthController } from './auth.controller'
 import type { AuthService } from './auth.service'
-import type { LoginDto } from './dto/login.dto'
+import type { GoogleLoginDto } from './dto/google-login.dto'
+import { GoogleAuthEnabledGuard } from './google-auth-enabled.guard'
+import { GoogleLoginRequestGuard } from './google-login-request.guard'
 import { CSRF_COOKIE_NAME, SESSION_COOKIE_NAME } from './cookies'
 
 function makeAuthServiceMock() {
-  return { login: jest.fn(), logout: jest.fn() } as unknown as jest.Mocked<AuthService>
+  return {
+    loginWithGoogle: jest.fn(),
+    getProfile: jest.fn(),
+    logout: jest.fn(),
+  } as unknown as jest.Mocked<AuthService>
 }
 
 function makeConfigServiceMock(cookieSecure = false) {
@@ -20,22 +26,28 @@ function makeResMock() {
 }
 
 describe('AuthController', () => {
-  describe('login', () => {
-    it('logs in via the service and sets the session + csrf cookies', async () => {
+  it('gates the Google sign-in route: flag guard first (404 when off), then the login-CSRF guard', () => {
+    const guards = Reflect.getMetadata('__guards__', AuthController.prototype.loginWithGoogle)
+
+    expect(guards).toEqual([GoogleAuthEnabledGuard, GoogleLoginRequestGuard])
+  })
+
+  describe('loginWithGoogle', () => {
+    it('signs in via the service and sets the session + csrf cookies', async () => {
       const authService = makeAuthServiceMock()
       const created = {
         sessionToken: 'session-token',
         csrfToken: 'csrf-token',
         expiresAt: new Date('2026-08-01T00:00:00.000Z'),
       }
-      authService.login.mockResolvedValue(created)
+      authService.loginWithGoogle.mockResolvedValue(created)
       const controller = new AuthController(authService, makeConfigServiceMock())
       const res = makeResMock()
-      const dto: LoginDto = { password: 'correct password' }
+      const dto: GoogleLoginDto = { idToken: 'id-token' }
 
-      const result = await controller.login(dto, res)
+      const result = await controller.loginWithGoogle(dto, res)
 
-      expect(authService.login).toHaveBeenCalledWith('correct password')
+      expect(authService.loginWithGoogle).toHaveBeenCalledWith('id-token')
       expect(res.cookie).toHaveBeenCalledWith(
         SESSION_COOKIE_NAME,
         'session-token',
@@ -49,16 +61,28 @@ describe('AuthController', () => {
       expect(result).toEqual({ status: 'ok' })
     })
 
-    it('propagates a login failure without setting any cookie', async () => {
+    it('propagates a sign-in failure without setting any cookie', async () => {
       const authService = makeAuthServiceMock()
-      authService.login.mockRejectedValue(new Error('Invalid credentials'))
+      authService.loginWithGoogle.mockRejectedValue(new Error('Invalid Google ID token'))
       const controller = new AuthController(authService, makeConfigServiceMock())
       const res = makeResMock()
 
-      await expect(controller.login({ password: 'wrong' }, res)).rejects.toThrow(
-        'Invalid credentials',
+      await expect(controller.loginWithGoogle({ idToken: 'bad' }, res)).rejects.toThrow(
+        'Invalid Google ID token',
       )
       expect(res.cookie).not.toHaveBeenCalled()
+    })
+  })
+
+  describe('me', () => {
+    it("returns the signed-in user's profile", async () => {
+      const authService = makeAuthServiceMock()
+      const profile = { id: 7, email: 'me@example.com', name: 'Me', picture: null }
+      authService.getProfile.mockResolvedValue(profile)
+      const controller = new AuthController(authService, makeConfigServiceMock())
+
+      await expect(controller.me(7)).resolves.toBe(profile)
+      expect(authService.getProfile).toHaveBeenCalledWith(7)
     })
   })
 

@@ -4,23 +4,41 @@ import { ValidationPipe, type INestApplication } from '@nestjs/common'
 import { ConfigModule } from '@nestjs/config'
 import { TypeOrmModule } from '@nestjs/typeorm'
 import request from 'supertest'
+import { DataSource } from 'typeorm'
+import { Attachment } from '../attachments/attachment.entity'
 import { loadConfig } from '../config/configuration'
+import { Entry } from '../entries/entry.entity'
 import { HealthModule } from '../health/health.module'
+import { User } from '../users/user.entity'
 import { AuthModule } from './auth.module'
 import { Session } from './session.entity'
 import { SessionsService } from './sessions.service'
+import { GoogleTokenVerifier } from './google-token-verifier.service'
+import { LOGIN_CLIENT_HEADER_NAME, LOGIN_CLIENT_HEADER_VALUE } from './google-login-request.guard'
 import { CSRF_COOKIE_NAME, CSRF_HEADER_NAME, SESSION_COOKIE_NAME } from './cookies'
-import { TEST_LOGIN_PASSWORD, testAuthPasswordHash } from './test-support/auth-e2e.helper'
+import {
+  TEST_AUTH_ENV,
+  TEST_GOOGLE_CLIENT_ID,
+  TEST_STRANGER_EMAIL,
+  TEST_USER_A_EMAIL,
+  TEST_USER_B_EMAIL,
+  fakeGoogleTokenVerifier,
+  idTokenFor,
+  loginForTests,
+  withAuth,
+} from './test-support/auth-e2e.helper'
 
 /**
- * Integration test for the auth module in isolation (login/logout, cookie
- * issuance, and the health endpoint's @Public() opt-out). Entries/attachments
- * routes being protected end-to-end is covered by their own e2e suites
- * (see entries/entries.e2e.test.ts, attachments/attachments.e2e.test.ts).
+ * Integration test for the auth module in isolation (Google sign-in, cookie
+ * issuance, /auth/me, logout, and the health
+ * endpoint's @Public() opt-out). Per-user scoping of entries/attachments is
+ * covered by users/user-isolation.e2e.test.ts. GoogleTokenVerifier is
+ * overridden with a fake so no test talks to Google.
  */
 describe('Auth (e2e)', () => {
   let app: INestApplication
   let sessionsService: SessionsService
+  let dataSource: DataSource
 
   beforeAll(async () => {
     const moduleRef = await Test.createTestingModule({
@@ -28,10 +46,10 @@ describe('Auth (e2e)', () => {
         ConfigModule.forRoot({
           isGlobal: true,
           load: [
-            async () => ({
+            () => ({
               app: loadConfig({
                 DATABASE_URL: 'postgres://unused/in-test',
-                AUTH_PASSWORD_HASH: await testAuthPasswordHash(),
+                ...TEST_AUTH_ENV,
               }),
             }),
           ],
@@ -40,12 +58,15 @@ describe('Auth (e2e)', () => {
           type: 'sqljs',
           autoSave: false,
           synchronize: true,
-          entities: [Session],
+          entities: [Entry, Attachment, Session, User],
         }),
         AuthModule,
         HealthModule,
       ],
-    }).compile()
+    })
+      .overrideProvider(GoogleTokenVerifier)
+      .useValue(fakeGoogleTokenVerifier)
+      .compile()
 
     app = moduleRef.createNestApplication()
     app.use(cookieParser())
@@ -54,6 +75,7 @@ describe('Auth (e2e)', () => {
     )
     await app.init()
     sessionsService = moduleRef.get(SessionsService)
+    dataSource = moduleRef.get(DataSource)
   })
 
   afterAll(async () => {
@@ -66,25 +88,84 @@ describe('Auth (e2e)', () => {
     expect(res.body.status).toBe('ok')
   })
 
-  it('rejects a login with the wrong password with a generic 401', async () => {
-    const res = await request(app.getHttpServer())
+  it('GET /auth/config is public, uncacheable, and lists the google method with the client ID', async () => {
+    const res = await request(app.getHttpServer()).get('/auth/config').expect(200)
+
+    expect(res.body).toEqual({ methods: [{ type: 'google', clientId: TEST_GOOGLE_CLIENT_ID }] })
+    expect(res.headers['cache-control']).toBe('no-store')
+    expect(JSON.stringify(res.body)).not.toContain(TEST_USER_A_EMAIL)
+  })
+
+  it('no longer serves the password login route', async () => {
+    await request(app.getHttpServer())
       .post('/auth/login')
-      .send({ password: 'not the password' })
+      .send({ password: 'anything' })
+      .expect(404)
+  })
+
+  it('rejects an invalid Google ID token with 401 and sets no cookie', async () => {
+    const res = await request(app.getHttpServer())
+      .post('/auth/google')
+      .set(LOGIN_CLIENT_HEADER_NAME, LOGIN_CLIENT_HEADER_VALUE)
+      .send({ idToken: 'forged' })
       .expect(401)
 
     expect(res.headers['set-cookie']).toBeUndefined()
   })
 
-  it('rejects a login request missing the password field with 400', async () => {
-    await request(app.getHttpServer()).post('/auth/login').send({}).expect(400)
+  describe('login CSRF defences on POST /auth/google', () => {
+    const validBody = { idToken: idTokenFor(TEST_USER_A_EMAIL) }
+
+    it('rejects a JSON request without the X-Logbook-Client header with 403, signing nobody in', async () => {
+      const res = await request(app.getHttpServer())
+        .post('/auth/google')
+        .send(validBody)
+        .expect(403)
+
+      expect(res.headers['set-cookie']).toBeUndefined()
+    })
+
+    it('does not enable CORS: a cross-origin preflight gets no Access-Control-Allow-* headers', async () => {
+      const res = await request(app.getHttpServer())
+        .options('/auth/google')
+        .set('Origin', 'https://evil.example')
+        .set('Access-Control-Request-Method', 'POST')
+        .set('Access-Control-Request-Headers', 'content-type,x-logbook-client')
+
+      expect(res.headers['access-control-allow-origin']).toBeUndefined()
+      expect(res.headers['access-control-allow-headers']).toBeUndefined()
+    })
   })
 
-  it('logs in with the correct password and sets an httpOnly session cookie plus a readable csrf cookie', async () => {
+  it('rejects a sign-in request missing idToken with 400', async () => {
+    await request(app.getHttpServer())
+      .post('/auth/google')
+      .set(LOGIN_CLIENT_HEADER_NAME, LOGIN_CLIENT_HEADER_VALUE)
+      .send({})
+      .expect(400)
+  })
+
+  it('rejects a verified Google account that is not allowlisted with 403, no cookie and no user row', async () => {
     const res = await request(app.getHttpServer())
-      .post('/auth/login')
-      .send({ password: TEST_LOGIN_PASSWORD })
+      .post('/auth/google')
+      .set(LOGIN_CLIENT_HEADER_NAME, LOGIN_CLIENT_HEADER_VALUE)
+      .send({ idToken: idTokenFor(TEST_STRANGER_EMAIL) })
+      .expect(403)
+
+    expect(res.headers['set-cookie']).toBeUndefined()
+    await expect(
+      dataSource.getRepository(User).findOneBy({ email: TEST_STRANGER_EMAIL }),
+    ).resolves.toBeNull()
+  })
+
+  it('signs in an allowlisted account: sets an httpOnly session cookie plus a readable csrf cookie', async () => {
+    const res = await request(app.getHttpServer())
+      .post('/auth/google')
+      .set(LOGIN_CLIENT_HEADER_NAME, LOGIN_CLIENT_HEADER_VALUE)
+      .send({ idToken: idTokenFor(TEST_USER_A_EMAIL) })
       .expect(200)
 
+    expect(res.body).toEqual({ status: 'ok' })
     const setCookie = res.headers['set-cookie'] as unknown as string[]
     expect(setCookie.some((c) => c.startsWith(`${SESSION_COOKIE_NAME}=`) && /HttpOnly/i.test(c))).toBe(
       true,
@@ -94,10 +175,99 @@ describe('Auth (e2e)', () => {
     ).toBe(true)
   })
 
+  it('signing in twice as the same Google account reuses one user row (matched by sub)', async () => {
+    await loginForTests(app, TEST_USER_A_EMAIL)
+    await loginForTests(app, TEST_USER_A_EMAIL)
+
+    await expect(
+      dataSource.getRepository(User).countBy({ email: TEST_USER_A_EMAIL }),
+    ).resolves.toBe(1)
+  })
+
+  it('GET /auth/me returns 401 without a session', async () => {
+    await request(app.getHttpServer()).get('/auth/me').expect(401)
+  })
+
+  it("GET /auth/me returns the signed-in user's profile", async () => {
+    const auth = await loginForTests(app, TEST_USER_A_EMAIL)
+
+    const res = await withAuth(request(app.getHttpServer()).get('/auth/me'), auth).expect(200)
+
+    expect(res.body).toEqual({
+      id: expect.any(Number),
+      email: TEST_USER_A_EMAIL,
+      name: 'alice',
+      picture: null,
+    })
+  })
+
+  it('revokes a live session on its next request once the user is no longer allowlisted', async () => {
+    const auth = await loginForTests(app, TEST_USER_B_EMAIL)
+    await withAuth(request(app.getHttpServer()).get('/auth/me'), auth).expect(200)
+    // Simulates the address being taken off ALLOWED_EMAILS: the stored e-mail
+    // no longer matches the allowlist.
+    await dataSource
+      .getRepository(User)
+      .update({ email: TEST_USER_B_EMAIL }, { email: 'removed@example.com' })
+
+    await withAuth(request(app.getHttpServer()).get('/auth/me'), auth).expect(401)
+    // The session row was deleted, not just refused once.
+    await withAuth(request(app.getHttpServer()).get('/auth/me'), auth).expect(401)
+  })
+
+  it('logout with a valid session but no CSRF header is rejected with 403 and the session survives', async () => {
+    const auth = await loginForTests(app, TEST_USER_A_EMAIL)
+
+    await withAuth(request(app.getHttpServer()).post('/auth/logout'), auth).expect(403)
+
+    await withAuth(request(app.getHttpServer()).get('/auth/me'), auth).expect(200)
+  })
+
+  it('logout with a valid session but a wrong CSRF header is rejected with 403 and the session survives', async () => {
+    const auth = await loginForTests(app, TEST_USER_A_EMAIL)
+
+    await withAuth(request(app.getHttpServer()).post('/auth/logout'), auth)
+      .set(CSRF_HEADER_NAME, 'forged-cross-site-value')
+      .expect(403)
+
+    await withAuth(request(app.getHttpServer()).get('/auth/me'), auth).expect(200)
+  })
+
+  it('logout with a valid session and the right CSRF header revokes it and clears the cookies', async () => {
+    const auth = await loginForTests(app, TEST_USER_A_EMAIL)
+
+    const res = await withAuth(request(app.getHttpServer()).post('/auth/logout'), auth, {
+      mutating: true,
+    }).expect(200)
+
+    const cleared = res.headers['set-cookie'] as unknown as string[]
+    expect(cleared.some((c) => c.startsWith(`${SESSION_COOKIE_NAME}=;`))).toBe(true)
+    await withAuth(request(app.getHttpServer()).get('/auth/me'), auth).expect(401)
+  })
+
+  it('GET /auth/me, like every authenticated request, re-sets both session cookies', async () => {
+    const auth = await loginForTests(app, TEST_USER_A_EMAIL)
+
+    const res = await withAuth(request(app.getHttpServer()).get('/auth/me'), auth).expect(200)
+
+    const setCookie = res.headers['set-cookie'] as unknown as string[]
+    expect(setCookie.some((c) => c.startsWith(`${SESSION_COOKIE_NAME}=`))).toBe(true)
+    expect(setCookie.some((c) => c.startsWith(`${CSRF_COOKIE_NAME}=`))).toBe(true)
+  })
+
+  it('logout needs a live session: 401 with no cookie and with a stale/unknown cookie', async () => {
+    await request(app.getHttpServer()).post('/auth/logout').expect(401)
+    await request(app.getHttpServer())
+      .post('/auth/logout')
+      .set('Cookie', `${SESSION_COOKIE_NAME}=not-a-real-session`)
+      .expect(401)
+  })
+
   it('logout clears both cookies and invalidates the session for future requests', async () => {
     const loginRes = await request(app.getHttpServer())
-      .post('/auth/login')
-      .send({ password: TEST_LOGIN_PASSWORD })
+      .post('/auth/google')
+      .set(LOGIN_CLIENT_HEADER_NAME, LOGIN_CLIENT_HEADER_VALUE)
+      .send({ idToken: idTokenFor(TEST_USER_A_EMAIL) })
       .expect(200)
 
     const setCookie = loginRes.headers['set-cookie'] as unknown as string[]

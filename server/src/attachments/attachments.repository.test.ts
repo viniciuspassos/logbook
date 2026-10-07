@@ -1,6 +1,8 @@
-import type { Repository } from 'typeorm'
+import { DataSource, type Repository } from 'typeorm'
+import { Entry } from '../entries/entry.entity'
+import { User } from '../users/user.entity'
 import { AttachmentsRepository } from './attachments.repository'
-import type { Attachment } from './attachment.entity'
+import { Attachment } from './attachment.entity'
 
 function fakeAttachment(overrides: Partial<Attachment> = {}): Attachment {
   return {
@@ -15,52 +17,16 @@ function fakeAttachment(overrides: Partial<Attachment> = {}): Attachment {
   }
 }
 
-function makeRepoMock() {
+function makeOrmMock() {
   return {
-    find: jest.fn(),
-    findOneBy: jest.fn(),
     create: jest.fn(),
     save: jest.fn(),
-    delete: jest.fn(),
   } as unknown as jest.Mocked<Repository<Attachment>>
 }
 
 describe('AttachmentsRepository', () => {
-  it('findByEntryId filters by entryId, newest first', async () => {
-    const ormRepo = makeRepoMock()
-    const rows = [fakeAttachment({ id: 2 }), fakeAttachment({ id: 1 })]
-    ormRepo.find.mockResolvedValue(rows)
-    const repo = new AttachmentsRepository(ormRepo)
-
-    const result = await repo.findByEntryId(10)
-
-    expect(ormRepo.find).toHaveBeenCalledWith({
-      where: { entryId: 10 },
-      order: { id: 'DESC' },
-    })
-    expect(result).toBe(rows)
-  })
-
-  it('findById returns the attachment when found', async () => {
-    const ormRepo = makeRepoMock()
-    const row = fakeAttachment()
-    ormRepo.findOneBy.mockResolvedValue(row)
-    const repo = new AttachmentsRepository(ormRepo)
-
-    await expect(repo.findById(1)).resolves.toBe(row)
-    expect(ormRepo.findOneBy).toHaveBeenCalledWith({ id: 1 })
-  })
-
-  it('findById returns null when not found', async () => {
-    const ormRepo = makeRepoMock()
-    ormRepo.findOneBy.mockResolvedValue(null)
-    const repo = new AttachmentsRepository(ormRepo)
-
-    await expect(repo.findById(999)).resolves.toBeNull()
-  })
-
   it('create builds and saves a new attachment row', async () => {
-    const ormRepo = makeRepoMock()
+    const ormRepo = makeOrmMock()
     const draft = fakeAttachment({ id: undefined as unknown as number })
     const saved = fakeAttachment({ id: 7 })
     ormRepo.create.mockReturnValue(draft)
@@ -75,20 +41,177 @@ describe('AttachmentsRepository', () => {
     expect(result).toBe(saved)
   })
 
-  it('remove returns true when a row was deleted', async () => {
-    const ormRepo = makeRepoMock()
-    ormRepo.delete.mockResolvedValue({ affected: 1, raw: {} })
-    const repo = new AttachmentsRepository(ormRepo)
+  // Ownership is resolved through the parent entry's owner, not the
+  // attachment's own (nullable) userId, so these run against a real sqljs
+  // schema: a mocked query builder could not prove the join.
+  describe('ownership follows the parent entry (real sqljs driver)', () => {
+    let dataSource: DataSource
+    let repo: AttachmentsRepository
+    let owner: User
+    let other: User
+    let entryId: number
+    let ownedWithUserId: Attachment
+    let ownedWithNullUserId: Attachment
 
-    await expect(repo.remove(1)).resolves.toBe(true)
-    expect(ormRepo.delete).toHaveBeenCalledWith(1)
-  })
+    function entryFor(userId: number): Partial<Entry> {
+      return {
+        title: 't',
+        shape: 'circle',
+        location: 'l',
+        date: 'd',
+        metric: 'm',
+        excerpt: 'e',
+        weather: 'w',
+        duration: 'du',
+        difficulty: 'di',
+        equipment: 'eq',
+        participants: 'p',
+        raw: 'r',
+        story: 's',
+        photoHint: 'h',
+        media: ['a', 'b', 'c'],
+        mapX: 1,
+        mapY: 2,
+        userId,
+      }
+    }
 
-  it('remove returns false when nothing was deleted', async () => {
-    const ormRepo = makeRepoMock()
-    ormRepo.delete.mockResolvedValue({ affected: 0, raw: {} })
-    const repo = new AttachmentsRepository(ormRepo)
+    beforeAll(async () => {
+      dataSource = new DataSource({
+        type: 'sqljs',
+        autoSave: false,
+        synchronize: true,
+        entities: [Entry, Attachment, User],
+      })
+      await dataSource.initialize()
+      repo = new AttachmentsRepository(dataSource.getRepository(Attachment))
 
-    await expect(repo.remove(999)).resolves.toBe(false)
+      const users = dataSource.getRepository(User)
+      owner = await users.save(
+        users.create({ googleSub: 'o', email: 'o@example.com', name: null, picture: null }),
+      )
+      other = await users.save(
+        users.create({ googleSub: 'x', email: 'x@example.com', name: null, picture: null }),
+      )
+      const entries = dataSource.getRepository(Entry)
+      const entry = await entries.save(entries.create(entryFor(owner.id)))
+      entryId = entry.id
+
+      const attachments = dataSource.getRepository(Attachment)
+      const base = {
+        entryId,
+        originalFilename: 'a.jpg',
+        storageKey: 'k',
+        mimeType: 'image/jpeg',
+        sizeBytes: 1,
+      }
+      ownedWithUserId = await attachments.save(attachments.create({ ...base, userId: owner.id }))
+      // A row whose own userId was never set, under an owned entry.
+      ownedWithNullUserId = await attachments.save(attachments.create({ ...base, userId: null }))
+    })
+
+    afterAll(async () => {
+      await dataSource.destroy()
+    })
+
+    it("findByEntryId returns every attachment of the owner's entry, newest first, including one with a NULL userId", async () => {
+      const result = await repo.findByEntryId(entryId, owner.id)
+
+      expect(result.map((a) => a.id)).toEqual([ownedWithNullUserId.id, ownedWithUserId.id])
+    })
+
+    it('findByEntryId returns nothing for a user who does not own the entry', async () => {
+      await expect(repo.findByEntryId(entryId, other.id)).resolves.toEqual([])
+    })
+
+    it('findById finds an attachment (even with a NULL userId) for the entry owner', async () => {
+      const found = await repo.findById(ownedWithNullUserId.id, owner.id)
+
+      expect(found?.id).toBe(ownedWithNullUserId.id)
+    })
+
+    it('findById returns null for another user, and for an id that does not exist', async () => {
+      await expect(repo.findById(ownedWithUserId.id, other.id)).resolves.toBeNull()
+      await expect(repo.findById(99999, owner.id)).resolves.toBeNull()
+    })
+
+    it('an entry that has been tombstoned hides its attachments from findByEntryId, findById and remove', async () => {
+      const entries = dataSource.getRepository(Entry)
+      const attachments = dataSource.getRepository(Attachment)
+      const deletedEntry = await entries.save(entries.create(entryFor(owner.id)))
+      const orphaned = await attachments.save(
+        attachments.create({
+          entryId: deletedEntry.id,
+          originalFilename: 't.jpg',
+          storageKey: 'kt',
+          mimeType: 'image/jpeg',
+          sizeBytes: 1,
+          userId: owner.id,
+        }),
+      )
+      await entries.update({ id: deletedEntry.id }, { deletedAt: new Date() })
+
+      await expect(repo.findByEntryId(deletedEntry.id, owner.id)).resolves.toEqual([])
+      await expect(repo.findById(orphaned.id, owner.id)).resolves.toBeNull()
+      await expect(repo.remove(orphaned.id, owner.id)).resolves.toBe(false)
+      await expect(attachments.findOneBy({ id: orphaned.id })).resolves.not.toBeNull()
+    })
+
+    it('remove affects no row when the entry is tombstoned between the lookup and the delete', async () => {
+      const entries = dataSource.getRepository(Entry)
+      const attachments = dataSource.getRepository(Attachment)
+      const racedEntry = await entries.save(entries.create(entryFor(owner.id)))
+      const raced = await attachments.save(
+        attachments.create({
+          entryId: racedEntry.id,
+          originalFilename: 'r.jpg',
+          storageKey: 'kr',
+          mimeType: 'image/jpeg',
+          sizeBytes: 1,
+          userId: owner.id,
+        }),
+      )
+
+      await expect(repo.findById(raced.id, owner.id)).resolves.not.toBeNull()
+      await entries.update({ id: racedEntry.id }, { deletedAt: new Date() })
+
+      await expect(repo.remove(raced.id, owner.id)).resolves.toBe(false)
+      await expect(attachments.findOneBy({ id: raced.id })).resolves.not.toBeNull()
+    })
+
+    it('remove returns false and deletes nothing for another user', async () => {
+      await expect(repo.remove(ownedWithUserId.id, other.id)).resolves.toBe(false)
+
+      await expect(repo.findById(ownedWithUserId.id, owner.id)).resolves.not.toBeNull()
+    })
+
+    it('remove is one scoped DELETE: ownership is folded into the statement, with no separate lookup first', async () => {
+      const findByIdSpy = jest.spyOn(repo, 'findById')
+      const attachments = dataSource.getRepository(Attachment)
+      const doomed = await attachments.save(
+        attachments.create({
+          entryId,
+          originalFilename: 'd.jpg',
+          storageKey: 'kd',
+          mimeType: 'image/jpeg',
+          sizeBytes: 1,
+          userId: null,
+        }),
+      )
+
+      await expect(repo.remove(doomed.id, other.id)).resolves.toBe(false)
+      await expect(attachments.findOneBy({ id: doomed.id })).resolves.not.toBeNull()
+      await expect(repo.remove(doomed.id, owner.id)).resolves.toBe(true)
+      await expect(attachments.findOneBy({ id: doomed.id })).resolves.toBeNull()
+
+      expect(findByIdSpy).not.toHaveBeenCalled()
+      findByIdSpy.mockRestore()
+    })
+
+    it('remove deletes the attachment for the entry owner and reports true', async () => {
+      await expect(repo.remove(ownedWithNullUserId.id, owner.id)).resolves.toBe(true)
+
+      await expect(repo.findById(ownedWithNullUserId.id, owner.id)).resolves.toBeNull()
+    })
   })
 })
