@@ -28,7 +28,7 @@ export function getDbName(): string {
   return shouldUseMockData() ? 'logbook-mocked' : 'logbook'
 }
 
-export const DB_VERSION = 2
+export const DB_VERSION = 3
 
 export const ENTRIES_STORE = 'entries'
 /** #26: durable write queue for entry/attachment mutations made while
@@ -39,6 +39,9 @@ export const OUTBOX_STORE = 'outbox'
  *  single source of truth for "has this local entry synced, and what's its
  *  server id" — see outboxRunner.ts. */
 export const SYNC_STATE_STORE = 'entrySyncState'
+/** Sign in with Google: the last signed-in profile, so the login gate stays
+ *  open offline after a first sign-in — see identityStore.ts. */
+export const IDENTITY_STORE = 'identity'
 
 /** Whether this environment can persist at all (false in SSR/jsdom). */
 export function isPersistenceSupported(): boolean {
@@ -51,6 +54,9 @@ export function openLogbookDb(): Promise<IDBDatabase> {
       reject(new Error('IndexedDB is not available in this environment.'))
       return
     }
+    // The first of success/blocked/error to fire settles the promise; whatever
+    // comes after must not leave a connection behind.
+    let settled = false
     const request = indexedDB.open(getDbName(), DB_VERSION)
     request.onupgradeneeded = () => {
       const db = request.result
@@ -63,8 +69,33 @@ export function openLogbookDb(): Promise<IDBDatabase> {
       if (!db.objectStoreNames.contains(SYNC_STATE_STORE)) {
         db.createObjectStore(SYNC_STATE_STORE, { keyPath: 'localEntryId' })
       }
+      if (!db.objectStoreNames.contains(IDENTITY_STORE)) {
+        db.createObjectStore(IDENTITY_STORE, { keyPath: 'key' })
+      }
     }
-    request.onsuccess = () => resolve(request.result)
-    request.onerror = () => reject(request.error)
+    // Another tab still holds an older version open, so the upgrade can't run
+    // until it closes. Waiting forever would leave the app on its splash screen,
+    // so report it and let callers take their offline-aware path.
+    request.onblocked = () => {
+      if (settled) return
+      settled = true
+      reject(new Error('IndexedDB upgrade is blocked by another open tab.'))
+    }
+    request.onsuccess = () => {
+      const db = request.result
+      if (settled) {
+        db.close()
+        return
+      }
+      settled = true
+      // Let a newer version in another tab upgrade instead of blocking on us.
+      db.onversionchange = () => db.close()
+      resolve(db)
+    }
+    request.onerror = () => {
+      if (settled) return
+      settled = true
+      reject(request.error)
+    }
   })
 }

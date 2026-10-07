@@ -6,47 +6,56 @@
   display: flex;
   align-items: center;
   justify-content: space-between;
+  gap: var(--lb-space-3);
 }
 
-.account-settings__row-label {
-  font-size: 14px;
-  color: var(--lb-ink);
+.account-settings__identity {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  min-width: 0;
 }
 
-.account-settings__form {
+.account-settings__avatar {
+  flex: none;
+  width: 36px;
+  height: 36px;
+  border-radius: 50%;
+  object-fit: cover;
+}
+
+.account-settings__avatar--initial {
+  display: grid;
+  place-items: center;
+  font-size: 15px;
+  font-weight: 700;
+  color: var(--lb-accent-ink);
+  background: var(--lb-accent-bg);
+}
+
+.account-settings__text {
   display: flex;
   flex-direction: column;
-  gap: 6px;
+  min-width: 0;
 }
 
-.account-settings__label {
+.account-settings__name {
+  font-size: 14px;
+  color: var(--lb-ink);
+  overflow-wrap: anywhere;
+}
+
+.account-settings__email {
   font-size: 12px;
   color: var(--lb-muted);
-}
-
-.account-settings__field-row {
-  display: flex;
-  gap: 8px;
-}
-
-.account-settings__input {
-  flex: 1;
-  box-sizing: border-box;
-  border: 1px solid var(--lb-border);
-  border-radius: var(--lb-radius-sm);
-  padding: 8px 10px;
-  font-size: 14px;
-  font-family: inherit;
-  color: var(--lb-ink);
-  background: var(--lb-bg);
-}
-.account-settings__input:disabled {
-  opacity: 0.6;
+  overflow-wrap: anywhere;
 }
 
 .account-settings__button {
+  flex: none;
   border: none;
   border-radius: var(--lb-radius-sm);
+  min-height: 36px;
   padding: 8px 14px;
   font-size: 13px;
   font-weight: 600;
@@ -66,13 +75,12 @@
   background: var(--lb-accent-bg);
 }
 
-/* Reserves the line's height so an error message doesn't shift the group. */
+.account-settings__hint,
+.account-settings__status {
+  margin: var(--lb-space-2) 0 0;
+  font-size: 12px;
+  color: var(--lb-muted);
+}
 .account-settings__status {
   min-height: 16px;
-  margin-top: 8px;
-}
-
-.account-settings__status-text {
-  font-size: 12px;
-  color: var(--lb-danger);
 }

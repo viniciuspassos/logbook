@@ -1,0 +1,30 @@
+/* Fixed to the top so it never reflows the shell's rail/list/panel layout. */
+.signin-banner {
+  position: fixed;
+  inset: 0 0 auto;
+  z-index: 40;
+  display: flex;
+  align-items: center;
+  gap: var(--lb-space-2);
+  height: var(--lb-banner-height);
+  padding: 0 var(--lb-space-3);
+  font-size: 14px;
+  background: var(--lb-accent-bg);
+}
+.signin-banner span {
+  flex: 1;
+}
+.signin-banner button {
+  min-height: 44px;
+  padding: 0 var(--lb-space-3);
+  border: 0;
+  border-radius: var(--lb-radius-sm);
+  font: inherit;
+  font-weight: 600;
+  color: var(--lb-accent-ink);
+  background: none;
+}
+.signin-banner .signin-banner__button {
+  color: var(--lb-on-accent);
+  background: var(--lb-accent-fill);
+}

@@ -66,10 +66,8 @@ function removalStatus(summary: DrainSummary): AttachmentStatus {
 }
 
 export interface UseEntryAttachmentsOptions {
-  /** The upload's drain discovered the session is gone (a 401/403). */
+  /** The upload's drain discovered the session is gone (a 401). */
   onAuthRequired?: () => void
-  /** The upload's drain actually got a mutating call through. */
-  onAuthConfirmed?: () => void
 }
 
 /**
@@ -99,7 +97,7 @@ export function useEntryAttachments(
   discardPhoto: (queueId: number) => void
   removePhoto: (preview: AttachmentPreview) => void
 } {
-  const { onAuthRequired, onAuthConfirmed } = options
+  const { onAuthRequired } = options
   const [attachments, setAttachments] = useState<AttachmentPreview[]>([])
   const [busy, setBusy] = useState(false)
   const [status, setStatus] = useState<AttachmentStatus | null>(null)
@@ -187,7 +185,6 @@ export function useEntryAttachments(
         })
       } else if (summary.processed > 0) {
         setStatus({ tone: 'info', message: 'Photo uploaded.' })
-        onAuthConfirmed?.()
       } else if (summary.stoppedReason === 'auth') {
         // Distinguishes "you're not signed in" from "you're offline" —
         // the generic offline message below would otherwise be shown for
@@ -200,7 +197,7 @@ export function useEntryAttachments(
         setStatus({ tone: 'info', message: "Photo queued — it'll upload once you're back online." })
       }
     },
-    [onAuthRequired, onAuthConfirmed],
+    [onAuthRequired],
   )
 
   const addPhoto = useCallback(
@@ -268,13 +265,12 @@ export function useEntryAttachments(
       if (isStale()) return null
       if (summary.processed > 0) {
         await load(target)
-        onAuthConfirmed?.()
       } else if (summary.stoppedReason === 'auth') {
         onAuthRequired?.()
       }
       return removalStatus(summary)
     },
-    [load, onAuthRequired, onAuthConfirmed],
+    [load, onAuthRequired],
   )
 
   /**

@@ -99,6 +99,26 @@ describe('syncRequest', () => {
     expect((init?.headers as Record<string, string>)['x-csrf-token']).toBeUndefined()
   })
 
+  it('sends the extra headers a caller asks for, alongside the defaults', async () => {
+    const fetchMock = installFetch()
+    fetchMock.mockResolvedValue(fakeResponse({ status: 200, json: {} }))
+
+    await syncRequest('/x', { method: 'POST', body: { a: 1 }, headers: { 'X-Custom': 'yes' } })
+
+    const headers = fetchMock.mock.calls[0][1]?.headers as Record<string, string>
+    expect(headers['X-Custom']).toBe('yes')
+    expect(headers['Content-Type']).toBe('application/json')
+  })
+
+  it('sends no extra headers when none are asked for', async () => {
+    const fetchMock = installFetch()
+    fetchMock.mockResolvedValue(fakeResponse({ status: 200, json: {} }))
+
+    await syncRequest('/x', { method: 'POST', body: { a: 1 } })
+
+    expect(Object.keys(fetchMock.mock.calls[0][1]?.headers as Record<string, string>)).toEqual(['Content-Type'])
+  })
+
   it('returns undefined for a 204 response', async () => {
     const fetchMock = installFetch()
     fetchMock.mockResolvedValue(fakeResponse({ status: 204, text: '' }))

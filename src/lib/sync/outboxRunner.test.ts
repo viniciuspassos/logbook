@@ -1,4 +1,4 @@
-import { drainOutbox, startAutoSync, subscribeToDrains } from './outboxRunner.ts'
+import { drainOutbox, setDrainsAllowed, startAutoSync, subscribeToDrains } from './outboxRunner.ts'
 import { getAllRecords, hasRecord, markRejected, recordAttemptFailure, removeRecord } from '../db/outboxStore.ts'
 import { deleteSyncState, getSyncState, putSyncState } from '../db/syncStateStore.ts'
 import { isPersistenceSupported } from '../db/database.ts'
@@ -306,13 +306,14 @@ describe('drainOutbox', () => {
     expect(recordFailureMock).toHaveBeenCalledWith(1, 'Authentication required.')
   })
 
-  it('also reports "auth" for a 403 (forbidden session), not just a 401', async () => {
+  it('reports a 403 as a generic "error", not "auth": a refusal (e.g. a stale CSRF cookie) is not an expired session', async () => {
     createEntryMock.mockRejectedValue(new SyncAuthError(403, null, 'Forbidden.'))
     getAllRecordsMock.mockResolvedValue([createRecord({ queueId: 1 })])
 
     const summary = await drainOutbox()
 
-    expect(summary.stoppedReason).toBe('auth')
+    expect(summary).toEqual({ processed: 0, stoppedReason: 'error', error: 'Forbidden.' })
+    expect(recordFailureMock).toHaveBeenCalledWith(1, 'Forbidden.')
   })
 
   it('stops mid-drain when the signal is aborted before a record is processed', async () => {
@@ -634,5 +635,81 @@ describe('drainOutbox with permanently rejected ops (#91)', () => {
     const summary = await drainOutbox()
 
     expect(summary).toEqual({ processed: 0, stoppedReason: 'rejected', error: 'File too large' })
+  })
+})
+
+describe('setDrainsAllowed (no sync until the app knows who is signed in, or with no login)', () => {
+  afterEach(() => setDrainsAllowed(true))
+
+  it('blocks a direct drain: nothing is read, probed or sent, and listeners hear nothing', async () => {
+    const listener = jest.fn()
+    const unsubscribe = subscribeToDrains(listener)
+    setDrainsAllowed(false)
+
+    const summary = await drainOutbox()
+
+    expect(summary).toEqual({ processed: 0, stoppedReason: 'aborted' })
+    expect(reachableMock).not.toHaveBeenCalled()
+    expect(getAllRecordsMock).not.toHaveBeenCalled()
+    expect(createEntryMock).not.toHaveBeenCalled()
+    expect(listener).not.toHaveBeenCalled()
+    unsubscribe()
+  })
+
+  it('blocks the reconnect trigger (the browser `online` event)', async () => {
+    const stop = startAutoSync()
+    try {
+      setDrainsAllowed(false)
+      window.dispatchEvent(new Event('online'))
+      await Promise.resolve()
+      expect(reachableMock).not.toHaveBeenCalled()
+    } finally {
+      stop()
+    }
+  })
+
+  it('blocks every caller, so the mount, save and upload triggers (all drainOutbox) are blocked too', async () => {
+    setDrainsAllowed(false)
+    const results = await Promise.all([drainOutbox(), drainOutbox(), drainOutbox(new AbortController().signal)])
+    expect(results.every((summary) => summary.stoppedReason === 'aborted')).toBe(true)
+    expect(reachableMock).not.toHaveBeenCalled()
+  })
+
+  it('lets drains run again once allowed', async () => {
+    setDrainsAllowed(false)
+    setDrainsAllowed(true)
+
+    const summary = await drainOutbox()
+
+    expect(summary.stoppedReason).toBe('empty')
+    expect(reachableMock).toHaveBeenCalled()
+  })
+
+  it('stops a drain already in flight at its next operation', async () => {
+    let releaseUpload: (() => void) | undefined
+    getAllRecordsMock.mockResolvedValue([createRecord({ queueId: 1 }), createRecord({ queueId: 2 })])
+    createEntryMock.mockImplementation(
+      () => new Promise((resolve) => (releaseUpload = () => resolve({ id: 42, version: 1 }))),
+    )
+    const running = drainOutbox()
+    await new Promise((resolve) => setTimeout(resolve, 0))
+    expect(createEntryMock).toHaveBeenCalledTimes(1)
+
+    setDrainsAllowed(false)
+    releaseUpload?.()
+
+    expect(await running).toEqual({ processed: 1, stoppedReason: 'aborted' })
+    expect(createEntryMock).toHaveBeenCalledTimes(1)
+  })
+
+  it('still honours a caller\'s own abort signal', async () => {
+    const controller = new AbortController()
+    controller.abort()
+    getAllRecordsMock.mockResolvedValue([createRecord({ queueId: 1 })])
+
+    const summary = await drainOutbox(controller.signal)
+
+    expect(summary).toEqual({ processed: 0, stoppedReason: 'aborted' })
+    expect(createEntryMock).not.toHaveBeenCalled()
   })
 })

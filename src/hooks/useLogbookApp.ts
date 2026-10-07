@@ -1,6 +1,7 @@
 import { entries as seedEntries } from '../data/entries.ts'
 import { buildEntryFromDraft, nextEntryId } from '../lib/buildEntry.ts'
 import { shouldUseMockData } from '../lib/config/mockData.ts'
+import type { Entry } from '../types/entry.ts'
 import { useAuth } from './useAuth.ts'
 import { useEntries } from './useEntries.ts'
 import { useEntryAttachments } from './useEntryAttachments.ts'
@@ -15,6 +16,18 @@ export type { AttachmentPreview, AttachmentStatus } from './useEntryAttachments.
 export type { AuthState, UseAuthResult } from './useAuth.ts'
 
 /**
+ * This device's local data was wiped (sign-out, or a different account), so the
+ * in-memory list (and anything open from it) has to follow. Awaited by
+ * `useAuth` before the new session shows, and a failure is surfaced there.
+ */
+export function localDataReset(closeOverlay: () => void, replaceEntries: (entries: Entry[]) => Promise<void>) {
+  return async () => {
+    closeOverlay()
+    await replaceEntries([])
+  }
+}
+
+/**
  * Top-level app state: composes navigation, the persisted entries list, the
  * new-entry AI flow, the export/backup actions, (#26) the background
  * server-sync outbox + the attachment gallery for whichever entry is open,
@@ -26,25 +39,25 @@ export type { AuthState, UseAuthResult } from './useAuth.ts'
  * `npm run dev:mocked` (`shouldUseMockData`) — a normal run starts from a
  * real, empty timeline instead.
  *
- * `useAuth` owns sign-in state; this hook only wires its `noteAuthRequired`/
- * `noteAuthConfirmed` callbacks into the two places that actually attempt a
- * sync (the outbox drain and the attachment upload flow) — neither of those
- * hooks needs to know auth exists beyond "something to call when a drain
- * finds out". Signing in/out is never a gate on entry capture: it's surfaced
- * only in Settings (see SettingsScreen's Account section).
+ * `useAuth` owns who is signed in (Sign in with Google); this hook only wires
+ * its `noteAuthRequired` callback into the two places that actually attempt a
+ * sync (the outbox drain and the attachment upload flow) — neither needs to
+ * know auth exists beyond "something to call when a drain finds a 401".
+ * `App.tsx` gates the whole app on `auth.state`; offline reopening stays
+ * possible because the last profile is cached (see useAuth.ts).
  */
 export function useLogbookApp() {
   const { entries, addEntry, removeEntry, replaceEntries } = useEntries(shouldUseMockData() ? seedEntries : [])
   const nav = useNavigation(entries)
   const flow = useNewEntryFlow()
-  const auth = useAuth()
+  const auth = useAuth({ onLocalDataReset: localDataReset(nav.closeOverlay, replaceEntries) })
   const syncOutbox = useSyncOutbox({
     onAuthRequired: auth.noteAuthRequired,
-    onAuthConfirmed: auth.noteAuthConfirmed,
+    onSynced: auth.noteSynced,
+    syncOff: auth.mode === 'none',
   })
   const attachments = useEntryAttachments(nav.selectedEntry, {
     onAuthRequired: auth.noteAuthRequired,
-    onAuthConfirmed: auth.noteAuthConfirmed,
   })
   // Restoring a backup replaces the whole list, so a stale detail overlay
   // could be pointing at an entry that no longer exists — close it first.
@@ -123,7 +136,7 @@ export function useLogbookApp() {
     exportActions,
     // attachments (#26) — the gallery for whichever entry `selectedEntry` is
     attachments,
-    // sign-in state (#57) for the sync backend
+    // who is signed in (Sign in with Google, #122); App.tsx gates on it
     auth,
     // the timeline's sync line, from the last outbox drain
     syncStatus: syncOutbox.syncStatus,

@@ -1,7 +1,11 @@
+import { useState } from 'react'
+import { cx } from './lib/cx.ts'
+import { SignInBanner } from './components/SignInBanner.tsx'
 import { TabBar } from './components/TabBar.tsx'
 import { mostRecentEntry } from './hooks/useEntries.ts'
 import { useIsDesktop } from './hooks/useIsDesktop.ts'
 import { useLogbookApp } from './hooks/useLogbookApp.ts'
+import { LoginScreen } from './screens/LoginScreen.tsx'
 import { EntryDetailOverlay } from './screens/EntryDetailOverlay.tsx'
 import { NewEntryOverlay } from './screens/NewEntryOverlay.tsx'
 import { SearchScreen } from './screens/SearchScreen.tsx'
@@ -48,6 +52,34 @@ function App() {
     syncStatus,
   } = useLogbookApp()
   const isDesktop = useIsDesktop()
+  // Pure UI: whether the "sign in again" screen is open over the running app.
+  const [reauthOpen, setReauthOpen] = useState(false)
+  // Once the session is good again, forget the screen was open (derived while rendering).
+  if (!auth.needsSignIn && reauthOpen) setReauthOpen(false)
+
+  // The sign-in gate (#122): the shell only opens with a known identity (a cached
+  // one, or local entries, count). A background 401 only raises the banner, so a
+  // draft survives; see useAuth.ts. The hooks above stay mounted behind the gate.
+  if (auth.state === 'loading') {
+    return (
+      <main className="splash">
+        <p className="splash__text" role="status" aria-live="polite">
+          Opening Logbook…
+        </p>
+      </main>
+    )
+  }
+  if (auth.state === 'signedOut') {
+    return (
+      <LoginScreen
+        pending={auth.pending}
+        error={auth.error}
+        clientId={auth.googleClientId}
+        onCredential={auth.signInWithGoogle}
+      />
+    )
+  }
+
   // Below the desktop breakpoint an overlay is a full-screen cover, so the
   // rail underneath must unmount (both visually and from focus/AT). At
   // desktop width the overlay is just the reading panel next to the list,
@@ -64,7 +96,27 @@ function App() {
   const readingId = shownEntry?.id
 
   return (
-    <div className="app">
+    <>
+    {auth.needsSignIn && (
+      <SignInBanner
+        message="Sign in again to resume syncing."
+        onSignIn={() => setReauthOpen(true)}
+        onDismiss={auth.dismissSignInPrompt}
+      />
+    )}
+    {auth.notice && <SignInBanner message={auth.notice} dismissLabel="OK" onDismiss={auth.dismissNotice} />}
+    {auth.needsSignIn && reauthOpen && (
+      <div className="reauth">
+        <LoginScreen
+          pending={auth.pending}
+          error={auth.error}
+          clientId={auth.googleClientId}
+          onCredential={auth.signInWithGoogle}
+          onDismiss={() => setReauthOpen(false)}
+        />
+      </div>
+    )}
+    <div className={cx('app', (auth.needsSignIn || auth.notice) && 'app--with-banner')}>
       <div className="app-screen">
         {tab === 'timeline' && (
           <TimelineScreen
@@ -136,6 +188,7 @@ function App() {
         />
       )}
     </div>
+    </>
   )
 }
 

@@ -6,7 +6,7 @@ This file provides guidance to Claude Code (claude.ai/code) when working with co
 
 Logbook is an offline-first Progressive Web App (PWA) for mountaineers and skydivers to record their adventures, even in places with little or no internet connectivity (see `package.json` description). It is a working app: an installable, offline-capable PWA that captures entries by voice, structures and polishes them with Chrome's built-in on-device AI, persists them in IndexedDB, and exports them to Markdown/PDF/JSON.
 
-Photo attachments and a background sync client are now implemented ([#26](https://github.com/viniciuspassos/logbook/issues/26)): entries and photos push to a NestJS + Postgres backend (`server/`) through an offline outbox, best-effort and silently degrading when the backend is unreachable — see `docs/ARCHITECTURE.md` → "Source of truth". Two things are still missing before that's a real cloud-sync feature: there's no pull/reconcile path back from the server (today's outbox only pushes local changes), and no login screen is wired up (`src/lib/sync/authApi.ts` exists but nothing calls it), so sync will 401 against a deployment with auth enabled. Everything else in `README.md`'s "Product vision" is live.
+Photo attachments and a background sync client are now implemented ([#26](https://github.com/viniciuspassos/logbook/issues/26)): entries and photos push to a NestJS + Postgres backend (`server/`) through an offline outbox, best-effort and silently degrading when the backend is unreachable — see `docs/ARCHITECTURE.md` → "Source of truth". One thing is still missing before that's a real cloud-sync feature: there's no pull/reconcile path back from the server (today's outbox only pushes local changes). Access is behind **Sign in with Google** ([#122](https://github.com/viniciuspassos/logbook/issues/122)): `App.tsx` shows `LoginScreen` until there is a known identity (Google is the only method today; **which login to use is the backend's call**: the app asks `GET /auth/config` and the frontend has no flag or client ID of its own, see README → "Sign in with Google"). Everything else in `README.md`'s "Product vision" is live.
 
 The AI and speech features require desktop Chrome with the built-in AI flags enabled (README → "Browser & AI requirements"). They are always optional at runtime — see Browser AI rules below.
 
@@ -74,6 +74,8 @@ Tests must never be deleted to make a change land. If a test's behavior is genui
 - `useNewEntryFlow` — the capture → listening → processing → review state machine, speech, and AI orchestration.
 - `useExportActions` — Markdown/PDF/backup/restore, with a `busy` guard and a status message.
 - `useSyncOutbox` — registers the reconnect trigger and does a mount-time drain against the backend outbox (`src/lib/sync/`); exposes `queueEntryCreate` for `saveEntry` to call, `queueEntryDeletion` for `deleteEntry`, and `queueEntryCreates` for a backup restore (after the awaited `replaceEntries`, so entries that didn't persist locally never sync), and `syncStatus` (the timeline's sync line). It reads every finished drain, wherever it started, through `outboxRunner`'s `subscribeToDrains`, and forwards what each one learns about the session to `useAuth`.
+- `useAuthConfig` — which login the server wants, resolved in one place: `mode` `'loading' | 'none' | 'google' | 'unknown' | 'mock'` and the Google `clientId`. Asks `GET /auth/config`, caches the last good answer in IndexedDB, re-asks on reconnect while `unknown`.
+- `useAuth` — who is signed in: `mode`, `state` (`'loading' | 'signedIn' | 'signedOut'`), `profile`, `unverified`, `needsSignIn`, `notice`, `signInWithGoogle`, `logout`; also owns the outbox drain gate. The decisions live in `src/lib/auth/sessionFlows.ts`; it resolves on mount from the identity cached in IndexedDB (`src/lib/db/identityStore.ts`) plus `GET /auth/me`. `App.tsx` gates on `state` (not a navigation overlay); `noteAuthRequired` (a 401 from a drain) only raises `needsSignIn` and never gates.
 - `useEntryAttachments` — the attachment gallery (server-confirmed + locally-queued photos) for whichever entry is open, the upload flow, and removing a single photo.
 
 Keep these concerns separate: put new state in the hook that owns that concern (or a new one) rather than growing `useLogbookApp` back into a god hook.
@@ -85,13 +87,27 @@ Keep these concerns separate: put new state in the hook that owns that concern (
 Screens and hooks must not touch flag-gated browser globals directly. All browser-API access goes through thin, individually-tested wrappers:
 
 - `src/lib/ai/` — `availability`, `extractEntry`, `rewriteStory`, `searchEntries` (Prompt + Rewriter APIs)
-- `src/lib/db/` — IndexedDB: `entriesStore.ts` (entries), `outboxStore.ts` (pending sync ops), `syncStateStore.ts` (local-id ↔ server-id/version mapping)
+- `src/lib/db/` — IndexedDB: `entriesStore.ts` (entries), `outboxStore.ts` (pending sync ops), `syncStateStore.ts` (local-id ↔ server-id/version mapping), `identityStore.ts` (cached profile and auth config) and `localData.ts` (wipe/probe this device's entries, outbox and sync state)
 - `src/lib/backup/` — File System Access (JSON snapshot export/import)
 - `src/lib/export/` — pure Markdown/printable-HTML formatters; shared field rules live in `entryFields.ts` so formats can't drift apart
+- `src/lib/auth/` — `googleIdentity` (the only module that touches Google Identity Services; lazy-loads the GIS script and renders Google's button for the client ID the server gave), `authConfig` (the server's login config: types, validation, mode) and `sessionFlows` (the gate's decisions: restore, verify, sign in/out, account switch)
 - `src/lib/sync/` — the HTTP client for the `server/` backend (`httpClient`, `entriesApi`, `attachmentsApi`, `authApi`, `health`) plus the offline outbox (`outboxQueue`, `outboxRunner`)
 - `src/types/*.d.ts` — ambient declarations for APIs missing from the DOM lib (speech, Chrome AI, File System Access)
 
 This is what keeps a shifting origin-trial API surface a one-file change.
+
+## Sign-in gate vs. offline-first
+
+Whether there is a login is the server's call (`GET /auth/config`, via `useAuthConfig`): `none` (login off) and `unknown` (couldn't ask, nothing cached) are local-only: no gate, banner, Google script or `GET /auth/me`, and the outbox is held closed; `unknown` never traps an offline user and re-asks on `online`/focus/visible; a malformed config is `unknown`, never `none`, and isn't cached. The rules below apply in `google` mode. Why: `docs/ARCHITECTURE.md` → "Authentication: Sign in with Google".
+
+**The gate must never lock a signed-in user out of their own local logbook, nor throw away what they are doing.**
+
+- The full-screen gate shows only with no known identity, after sign-out, or on a 401 from `GET /auth/me`. A cached identity or local entries open the app offline as *unverified*, confirmed by retrying `GET /auth/me` now, every 30 s, and on online/focus/visible; a 401 there raises the banner, never the gate. A slow start opens a known device unverified after one timeout; a first-time device waits.
+- A **background 401** (only a 401) never unmounts the app: it raises a dismissible banner (`needsSignIn`), so a capture draft survives. A 403 is a generic sync error.
+- **One account per device.** A sign-in or verification whose user id differs from the cached identity's wipes local data (`clearLocalData`) and shows a notice; same id or no cached identity keeps everything.
+- **Sign-out needs a connection and never silently destroys unsynced work.** Decide from the outbox *content* after a sync: retryable items or an unreachable server abort with a Settings message; only never-syncing (rejected) items offer an explicit "Discard N … and sign out". Then server logout (a 401 counts as done), wipe local data, and only after the wipe clear the cached identity.
+- **One drain gate:** `setDrainsAllowed(boolean)` (`outboxRunner`), owned by `useAuth`: open only once the session is verified (a fresh `/auth/me` answered and the identity check ran), closed otherwise (including during a sign-in). Never upload under a session that hasn't been matched to this device.
+- Never add a startup check that blocks the shell on a live request. Only the first sign-in needs a network.
 
 ## Browser AI rules
 

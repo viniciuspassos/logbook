@@ -188,7 +188,9 @@ async function attemptRecord(
       return null
     }
     await recordAttemptFailure(record.queueId, message).catch(() => {})
-    const stoppedReason = error instanceof SyncAuthError ? 'auth' : 'error'
+    // Only a 401 means the session is gone. A 403 is a refusal (e.g. a stale
+    // CSRF cookie), shown as a generic sync error rather than "sign in".
+    const stoppedReason = error instanceof SyncAuthError && error.status === 401 ? 'auth' : 'error'
     return { processed: state.processed, stoppedReason, error: message }
   }
 }
@@ -196,7 +198,7 @@ async function attemptRecord(
 async function processQueue(records: OutboxRecord[], signal?: AbortSignal): Promise<DrainSummary> {
   const state: PassState = { processed: 0, blockedEntries: new Map() }
   for (const record of records) {
-    if (signal?.aborted) return { processed: state.processed, stoppedReason: 'aborted' }
+    if (signal?.aborted || !drainsAllowed) return { processed: state.processed, stoppedReason: 'aborted' }
     // The pass works from one snapshot; the user may have removed this op
     // since (deleted its entry or photo), so never run one that's gone.
     if (!(await hasRecord(record.queueId))) continue
@@ -266,6 +268,7 @@ async function drainUntilSettled(signal?: AbortSignal): Promise<DrainSummary> {
 }
 
 export function drainOutbox(signal?: AbortSignal): Promise<DrainSummary> {
+  if (!drainsAllowed) return Promise.resolve({ processed: 0, stoppedReason: 'aborted' })
   if (inFlight) {
     rerunRequested = true
     return inFlight
@@ -276,6 +279,17 @@ export function drainOutbox(signal?: AbortSignal): Promise<DrainSummary> {
       inFlight = null
     })
   return inFlight
+}
+
+// While drains are not allowed every trigger (mount, save, upload, `online`) is a
+// no-op, as they all go through drainOutbox. useAuth owns the flag: nothing
+// uploads under a session not yet matched to this device's identity, and a
+// login-less app never churns on 401s.
+let drainsAllowed = true
+
+/** Allows or blocks all drains; one already running stops at its next operation. A blocked drain reports `'aborted'`. */
+export function setDrainsAllowed(allowed: boolean): void {
+  drainsAllowed = allowed
 }
 
 /**

@@ -13,6 +13,7 @@ import { IDBFactory } from 'fake-indexeddb'
 import {
   DB_VERSION,
   ENTRIES_STORE,
+  IDENTITY_STORE,
   OUTBOX_STORE,
   SYNC_STATE_STORE,
   getDbName,
@@ -50,11 +51,11 @@ describe('isPersistenceSupported', () => {
 })
 
 describe('openLogbookDb', () => {
-  it('creates all three object stores on a fresh database', async () => {
+  it('creates all four object stores on a fresh database', async () => {
     const db = await openLogbookDb()
     try {
       expect(Array.from(db.objectStoreNames).sort()).toEqual(
-        [ENTRIES_STORE, OUTBOX_STORE, SYNC_STATE_STORE].sort(),
+        [ENTRIES_STORE, IDENTITY_STORE, OUTBOX_STORE, SYNC_STATE_STORE].sort(),
       )
     } finally {
       db.close()
@@ -86,7 +87,7 @@ describe('openLogbookDb', () => {
     try {
       expect(db.version).toBe(DB_VERSION)
       expect(Array.from(db.objectStoreNames).sort()).toEqual(
-        [ENTRIES_STORE, OUTBOX_STORE, SYNC_STATE_STORE].sort(),
+        [ENTRIES_STORE, IDENTITY_STORE, OUTBOX_STORE, SYNC_STATE_STORE].sort(),
       )
       const entry = await new Promise((resolve, reject) => {
         const request = db.transaction(ENTRIES_STORE, 'readonly').objectStore(ENTRIES_STORE).get(1)
@@ -97,6 +98,55 @@ describe('openLogbookDb', () => {
     } finally {
       db.close()
     }
+  })
+
+  it('rejects instead of hanging when another open tab holds an older version open (blocked upgrade)', async () => {
+    // A tab still on v2 never closes its connection, so the v3 upgrade blocks.
+    const holder = await new Promise<IDBDatabase>((resolve, reject) => {
+      const request = indexedDB.open(getDbName(), 2)
+      request.onupgradeneeded = () => request.result.createObjectStore(ENTRIES_STORE, { keyPath: 'id' })
+      request.onsuccess = () => resolve(request.result)
+      request.onerror = () => reject(request.error)
+    })
+
+    await expect(openLogbookDb()).rejects.toThrow(/blocked/i)
+
+    holder.close()
+  })
+
+  it('closes a connection it opened when a newer version wants to upgrade (versionchange)', async () => {
+    const db = await openLogbookDb()
+    const upgraded = await new Promise<IDBDatabase>((resolve, reject) => {
+      const request = indexedDB.open(getDbName(), DB_VERSION + 1)
+      request.onblocked = () => reject(new Error('the old connection stayed open'))
+      request.onsuccess = () => resolve(request.result)
+      request.onerror = () => reject(request.error)
+    })
+
+    expect(() => db.transaction(ENTRIES_STORE)).toThrow()
+    upgraded.close()
+  })
+
+  it('closes the connection that finally opens after an earlier blocked rejection', async () => {
+    const holder = await new Promise<IDBDatabase>((resolve, reject) => {
+      const request = indexedDB.open(getDbName(), 2)
+      request.onupgradeneeded = () => request.result.createObjectStore(ENTRIES_STORE, { keyPath: 'id' })
+      request.onsuccess = () => resolve(request.result)
+      request.onerror = () => reject(request.error)
+    })
+    await expect(openLogbookDb()).rejects.toThrow(/blocked/i)
+
+    holder.close()
+    // The abandoned upgrade now completes and must not leave a connection open,
+    // or the next open at a higher version would block on it.
+    await new Promise((resolve) => setTimeout(resolve, 20))
+    const upgraded = await new Promise<IDBDatabase>((resolve, reject) => {
+      const request = indexedDB.open(getDbName(), DB_VERSION + 1)
+      request.onblocked = () => reject(new Error('left open'))
+      request.onsuccess = () => resolve(request.result)
+      request.onerror = () => reject(request.error)
+    })
+    upgraded.close()
   })
 
   it('rejects when indexedDB is unavailable', async () => {

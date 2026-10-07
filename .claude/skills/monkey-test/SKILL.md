@@ -30,7 +30,7 @@ Launch the matching agent (`monkey-tester-frontend` or `monkey-tester-backend`) 
 - the seed: today's date (`date +%Y%m%d`) unless `$ARGUMENTS` gives one, so each night differs;
 - the counting rule: actions or requests are counted by the harness in one log file, and the report's count is that log's line count, with the log path in the report;
 - the preflight check before the timed run: for frontend, the selector check, a hard gate that prints `SELECTOR CHECK: n/n` and must pass before the timed run, where locator misses are script bugs, not findings; for backend, the auth check, where harness auth or CSRF failures are script bugs, not findings;
-- for frontend, that password and sign-in fields on the throwaway local app are tested with fake values, not skipped.
+- for frontend, that the app opens behind a Google sign-in screen: Google is the only method and cannot be driven with fake credentials, so the plan starts the throwaway app with `npm run dev:mocked` (which skips the sign-in gate) and treats the sign-in screen itself as out of scope.
 
 ## Step 3 — Report
 Relay the agent's report to the user in your own words, preserving the severity ranking, seed, and repro steps. Note which plan was used (one line) and flag anything the agent said it skipped. If the agent stopped early (safety rule, tool failures, unreachable target), say so plainly and what the user must do to unblock it.

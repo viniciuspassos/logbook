@@ -1,5 +1,5 @@
 import { act, renderHook } from '@testing-library/react'
-import { useLogbookApp } from './useLogbookApp.ts'
+import { localDataReset, useLogbookApp } from './useLogbookApp.ts'
 import { extractEntry } from '../lib/ai/extractEntry.ts'
 import { rewriteStory } from '../lib/ai/rewriteStory.ts'
 import { importBackup } from '../lib/backup/exportBackup.ts'
@@ -405,10 +405,11 @@ describe('useLogbookApp', () => {
     expect(() => unmount()).not.toThrow()
   })
 
-  it('exposes auth (#57) so Settings can offer a sign-in form without useLogbookApp owning any auth state itself', () => {
+  it('exposes auth (#122) so App can gate on it without useLogbookApp owning any auth state itself', () => {
+    // Mocked mode (set for this suite) skips the gate, so no backend is hit.
     const { result } = renderHook(() => useLogbookApp())
-    expect(result.current.auth.state).toBe('unknown')
-    expect(typeof result.current.auth.login).toBe('function')
+    expect(result.current.auth.state).toBe('signedIn')
+    expect(typeof result.current.auth.signInWithGoogle).toBe('function')
     expect(typeof result.current.auth.logout).toBe('function')
   })
 
@@ -417,5 +418,37 @@ describe('useLogbookApp', () => {
     const { result } = renderHook(() => useLogbookApp())
     expect(result.current.entries).toEqual([])
     globalThis.__LOGBOOK_MOCKED__ = true
+  })
+})
+
+describe('localDataReset', () => {
+  it('closes whatever is open and empties the in-memory list', () => {
+    const closeOverlay = jest.fn()
+    const replaceEntries = jest.fn().mockResolvedValue(undefined)
+
+    localDataReset(closeOverlay, replaceEntries)()
+
+    expect(closeOverlay).toHaveBeenCalledTimes(1)
+    expect(replaceEntries).toHaveBeenCalledWith([])
+  })
+
+  it('waits for the list to be emptied, so the caller can order it before the new session shows', async () => {
+    let finish: (() => void) | undefined
+    const replaceEntries = jest.fn().mockReturnValue(new Promise<void>((resolve) => (finish = resolve)))
+    let done = false
+
+    void localDataReset(jest.fn(), replaceEntries)().then(() => (done = true))
+    await Promise.resolve()
+    expect(done).toBe(false)
+
+    finish?.()
+    await Promise.resolve()
+    await Promise.resolve()
+    expect(done).toBe(true)
+  })
+
+  it('rejects when the write fails, so the failure can be shown instead of swallowed', async () => {
+    const replaceEntries = jest.fn().mockRejectedValue(new Error('boom'))
+    await expect(localDataReset(jest.fn(), replaceEntries)()).rejects.toThrow('boom')
   })
 })

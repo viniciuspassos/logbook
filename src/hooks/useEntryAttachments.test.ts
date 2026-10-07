@@ -310,18 +310,6 @@ describe('useEntryAttachments', () => {
     expect(onAuthRequired).not.toHaveBeenCalled()
   })
 
-  it('reports the session is confirmed valid once a photo actually uploads', async () => {
-    drainMock.mockResolvedValue({ processed: 1, stoppedReason: 'empty' })
-    const onAuthConfirmed = jest.fn()
-    const { result } = renderHook(() => useEntryAttachments(makeEntry(1), { onAuthConfirmed }))
-    await waitFor(() => expect(sourcesMock).toHaveBeenCalled())
-
-    act(() => result.current.addPhoto(fakeFile('summit.jpg')))
-
-    await waitFor(() => expect(result.current.status?.message).toBe('Photo uploaded.'))
-    expect(onAuthConfirmed).toHaveBeenCalledTimes(1)
-  })
-
   it('shows an error status when queuing itself fails', async () => {
     queueUploadMock.mockRejectedValue(new Error('boom'))
     const { result } = renderHook(() => useEntryAttachments(makeEntry(1)))
@@ -420,16 +408,14 @@ describe('useEntryAttachments', () => {
       expect(result.current.busy).toBe(false)
     })
 
-    it('queues a server delete, drains, and confirms once it went through', async () => {
-      const onAuthConfirmed = jest.fn()
-      const { result } = await renderWith({ serverAttachments: [attachment], pending: [] }, { onAuthConfirmed })
+    it('queues a server delete and drains once it went through', async () => {
+      const { result } = await renderWith({ serverAttachments: [attachment], pending: [] })
       drainMock.mockResolvedValue({ processed: 1, stoppedReason: 'empty' })
 
       act(() => result.current.removePhoto(result.current.attachments[0]))
 
       await waitFor(() => expect(result.current.status?.message).toBe('Photo removed.'))
       expect(queueDeleteMock).toHaveBeenCalledWith(1, 10)
-      expect(onAuthConfirmed).toHaveBeenCalledTimes(1)
       expect(result.current.attachments).toEqual([])
     })
 

@@ -20,6 +20,31 @@
   display: none;
 }
 
+/* Room for the fixed banner above the shell. */
+.app--with-banner {
+  padding-top: var(--lb-banner-height);
+}
+
+/* "Sign in again", opened from the banner over the still-mounted app so an
+   in-progress draft survives. */
+.reauth {
+  position: fixed;
+  inset: 0;
+  z-index: 50;
+  overflow: auto;
+  background: var(--lb-bg);
+}
+
+/* The instant it takes to read the cached identity on startup. */
+.splash {
+  width: 100%;
+  min-height: 100dvh;
+  display: grid;
+  place-items: center;
+  background: var(--lb-page-bg);
+  color: var(--lb-muted);
+}
+
 /* Above --lb-desktop the app stops being a single phone card and fills the
    window as three columns on the sky: the navy nav rail (TabBar), the list,
    and a white reading panel. The selected list row (EntryCard .is-selected)

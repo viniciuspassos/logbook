@@ -57,6 +57,13 @@ beforeEach(() => {
   queueEntryDeletionMock.mockResolvedValue(undefined)
 })
 
+describe('useSyncOutbox sync status when the server has login off', () => {
+  it('says sync is off', () => {
+    const { result } = renderHook(() => useSyncOutbox({ syncOff: true }))
+    expect(result.current.syncStatus).toBe('Saved locally · sync is off on this server')
+  })
+})
+
 describe('useSyncOutbox', () => {
   it('reports "Saved locally" until a drain says otherwise, then follows each outcome', () => {
     const { result } = renderHook(() => useSyncOutbox())
@@ -177,32 +184,36 @@ describe('useSyncOutbox', () => {
   describe('auth reporting', () => {
     function renderWithAuth() {
       const onAuthRequired = jest.fn()
-      const onAuthConfirmed = jest.fn()
-      renderHook(() => useSyncOutbox({ onAuthRequired, onAuthConfirmed }))
+      renderHook(() => useSyncOutbox({ onAuthRequired }))
       const listener = subscribeMock.mock.calls[0][0]
-      return { onAuthRequired, onAuthConfirmed, listener }
+      return { onAuthRequired, listener }
     }
 
     it('calls onAuthRequired when any drain finds the session is gone, wherever it started', () => {
-      const { onAuthRequired, onAuthConfirmed, listener } = renderWithAuth()
+      const { onAuthRequired, listener } = renderWithAuth()
       act(() => listener({ processed: 0, stoppedReason: 'auth', error: 'Authentication required.' }))
       expect(onAuthRequired).toHaveBeenCalledTimes(1)
-      expect(onAuthConfirmed).not.toHaveBeenCalled()
     })
 
-    it('calls onAuthConfirmed when a drain actually processed something', () => {
-      const { onAuthRequired, onAuthConfirmed, listener } = renderWithAuth()
+    it('calls onSynced when a drain actually got something through, and only then', () => {
+      const onSynced = jest.fn()
+      renderHook(() => useSyncOutbox({ onSynced }))
+      const listener = subscribeMock.mock.calls[0][0]
+
+      act(() => listener({ processed: 0, stoppedReason: 'empty' }))
+      act(() => listener({ processed: 0, stoppedReason: 'aborted' }))
+      expect(onSynced).not.toHaveBeenCalled()
+
       act(() => listener({ processed: 2, stoppedReason: 'empty' }))
-      expect(onAuthConfirmed).toHaveBeenCalledTimes(1)
-      expect(onAuthRequired).not.toHaveBeenCalled()
+      expect(onSynced).toHaveBeenCalledTimes(1)
     })
 
-    it('does not call either auth callback when a drain found nothing to do or was aborted', () => {
-      const { onAuthRequired, onAuthConfirmed, listener } = renderWithAuth()
+    it('does not call it when a drain succeeded, found nothing to do or was aborted', () => {
+      const { onAuthRequired, listener } = renderWithAuth()
+      act(() => listener({ processed: 2, stoppedReason: 'empty' }))
       act(() => listener({ processed: 0, stoppedReason: 'empty' }))
       act(() => listener({ processed: 0, stoppedReason: 'aborted' }))
       expect(onAuthRequired).not.toHaveBeenCalled()
-      expect(onAuthConfirmed).not.toHaveBeenCalled()
     })
   })
 })

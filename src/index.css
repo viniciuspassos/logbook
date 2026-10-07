@@ -52,6 +52,8 @@
   --lb-hero-top: #7fb2de;
   --lb-hero-mid: #b9d7ee;
   --lb-hero-bottom: #ffffff;
+  /* Contour lines of the login screen's art, drawn on the navy rail colour. */
+  --lb-contour: #4f78b0;
 
   /* Minimal spacing/radius scale — new/changed CSS only; existing screens'
      literals are out of scope for this pass. */
@@ -64,6 +66,8 @@
   --lb-radius-sm: 8px;
   --lb-radius-md: 14px;
   --lb-radius-lg: 18px;
+  /* Height of the "sign in again" banner; the app shell is pushed down by it. */
+  --lb-banner-height: 60px;
 
   --sans: system-ui, -apple-system, 'Segoe UI', Roboto, sans-serif;
   --display: 'Archivo', var(--sans);
@@ -110,6 +114,7 @@
     --lb-hero-top: #1f4677;
     --lb-hero-mid: #1a325c;
     --lb-hero-bottom: #16264a;
+    --lb-contour: #37609a;
   }
 }
 

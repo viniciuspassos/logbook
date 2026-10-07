@@ -13,9 +13,9 @@ capturing, structuring, and polishing an adventure log works without a network r
 > of truth. A background outbox also pushes entries and photos to a NestJS + Postgres backend
 > (`server/`) whenever it's reachable, degrading silently otherwise.
 >
+> Access is gated behind **Sign in with Google** (see [Sign in with Google](#sign-in-with-google)).
 > Still outstanding on the cloud-sync side (see [Product vision](#product-vision)): there's no
-> pull/reconcile path back from the server (today's outbox only pushes local changes), and no
-> login screen is wired up, so sync will 401 against a deployment with auth enabled.
+> pull/reconcile path back from the server (today's outbox only pushes local changes).
 >
 > The AI features need desktop Chrome with the built-in AI flags enabled (see
 > [Browser & AI requirements](#browser--ai-requirements)); without them the app degrades to
@@ -73,10 +73,48 @@ npm run dev                 # in another terminal — vite.config.ts proxies /ap
 ```
 
 See [`docs/INFRASTRUCTURE.md`](docs/INFRASTRUCTURE.md) → "Optional local backend infra" for the
-full Compose setup and → "Backend authentication" for `AUTH_PASSWORD_HASH`. One current gap: no
-login screen is wired up in the app yet (see [Product vision](#product-vision)), so even with the
-backend running, uploads 401 until a session cookie is established out-of-band — this is tracked,
-not yet closed.
+full Compose setup and → "Backend authentication" for the server's auth settings. The app opens
+behind a Google sign-in screen, so you also need the one-time Google setup below.
+
+### Sign in with Google
+
+Authentication is the **backend's** responsibility, so the app has no login flag and no client ID of
+its own. On start it asks the server which login it wants (`GET /auth/config`, public) and caches the
+last good answer:
+
+| Server answers | App mode | What you get |
+| --- | --- | --- |
+| `{ "methods": [] }` (login off) | `none` | Local-only: no sign-in screen, no banner, no Google script, no `/auth/me`, and the sync queue is held back. Settings says "Local only · sign-in is off on this server"; the timeline says sync is off. |
+| `{ "methods": [{ "type": "google", "clientId": "…" }] }` | `google` | A mandatory Google sign-in (below), using the client ID the server gave. |
+| nothing (offline, down, 5xx, old server) and nothing cached | `unknown` | The app opens local-only rather than trapping an offline user, and asks again when the connection returns, then switches to `google` or `none`. |
+
+The type of login is configured **on the server** (`GOOGLE_AUTH_ENABLED`, plus the client ID and
+allowlist; see `docs/INFRASTRUCTURE.md`). Nothing about it is set in the frontend build or `.env`.
+`npm run dev:mocked` keeps skipping all of this (sample data, no backend).
+
+With `google` on, Logbook opens only for a signed-in user. The sign-in screen
+(`src/screens/LoginScreen.tsx`) renders Google's own button; the backend verifies the ID token
+(`POST /auth/google`) and starts a session. One-time Google setup, for whoever runs the server:
+
+1. In the [Google Cloud console](https://console.cloud.google.com/apis/credentials), configure the
+   OAuth consent screen, then create an **OAuth client ID** of type **Web application**.
+2. Under **Authorized JavaScript origins**, add every origin the app is served from, for example
+   `http://localhost:5173` for `npm run dev` and your production origin. No redirect URIs are
+   needed: the button hands an ID token back to the page, not through a redirect.
+3. Give the client ID to the **server** (its environment); the app learns it from `GET /auth/config`.
+   A client ID is public by design.
+
+**Offline and accounts.** The first sign-in needs a connection (Google's script loads from Google).
+After that the signed-in profile is cached on the device, so reopening Logbook with no signal goes
+straight to your entries. If the session expires while you're using the app, a "Sign in again to
+resume syncing" banner appears instead of kicking you out, so a half-written entry survives.
+
+**One account per device.** Signing in as a different Google account than the one this device last
+used removes the previous account's entries from the device (a short notice says so; they stay on the
+server). **Signing out needs a connection**: it first syncs your entries (if anything can't be synced,
+it refuses and says so; entries the server rejected for good can be discarded with one explicit button),
+signs out on the server, then removes this device's entries. If the server
+later says login is off, the app goes local-only and leaves everything untouched.
 
 ---
 
@@ -170,7 +208,9 @@ src/
   lib/
     ai/                  # Chrome built-in AI wrappers: availability, extractEntry,
                          #   rewriteStory, searchEntries
-    db/                  # entriesStore, outboxStore, syncStateStore — IndexedDB wrappers
+    db/                  # entriesStore, outboxStore, syncStateStore, identityStore, localData — IndexedDB wrappers
+    auth/                # googleIdentity (Google Identity Services wrapper), authConfig (the
+                         #   server's login config), sessionFlows (the sign-in gate's decisions)
     backup/              # JSON snapshot export/import (File System Access)
     export/              # Markdown + printable-PDF formatters
     sync/                # Backend HTTP client (entriesApi, attachmentsApi, authApi, health)
@@ -229,7 +269,7 @@ feature from request to merged PR.
 ## Product vision
 
 The sections below describe the intended product. Everything here is implemented except the
-sync gaps called out explicitly below (no pull/reconcile sync, no login screen).
+sync gap called out explicitly below (no pull/reconcile sync).
 
 ### Core features
 
@@ -266,8 +306,7 @@ The application must:
   the backend whenever it's reachable. IndexedDB is still authoritative in shipped code, though:
   there's no pull/reconcile path back from the server yet, a version conflict
   ([#24](https://github.com/viniciuspassos/logbook/issues/24)) is left queued rather than
-  auto-resolved, and there's no login screen wired up, so sync 401s against a deployment with auth
-  enabled until that lands.
+  auto-resolved. Access is gated behind Sign in with Google.
 
 > One caveat on "completely offline": Chrome's **Web Speech API** may route audio to a network
 > service, so voice capture specifically can require connectivity. Extraction, rewriting, search,
