@@ -393,7 +393,7 @@ describe('App', () => {
       render(<App />)
       await screen.findByRole('button', { name: /new entry/i })
 
-      expect(await screen.findByText('Saved locally · sync is off')).toBeInTheDocument()
+      expect(await screen.findByText('Saved locally · sync is off on this server')).toBeInTheDocument()
       await user.click(screen.getByRole('button', { name: /settings/i }))
       expect(screen.getByText('Local only · sign-in is off on this server')).toBeInTheDocument()
       await act(async () => {})

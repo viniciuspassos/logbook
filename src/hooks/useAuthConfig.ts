@@ -16,7 +16,7 @@ import {
   startupFallback,
 } from '../lib/auth/sessionFlows.ts'
 import { shouldUseMockData } from '../lib/config/mockData.ts'
-import { onBackOnline } from '../lib/sync/connectivity.ts'
+import { useRetryWhileActive } from './useRetryWhileActive.ts'
 
 export interface AuthModeState {
   mode: AuthMode
@@ -54,20 +54,13 @@ function useStartupConfig(
   }, [mock, update, setState])
 }
 
-/** While the config is unknown, ask again whenever the app may be reachable (online, focus, visible). */
+/** While the config is unknown, ask again: now, every 30 seconds, and whenever the app may be reachable. */
 function useRetryWhileUnknown(unknown: boolean, update: (next: ConfigState) => void) {
-  useEffect(() => {
-    if (!unknown) return
-    let asking = false
-    return onBackOnline(() => {
-      if (asking) return
-      asking = true
-      void refreshAuthConfig().then((config) => {
-        asking = false
-        if (config) update(knownConfig(config))
-      })
-    })
-  }, [unknown, update])
+  useRetryWhileActive(unknown, async () => {
+    const config = await refreshAuthConfig()
+    if (config) update(knownConfig(config))
+    return config !== null
+  })
 }
 
 /**

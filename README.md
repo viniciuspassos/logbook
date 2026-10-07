@@ -112,7 +112,8 @@ resume syncing" banner appears instead of kicking you out, so a half-written ent
 **One account per device.** Signing in as a different Google account than the one this device last
 used removes the previous account's entries from the device (a short notice says so; they stay on the
 server). **Signing out needs a connection**: it first syncs your entries (if anything can't be synced,
-it refuses and says so), signs out on the server, then removes this device's entries. If the server
+it refuses and says so; entries the server rejected for good can be discarded with one explicit button),
+signs out on the server, then removes this device's entries. If the server
 later says login is off, the app goes local-only and leaves everything untouched.
 
 ---

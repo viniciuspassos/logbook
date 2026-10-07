@@ -102,10 +102,10 @@ Whether there is a login is the server's call (`GET /auth/config`, via `useAuthC
 
 **The gate must never lock a signed-in user out of their own local logbook, nor throw away what they are doing.**
 
-- The full-screen gate shows only with no known identity, after sign-out, or on a 401 from `GET /auth/me`. A cached identity or local entries open the app offline as *unverified*, confirmed when the app regains the network or focus (no timers). A slow start opens a known device unverified after one timeout; a first-time device waits.
+- The full-screen gate shows only with no known identity, after sign-out, or on a 401 from `GET /auth/me`. A cached identity or local entries open the app offline as *unverified*, confirmed by retrying `GET /auth/me` now, every 30 s, and on online/focus/visible; a 401 there raises the banner, never the gate. A slow start opens a known device unverified after one timeout; a first-time device waits.
 - A **background 401** (only a 401) never unmounts the app: it raises a dismissible banner (`needsSignIn`), so a capture draft survives. A 403 is a generic sync error.
 - **One account per device.** A sign-in or verification whose user id differs from the cached identity's wipes local data (`clearLocalData`) and shows a notice; same id or no cached identity keeps everything.
-- **Sign-out needs a connection.** It syncs the outbox first (anything left queued or an unreachable server aborts with a Settings message, changing nothing), signs out on the server (a 401 counts as done), then clears the cached identity and wipes local data.
+- **Sign-out needs a connection and never silently destroys unsynced work.** Decide from the outbox *content* after a sync: retryable items or an unreachable server abort with a Settings message; only never-syncing (rejected) items offer an explicit "Discard N … and sign out". Then server logout (a 401 counts as done), wipe local data, and only after the wipe clear the cached identity.
 - **One drain gate:** `setDrainsAllowed(boolean)` (`outboxRunner`), owned by `useAuth`: open only once the session is verified (a fresh `/auth/me` answered and the identity check ran), closed otherwise (including during a sign-in). Never upload under a session that hasn't been matched to this device.
 - Never add a startup check that blocks the shell on a live request. Only the first sign-in needs a network.
 

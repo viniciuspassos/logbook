@@ -1,5 +1,7 @@
 import { act, renderHook, waitFor } from '@testing-library/react'
 import { useAuth, type UseAuthOptions } from './useAuth.ts'
+import { RETRY_INTERVAL_MS } from './useRetryWhileActive.ts'
+import { UnsyncedItemsError } from '../lib/auth/sessionFlows.ts'
 import {
   ACCOUNT_CHANGED_NOTICE,
   SIGN_OUT_NEEDS_CONNECTION,
@@ -16,7 +18,7 @@ import {
   putCachedAuthConfig,
   putCachedIdentity,
 } from '../lib/db/identityStore.ts'
-import { clearLocalData, hasLocalData } from '../lib/db/localData.ts'
+import { clearLocalData, countOutbox, hasLocalData } from '../lib/db/localData.ts'
 import { drainOutbox, setDrainsAllowed } from '../lib/sync/outboxRunner.ts'
 import { SyncAuthError, SyncHttpError, SyncNetworkError } from '../lib/sync/errors.ts'
 import type { AuthProfile } from '../types/auth.ts'
@@ -58,6 +60,7 @@ beforeEach(() => {
   mocked(loginWithGoogle).mockResolvedValue({ status: 'ok' })
   mocked(logout).mockResolvedValue({ status: 'ok' })
   mocked(hasLocalData).mockResolvedValue(false)
+  mocked(countOutbox).mockResolvedValue({ retryable: 0, parked: 0 })
   mocked(drainOutbox).mockResolvedValue({ processed: 0, stoppedReason: 'empty' })
 })
 
@@ -135,6 +138,34 @@ describe('useAuth: startup', () => {
     expect(onLocalDataReset).toHaveBeenCalledTimes(1)
     expect(result.current.profile).toEqual(grace)
     expect(result.current.unverified).toBe(false)
+  })
+
+  it('resets the in-memory list BEFORE the new session becomes visible (no flash of the old account\'s entries)', async () => {
+    mocked(getCachedIdentity).mockResolvedValue(ada)
+    mocked(getMe).mockResolvedValue(grace)
+    let finishReset: (() => void) | undefined
+    const onLocalDataReset = jest.fn().mockReturnValue(new Promise<void>((resolve) => (finishReset = resolve)))
+    const { result } = renderHook(() => useAuth({ onLocalDataReset }))
+    await waitFor(() => expect(onLocalDataReset).toHaveBeenCalled())
+    await act(async () => {})
+
+    expect(result.current.notice).toBeNull()
+    expect(result.current.profile).toEqual(ada)
+
+    await act(async () => finishReset?.())
+    expect(result.current.notice).toBe(ACCOUNT_CHANGED_NOTICE)
+    expect(result.current.profile).toEqual(grace)
+  })
+
+  it('says so, instead of swallowing it, when that reset fails (the session still opens)', async () => {
+    mocked(getCachedIdentity).mockResolvedValue(ada)
+    mocked(getMe).mockResolvedValue(grace)
+    const onLocalDataReset = jest.fn().mockRejectedValue(new Error('boom'))
+    const { result } = renderHook(() => useAuth({ onLocalDataReset }))
+
+    await waitFor(() => expect(result.current.profile).toEqual(grace))
+
+    expect(result.current.error).toBe("Couldn't refresh the entries on screen. Reload the app.")
   })
 
   it('lets the user dismiss that notice', async () => {
@@ -264,7 +295,7 @@ describe('useAuth: verifying an unverified session (when the app may be reachabl
     expect(result.current.state).toBe('signedIn')
   })
 
-  it('shows the full gate when a never-verified session (no cached identity) turns out to be a 401', async () => {
+  it('raises the banner, not the gate (which would discard a capture in progress), when a never-verified session turns out to be a 401', async () => {
     mocked(getMe).mockRejectedValue(new SyncNetworkError())
     mocked(hasLocalData).mockResolvedValue(true)
     const hook = renderHook(() => useAuth())
@@ -274,7 +305,43 @@ describe('useAuth: verifying an unverified session (when the app may be reachabl
 
     goOnline()
 
-    await waitFor(() => expect(hook.result.current.state).toBe('signedOut'))
+    await waitFor(() => expect(hook.result.current.needsSignIn).toBe(true))
+    expect(hook.result.current.state).toBe('signedIn')
+  })
+
+  it('re-verifies on its own every 30 seconds while unverified, with no online or focus event', async () => {
+    jest.useFakeTimers()
+    mocked(getCachedIdentity).mockResolvedValue(grace)
+    mocked(getMe).mockRejectedValue(new SyncNetworkError())
+    const { result } = renderHook(() => useAuth())
+    await act(async () => {
+      await jest.advanceTimersByTimeAsync(0)
+    })
+    expect(result.current.unverified).toBe(true)
+    mocked(getMe).mockResolvedValue(grace)
+
+    await act(async () => {
+      await jest.advanceTimersByTimeAsync(RETRY_INTERVAL_MS)
+    })
+
+    expect(result.current.unverified).toBe(false)
+  })
+
+  it('stops trying once verified', async () => {
+    jest.useFakeTimers()
+    mocked(getCachedIdentity).mockResolvedValue(grace)
+    mocked(getMe).mockRejectedValueOnce(new SyncNetworkError()).mockResolvedValue(grace)
+    renderHook(() => useAuth())
+    await act(async () => {
+      await jest.advanceTimersByTimeAsync(0)
+    })
+    const calls = mocked(getMe).mock.calls.length
+
+    await act(async () => {
+      await jest.advanceTimersByTimeAsync(RETRY_INTERVAL_MS * 4)
+    })
+
+    expect(mocked(getMe).mock.calls.length).toBe(calls)
   })
 
   it('keeps a never-verified session open on a 5xx from /auth/me (that is not a verdict)', async () => {
@@ -529,6 +596,7 @@ describe('useAuth: logout (needs a connection)', () => {
     const onLocalDataReset = jest.fn()
     const { result } = await renderSignedIn({ onLocalDataReset })
     mocked(drainOutbox).mockResolvedValue({ processed: 0, stoppedReason: 'unreachable' })
+    mocked(countOutbox).mockResolvedValue({ retryable: 2, parked: 0 })
 
     await act(async () => {
       await result.current.logout()
@@ -545,6 +613,7 @@ describe('useAuth: logout (needs a connection)', () => {
   it('says to sign in again when the session is already gone', async () => {
     const { result } = await renderSignedIn()
     mocked(drainOutbox).mockResolvedValue({ processed: 0, stoppedReason: 'auth' })
+    mocked(countOutbox).mockResolvedValue({ retryable: 1, parked: 0 })
 
     await act(async () => {
       await result.current.logout()
@@ -561,6 +630,7 @@ describe('useAuth: logout (needs a connection)', () => {
     const { result } = renderHook(() => useAuth())
     await waitFor(() => expect(result.current.unverified).toBe(true))
     mocked(drainOutbox).mockResolvedValue({ processed: 0, stoppedReason: 'aborted' })
+    mocked(countOutbox).mockResolvedValue({ retryable: 1, parked: 0 })
 
     await act(async () => {
       await result.current.logout()
@@ -570,6 +640,60 @@ describe('useAuth: logout (needs a connection)', () => {
 
     expect(result.current.unverified).toBe(false)
     expect(result.current.profile).toEqual(grace)
+  })
+
+  it('lets an unverified, online session with an empty outbox sign out (its drain gate is closed, so the drain is a no-op)', async () => {
+    mocked(getCachedIdentity).mockResolvedValue(grace)
+    mocked(getMe).mockReturnValue(new Promise(() => undefined))
+    const { result } = renderHook(() => useAuth())
+    await waitFor(() => expect(result.current.unverified).toBe(true))
+    mocked(drainOutbox).mockResolvedValue({ processed: 0, stoppedReason: 'aborted' })
+
+    await act(async () => {
+      await result.current.logout()
+    })
+
+    expect(result.current.error).toBeNull()
+    expect(result.current.state).toBe('signedOut')
+  })
+
+  it('offers to discard, and signs out only on that explicit request, when only never-syncing items remain', async () => {
+    const onLocalDataReset = jest.fn()
+    const { result } = await renderSignedIn({ onLocalDataReset })
+    mocked(countOutbox).mockResolvedValue({ retryable: 0, parked: 3 })
+
+    await act(async () => {
+      await result.current.logout()
+    })
+
+    expect(result.current.unsyncedCount).toBe(3)
+    expect(result.current.error).toBe(new UnsyncedItemsError(3).message)
+    expect(result.current.state).toBe('signedIn')
+    expect(clearLocalData).not.toHaveBeenCalled()
+
+    await act(async () => {
+      await result.current.discardUnsyncedAndLogout()
+    })
+
+    expect(clearLocalData).toHaveBeenCalledTimes(1)
+    expect(result.current.state).toBe('signedOut')
+    expect(result.current.unsyncedCount).toBe(0)
+    expect(result.current.error).toBeNull()
+  })
+
+  it('forgets the discard offer on the next sign-out attempt', async () => {
+    const { result } = await renderSignedIn()
+    mocked(countOutbox).mockResolvedValueOnce({ retryable: 0, parked: 2 }).mockResolvedValue({ retryable: 0, parked: 0 })
+    await act(async () => {
+      await result.current.logout()
+    })
+    expect(result.current.unsyncedCount).toBe(2)
+
+    await act(async () => {
+      await result.current.logout()
+    })
+
+    expect(result.current.unsyncedCount).toBe(0)
   })
 
   it('clears the message and succeeds on a retry once the connection is back', async () => {
@@ -608,6 +732,18 @@ describe('useAuth: logout (needs a connection)', () => {
     })
 
     expect(result.current.error).toBe('Something went wrong. Try again.')
+  })
+})
+
+describe('useAuth: noteSynced', () => {
+  it('clears the "sign in again" banner once a drain makes progress (the session evidently works again)', async () => {
+    const { result } = await renderSignedIn()
+    act(() => result.current.noteAuthRequired())
+    expect(result.current.needsSignIn).toBe(true)
+
+    act(() => result.current.noteSynced())
+
+    expect(result.current.needsSignIn).toBe(false)
   })
 })
 

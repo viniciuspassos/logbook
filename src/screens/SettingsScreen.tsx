@@ -132,6 +132,8 @@ export function SettingsScreen({ entryCount, exports, auth }: SettingsScreenProp
             profile={auth.profile}
             pending={auth.pending}
             status={auth.pending ? 'Signing out…' : auth.error}
+            unsyncedCount={auth.unsyncedCount}
+            onDiscard={auth.discardUnsyncedAndLogout}
             onLogout={auth.logout}
           />
         )}

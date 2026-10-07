@@ -136,6 +136,20 @@ describe('LoginScreen', () => {
     expect(screen.getByRole('status')).toHaveTextContent('Sign-in expired. Try again.')
   })
 
+  it('keeps the button when the parent passes a new callback mid sign-in, but uses the latest one', async () => {
+    const first = jest.fn()
+    const second = jest.fn()
+    const { rerender } = await renderScreen(makeProps({ onCredential: first }))
+
+    rerender(<LoginScreen {...makeProps({ onCredential: second })} />)
+    await act(async () => {})
+
+    expect(renderMock).toHaveBeenCalledTimes(1)
+    renderMock.mock.calls[0][1].onCredential('id-token')
+    expect(first).not.toHaveBeenCalled()
+    expect(second).toHaveBeenCalledWith('id-token')
+  })
+
   it('removes the rendered button from its slot on unmount', async () => {
     const { container, unmount } = await renderScreen()
     const slot = container.querySelector('.login__google') as HTMLElement

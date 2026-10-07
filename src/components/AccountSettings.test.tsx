@@ -7,6 +7,8 @@ function makeProps(overrides: Partial<AccountSettingsProps> = {}): AccountSettin
     profile: { id: 'u1', email: 'ada@example.com', name: 'Ada Lovelace', picture: null },
     pending: false,
     status: null,
+    unsyncedCount: 0,
+    onDiscard: jest.fn(),
     onLogout: jest.fn(),
     ...overrides,
   }
@@ -104,5 +106,28 @@ describe('AccountSettings', () => {
   it('warns, next to Sign out, that signing out removes this device\'s entries but keeps them on the server', () => {
     render(<AccountSettings {...makeProps()} />)
     expect(screen.getByText("Signing out removes this device's entries (they stay on the server).")).toBeInTheDocument()
+  })
+
+  it('offers no discard button unless sign-out was refused for entries that can never sync', () => {
+    render(<AccountSettings {...makeProps()} />)
+    expect(screen.queryByRole('button', { name: /discard/i })).not.toBeInTheDocument()
+  })
+
+  it.each([
+    [3, 'Discard 3 unsynced items and sign out'],
+    [1, 'Discard 1 unsynced item and sign out'],
+  ])('with %d such entries offers one explicit "%s" button', async (count, label) => {
+    const user = userEvent.setup()
+    const onDiscard = jest.fn()
+    render(<AccountSettings {...makeProps({ unsyncedCount: count, onDiscard })} />)
+
+    await user.click(screen.getByRole('button', { name: label }))
+
+    expect(onDiscard).toHaveBeenCalledTimes(1)
+  })
+
+  it('disables the discard button while working', () => {
+    render(<AccountSettings {...makeProps({ unsyncedCount: 2, pending: true })} />)
+    expect(screen.getByRole('button', { name: /discard 2/i })).toBeDisabled()
   })
 })

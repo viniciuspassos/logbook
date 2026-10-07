@@ -17,6 +17,8 @@ import type { Entry } from '../types/entry.ts'
 export interface UseSyncOutboxOptions {
   /** A drain discovered the session is gone (a 401 mid-queue). */
   onAuthRequired?: () => void
+  /** A drain got something through (the session evidently works). */
+  onSynced?: () => void
   /** The server has login off (local-only mode): the status line says sync is off. */
   syncOff?: boolean
 }
@@ -45,7 +47,7 @@ export interface UseSyncOutboxOptions {
  * the only place that ever finds out.
  */
 export function useSyncOutbox(options: UseSyncOutboxOptions = {}) {
-  const { onAuthRequired, syncOff = false } = options
+  const { onAuthRequired, onSynced, syncOff = false } = options
   const [lastDrain, setLastDrain] = useState<DrainSummary | null>(null)
 
   // Every drain, wherever it started (mount, save, photo upload, sign-in, the
@@ -59,8 +61,9 @@ export function useSyncOutbox(options: UseSyncOutboxOptions = {}) {
         if (summary.stoppedReason === 'aborted') return
         setLastDrain(summary)
         if (summary.stoppedReason === 'auth') onAuthRequired?.()
+        else if (summary.processed > 0) onSynced?.()
       }),
-    [onAuthRequired],
+    [onAuthRequired, onSynced],
   )
 
   useEffect(() => {

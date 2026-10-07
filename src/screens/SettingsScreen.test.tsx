@@ -49,6 +49,9 @@ function makeAuth(overrides: Partial<UseAuthResult> = {}): UseAuthResult {
     signInWithGoogle: jest.fn().mockResolvedValue(true),
     logout: jest.fn(),
     noteAuthRequired: jest.fn(),
+    unsyncedCount: 0,
+    discardUnsyncedAndLogout: jest.fn(),
+    noteSynced: jest.fn(),
     dismissSignInPrompt: jest.fn(),
     dismissNotice: jest.fn(),
     clearError: jest.fn(),
@@ -229,5 +232,14 @@ describe('SettingsScreen', () => {
   it('shows why signing out was refused in the Account status region, politely', async () => {
     await renderScreen({ auth: { error: 'Connect to the internet and sync your entries before signing out.' } })
     expect(screen.getByText('Connect to the internet and sync your entries before signing out.')).toBeInTheDocument()
+  })
+
+  it('wires the discard offer through to auth.discardUnsyncedAndLogout', async () => {
+    const user = userEvent.setup()
+    const { auth } = await renderScreen({ auth: { unsyncedCount: 2 } })
+
+    await user.click(screen.getByRole('button', { name: 'Discard 2 unsynced items and sign out' }))
+
+    expect(auth.discardUnsyncedAndLogout).toHaveBeenCalledTimes(1)
   })
 })

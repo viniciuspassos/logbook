@@ -60,7 +60,7 @@ beforeEach(() => {
 describe('useSyncOutbox sync status when the server has login off', () => {
   it('says sync is off', () => {
     const { result } = renderHook(() => useSyncOutbox({ syncOff: true }))
-    expect(result.current.syncStatus).toBe('Saved locally · sync is off')
+    expect(result.current.syncStatus).toBe('Saved locally · sync is off on this server')
   })
 })
 
@@ -193,6 +193,19 @@ describe('useSyncOutbox', () => {
       const { onAuthRequired, listener } = renderWithAuth()
       act(() => listener({ processed: 0, stoppedReason: 'auth', error: 'Authentication required.' }))
       expect(onAuthRequired).toHaveBeenCalledTimes(1)
+    })
+
+    it('calls onSynced when a drain actually got something through, and only then', () => {
+      const onSynced = jest.fn()
+      renderHook(() => useSyncOutbox({ onSynced }))
+      const listener = subscribeMock.mock.calls[0][0]
+
+      act(() => listener({ processed: 0, stoppedReason: 'empty' }))
+      act(() => listener({ processed: 0, stoppedReason: 'aborted' }))
+      expect(onSynced).not.toHaveBeenCalled()
+
+      act(() => listener({ processed: 2, stoppedReason: 'empty' }))
+      expect(onSynced).toHaveBeenCalledTimes(1)
     })
 
     it('does not call it when a drain succeeded, found nothing to do or was aborted', () => {

@@ -1,18 +1,9 @@
 /**
- * Thin adapter over Google Identity Services (GIS) — the only module that
- * touches the `google` global or injects the GIS script, so screens and hooks
- * never do (CLAUDE.md → Layering).
- *
- * The script is loaded lazily from Google, which means it is simply
- * unreachable offline. That is an expected state, not an error: every
- * failure resolves to an `unavailable` result the caller can show, and
- * nothing here ever throws or leaves an unhandled rejection. Signing in is
- * the only thing this affects — the app opens offline from the cached
- * identity (see `useAuth`) without ever loading this script.
- *
- * We render Google's own button (`renderButton`) rather than drawing one: it
- * keeps the official branding, and yields a signed ID token in the
- * callback, which the backend verifies (`POST /auth/google`).
+ * Thin adapter over Google Identity Services: the only module that touches the
+ * `google` global or injects its script. The script is unreachable offline;
+ * that is an expected state, so every failure resolves to `unavailable`, never
+ * a throw. Google's own button is rendered (official branding) and yields a
+ * signed ID token, which the backend verifies.
  */
 
 // `hl=en` pins Google's button text to English, matching the rest of the UI

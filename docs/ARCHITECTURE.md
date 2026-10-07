@@ -154,9 +154,9 @@ reading entries must work with no network, so the full-screen gate shows only wi
 identity, after sign-out, or on a 401 from `GET /auth/me` at startup or verification:
 
 - *Known device, offline.* A cached identity, or just existing local entries, opens the app as
-  **unverified**. `GET /auth/me` is retried whenever the app may be reachable (`online`, window focus,
-  tab visible; no timers) and confirms it, or on a 401 raises the banner (verified before) or the gate
-  (never verified). A slow start opens a known device unverified after one timeout
+  **unverified**. `GET /auth/me` is retried right away, every 30 seconds, and whenever the app may be
+  reachable (`online`, focus, tab visible), and confirms it; a 401 there raises the banner, never the
+  gate (that would discard a capture in progress). A slow start opens a known device unverified after one timeout
   (`STARTUP_TIMEOUT_MS`); a first-time device with nothing local keeps waiting for the answer.
 - *A background 401* (only a 401; a 403 is a generic sync error) never unmounts the app, because that
   would lose an in-progress capture draft. It sets `needsSignIn`: a dismissible banner whose action
@@ -165,11 +165,13 @@ identity, after sign-out, or on a 401 from `GET /auth/me` at startup or verifica
   different user id wipes entries, outbox and sync state (`clearLocalData`, one transaction) and shows
   a one-line notice; the in-memory list is reset. The same id, or no cached identity yet (an existing
   user from before sign-in), keeps everything.
-- *Sign-out needs a connection.* It syncs the outbox first (anything still queued, or an unreachable
-  server, aborts with a message in Settings and changes nothing), calls `POST /auth/logout` (a 401
-  counts as already signed out), then clears the cached identity and wipes local data. Settings warns
-  that this removes the device's entries (they stay on the server). Parked-as-rejected operations
-  can never sync, so they don't block it.
+- *Sign-out needs a connection and never silently destroys unsynced work.* It syncs the outbox, then
+  reads it: anything that can still sync (or an unreachable server) aborts with a message in Settings
+  and changes nothing; if only operations the server rejected for good remain, Settings offers one
+  explicit "Discard N unsynced items and sign out". Then: `POST /auth/logout` (a 401 counts as done),
+  wipe local data, and only after the wipe succeeded forget the cached identity (a failed wipe never
+  leaves data with no known owner). An unverified session (drain gate closed) signs out from the
+  outbox content too. Settings warns that signing out removes the device's entries.
 - *One drain gate.* `setDrainsAllowed(boolean)` in `outboxRunner` turns every drain trigger (mount,
   save, upload, `online`) into a no-op. `useAuth` owns it: closed under `none`/`unknown`, while the mode
   loads, and in `google` mode until the session is verified (a fresh `GET /auth/me` answered and the

@@ -6,7 +6,7 @@ import {
   putCachedAuthConfig,
   putCachedIdentity,
 } from '../db/identityStore.ts'
-import { clearLocalData, hasLocalData } from '../db/localData.ts'
+import { clearLocalData, countOutbox, hasLocalData } from '../db/localData.ts'
 import { getAuthConfig, getMe, loginWithGoogle, logout as logoutRequest } from '../sync/authApi.ts'
 import { SyncAuthError } from '../sync/errors.ts'
 import { drainOutbox } from '../sync/outboxRunner.ts'
@@ -14,18 +14,11 @@ import { UNKNOWN_CONFIG, knownConfig, type AuthConfig, type ConfigState } from '
 import type { AuthProfile, Session } from '../../types/auth.ts'
 
 /**
- * The sign-in gate's decisions, as plain async functions so `useAuth` only
- * wires state. The rules (also in docs/ARCHITECTURE.md):
- *
- * - One account per device. The cached identity is what a sign-in or startup
- *   verification is compared with: a different user id wipes this device's
- *   local data (entries, outbox, sync state) and says so (`notice`).
- * - The gate shows only with no known identity, after sign-out, or when
- *   `GET /auth/me` says 401. A network failure never gates a user who has a
- *   cached identity or local entries: they get an `unverified` session that is
- *   confirmed when the app regains the network or focus.
- * - Signing out needs a connection: the outbox must be synced first and the
- *   server must confirm, so nothing queued is lost; it then wipes local data.
+ * The sign-in gate's decisions as plain async functions (rules: docs/ARCHITECTURE.md).
+ * One account per device: the cached identity is what a sign-in or verification
+ * is compared with; a different user id wipes local data and says so. A network
+ * failure never gates a known device (it opens `unverified`). Signing out needs
+ * a connection and never silently destroys unsynced work.
  */
 
 export const ACCOUNT_CHANGED_NOTICE =
@@ -60,17 +53,15 @@ export function isVerified(session: Session): boolean {
  */
 export async function settleProfile(profile: AuthProfile, signal?: AbortSignal): Promise<Session> {
   const cached = await getCachedIdentity()
+  // A check that a newer sign-in superseded must do nothing destructive.
+  if (signal?.aborted) return verifiedSession(profile)
   const changed = cached !== null && String(cached.id) !== String(profile.id)
   if (changed) await clearLocalData()
   if (!signal?.aborted) await putCachedIdentity(profile)
   return verifiedSession(profile, changed ? ACCOUNT_CHANGED_NOTICE : null)
 }
 
-/**
- * The one startup fallback: a device that is already known (cached identity or
- * local entries) opens unverified; anything else returns `null`, so the caller
- * keeps waiting on the splash (or shows the gate).
- */
+/** The one startup fallback: a known device (cached identity or local entries) opens unverified; else `null`. */
 export async function startupFallback(): Promise<Session | null> {
   const cached = await getCachedIdentity()
   if (cached) return unverifiedSession(cached)
@@ -83,12 +74,7 @@ async function sessionAfterFailedCheck(error: unknown): Promise<Session> {
   return (await startupFallback()) ?? SIGNED_OUT
 }
 
-/**
- * Works out the session on startup and reports each step through `apply`
- * (first the cached identity, then the server's verdict). `signal` aborts it
- * when a sign-in or sign-out supersedes it, after which nothing is applied
- * or cached.
- */
+/** Works out the session on startup, reporting each step (cached identity, then the server's verdict) through `apply`. */
 export async function restoreSession(signal: AbortSignal, apply: (session: Session) => void): Promise<void> {
   const cached = await getCachedIdentity()
   if (signal.aborted) return
@@ -105,11 +91,7 @@ export async function restoreSession(signal: AbortSignal, apply: (session: Sessi
   }
 }
 
-/**
- * Re-checks an unverified session once the server is reachable again.
- * Resolves the confirmed session, `'expired'` for a 401, or `null` when it
- * still can't tell.
- */
+/** Re-checks an unverified session: the confirmed session, `'expired'` for a 401, or `null` when it can't tell. */
 export async function verifySession(): Promise<Session | 'expired' | null> {
   try {
     return await settleProfile(await getMe())
@@ -118,12 +100,7 @@ export async function verifySession(): Promise<Session | 'expired' | null> {
   }
 }
 
-/**
- * Exchanges the Google ID token for a session. Throws only when
- * `POST /auth/google` itself fails. If the follow-up profile lookup fails the
- * session is live server-side, so the app opens unverified (and verifies when
- * it can) rather than leaving the user at the gate.
- */
+/** Exchanges the ID token for a session; throws only if `POST /auth/google` fails (a failed profile lookup opens unverified). */
 export async function signInWithIdToken(idToken: string): Promise<Session> {
   await loginWithGoogle(idToken)
   try {
@@ -133,31 +110,43 @@ export async function signInWithIdToken(idToken: string): Promise<Session> {
   }
 }
 
+/** Sign-out refused: only operations the server rejected for good remain. */
+export class UnsyncedItemsError extends Error {
+  count: number
+
+  constructor(count: number) {
+    super("Some entries can't be synced and would be lost.")
+    this.count = count
+  }
+}
+
 /**
- * Signs out. It needs a connection: first the outbox is synced (anything left
- * queued, or an unreachable server, throws a message and changes nothing),
- * then the server confirms the logout (a 401 means already signed out), then
- * the cached identity and all local data are removed. Throws an `Error` whose
- * message is meant for the user.
+ * Signs out. Syncs the outbox, then reads it: anything that can still sync (or
+ * an unreachable server) throws and changes nothing; only never-syncing items
+ * left throws `UnsyncedItemsError` (call again with `discardUnsynced` to go
+ * ahead). Then: server logout (a 401 = already out), wipe local data, and only
+ * after that forget the cached identity (so a failed wipe never leaves data
+ * with no known owner). Errors carry a message meant for the user.
  */
-export async function signOut(): Promise<void> {
-  const { stoppedReason } = await drainOutbox()
-  if (stoppedReason === 'auth') throw new Error(SIGN_OUT_NEEDS_SIGN_IN)
-  // 'rejected' ops are parked for good (they can never sync), so they don't block signing out.
-  if (stoppedReason !== 'empty' && stoppedReason !== 'rejected' && stoppedReason !== 'unsupported') {
-    throw new Error(SIGN_OUT_NEEDS_CONNECTION)
+export async function signOut(discardUnsynced = false): Promise<void> {
+  if (!discardUnsynced) {
+    // With the drain gate closed (an unverified session) this is a no-op; the count decides.
+    const { stoppedReason } = await drainOutbox()
+    const { retryable, parked } = await countOutbox()
+    if (retryable > 0) throw new Error(stoppedReason === 'auth' ? SIGN_OUT_NEEDS_SIGN_IN : SIGN_OUT_NEEDS_CONNECTION)
+    if (parked > 0) throw new UnsyncedItemsError(parked)
   }
   try {
     await logoutRequest()
   } catch (error) {
     if (!(error instanceof SyncAuthError && error.status === 401)) throw new Error(SIGN_OUT_NEEDS_CONNECTION, { cause: error })
   }
-  await clearCachedIdentity()
   try {
     await clearLocalData()
   } catch (error) {
     throw new Error(SIGN_OUT_WIPE_FAILED, { cause: error })
   }
+  await clearCachedIdentity()
   disableGoogleAutoSelect()
 }
 
@@ -168,13 +157,7 @@ export async function refreshAuthConfig(signal?: AbortSignal): Promise<AuthConfi
   return config
 }
 
-/**
- * Works out the auth config on startup, reporting each step through `apply`:
- * the cached config first (so a start with no signal decides instantly), then
- * the server's fresh answer. With neither, it's `unknown`. Only a fresh answer
- * can change what the cache says; a failed fetch never downgrades it, and
- * nothing here touches the cached identity or any local data.
- */
+/** Resolves the auth config on startup: cached first (decides offline), then fresh; neither means `unknown`. */
 export async function resolveAuthConfig(signal: AbortSignal, apply: (state: ConfigState) => void): Promise<void> {
   const cached = await getCachedAuthConfig()
   if (signal.aborted) return

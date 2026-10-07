@@ -10,7 +10,7 @@ import type { DrainSummary } from './outboxRunner.ts'
  */
 export function syncStatusLabel(lastDrain: DrainSummary | null, syncOff = false): string {
   // The server has login off, so nothing is ever sent: say so rather than "synced".
-  if (syncOff) return 'Saved locally · sync is off'
+  if (syncOff) return 'Saved locally · sync is off on this server'
   switch (lastDrain?.stoppedReason) {
     case 'empty':
       return 'Saved locally · synced'

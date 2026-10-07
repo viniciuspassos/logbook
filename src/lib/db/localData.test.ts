@@ -6,9 +6,9 @@ if (typeof globalThis.structuredClone === 'undefined') {
 }
 import 'fake-indexeddb/auto'
 import { IDBFactory } from 'fake-indexeddb'
-import { clearLocalData, hasLocalData } from './localData.ts'
+import { clearLocalData, countOutbox, hasLocalData } from './localData.ts'
 import { getAllEntries, putEntry } from './entriesStore.ts'
-import { enqueueOperation, getAllRecords } from './outboxStore.ts'
+import { enqueueOperation, getAllRecords, markRejected } from './outboxStore.ts'
 import { getSyncState, putSyncState } from './syncStateStore.ts'
 import { getCachedAuthConfig, putCachedAuthConfig, putCachedIdentity, getCachedIdentity } from './identityStore.ts'
 import type { Entry } from '../../types/entry.ts'
@@ -99,5 +99,26 @@ describe('hasLocalData', () => {
     } finally {
       spy.mockRestore()
     }
+  })
+})
+
+describe('countOutbox', () => {
+  it('is zero on a fresh device', async () => {
+    expect(await countOutbox()).toEqual({ retryable: 0, parked: 0 })
+  })
+
+  it('counts operations that can still sync apart from ones the server rejected for good', async () => {
+    const first = await enqueueOperation({ kind: 'delete-entry', localEntryId: 1 } as never)
+    await enqueueOperation({ kind: 'delete-entry', localEntryId: 2 } as never)
+    await enqueueOperation({ kind: 'delete-entry', localEntryId: 3 } as never)
+    await markRejected(first.queueId, 'too big')
+
+    expect(await countOutbox()).toEqual({ retryable: 2, parked: 1 })
+  })
+
+  it('is zero, without throwing, when IndexedDB is unavailable (nothing can be queued)', async () => {
+    // @ts-expect-error simulating an environment without IndexedDB
+    delete globalThis.indexedDB
+    expect(await countOutbox()).toEqual({ retryable: 0, parked: 0 })
   })
 })

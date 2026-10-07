@@ -3,9 +3,9 @@ import type { DrainSummary } from './outboxRunner.ts'
 
 describe('syncStatusLabel', () => {
   it('says sync is off when the server has login off, whatever the last drain did', () => {
-    expect(syncStatusLabel(null, true)).toBe('Saved locally · sync is off')
-    expect(syncStatusLabel({ processed: 0, stoppedReason: 'auth' }, true)).toBe('Saved locally · sync is off')
-    expect(syncStatusLabel({ processed: 1, stoppedReason: 'empty' }, true)).toBe('Saved locally · sync is off')
+    expect(syncStatusLabel(null, true)).toBe('Saved locally · sync is off on this server')
+    expect(syncStatusLabel({ processed: 0, stoppedReason: 'auth' }, true)).toBe('Saved locally · sync is off on this server')
+    expect(syncStatusLabel({ processed: 1, stoppedReason: 'empty' }, true)).toBe('Saved locally · sync is off on this server')
   })
 
   it('reads from the last drain when sync is on', () => {

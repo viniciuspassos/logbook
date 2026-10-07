@@ -3,20 +3,11 @@ import { parseAuthConfig, type AuthConfig } from '../auth/authConfig.ts'
 import type { AuthProfile } from '../../types/auth.ts'
 
 /**
- * Thin wrapper over IndexedDB for who this device belongs to (one account per
- * device). Two small records share the `identity` store:
- *
- * - `current`: the last signed-in profile. It lets the login gate stay open
- *   offline: after one successful Google sign-in, reopening the app with no
- *   signal still counts as "a known identity", and it is what a later sign-in
- *   is compared against (a different id means a different account). Cleared by
- *   sign-out.
- * - `authConfig`: the last good `GET /auth/config` answer, so the app can decide
- *   offline whether this server wants a login at all.
- *
- * None of this is a security boundary (the backend session cookie is what
- * authorises sync), so every function degrades quietly (null / no-op) when
- * IndexedDB is unavailable or fails, rather than blocking the app from opening.
+ * IndexedDB wrapper for who this device belongs to (one account per device):
+ * `current` is the last signed-in profile (it keeps the gate open offline and is
+ * what a later sign-in is compared with); `authConfig` is the last good
+ * `GET /auth/config`. Not a security boundary, so every function degrades
+ * quietly (null / no-op) when IndexedDB fails.
  */
 
 type RecordKey = 'current' | 'authConfig'

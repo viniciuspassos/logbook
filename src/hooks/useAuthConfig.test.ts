@@ -1,5 +1,6 @@
 import { act, renderHook, waitFor } from '@testing-library/react'
 import { useAuthConfig } from './useAuthConfig.ts'
+import { RETRY_INTERVAL_MS } from './useRetryWhileActive.ts'
 import { getAuthConfig } from '../lib/sync/authApi.ts'
 import { getCachedAuthConfig, getCachedIdentity, putCachedAuthConfig } from '../lib/db/identityStore.ts'
 import { hasLocalData } from '../lib/db/localData.ts'
@@ -99,7 +100,7 @@ describe('useAuthConfig: when the server cannot answer', () => {
   })
 
   it('asks again when connectivity returns, and settles on the answer', async () => {
-    mocked(getAuthConfig).mockResolvedValueOnce(null)
+    mocked(getAuthConfig).mockResolvedValue(null)
     const { result } = renderHook(() => useAuthConfig())
     await waitFor(() => expect(result.current.mode).toBe('unknown'))
 
@@ -124,8 +125,30 @@ describe('useAuthConfig: when the server cannot answer', () => {
     expect(getAuthConfig).toHaveBeenCalledTimes(2)
   })
 
+  it('also re-asks every 30 seconds while unknown, with no event at all, and stops once answered', async () => {
+    jest.useFakeTimers()
+    mocked(getAuthConfig).mockResolvedValue(null)
+    const { result } = renderHook(() => useAuthConfig())
+    await act(async () => {
+      await jest.advanceTimersByTimeAsync(0)
+    })
+    expect(result.current.mode).toBe('unknown')
+
+    mocked(getAuthConfig).mockResolvedValue(none)
+    await act(async () => {
+      await jest.advanceTimersByTimeAsync(RETRY_INTERVAL_MS)
+    })
+    expect(result.current.mode).toBe('none')
+
+    mocked(getAuthConfig).mockClear()
+    await act(async () => {
+      await jest.advanceTimersByTimeAsync(RETRY_INTERVAL_MS * 4)
+    })
+    expect(getAuthConfig).not.toHaveBeenCalled()
+  })
+
   it('does not run two re-asks at once', async () => {
-    mocked(getAuthConfig).mockResolvedValueOnce(null)
+    mocked(getAuthConfig).mockResolvedValue(null)
     const { result } = renderHook(() => useAuthConfig())
     await waitFor(() => expect(result.current.mode).toBe('unknown'))
     let finish: ((config: AuthConfig | null) => void) | undefined

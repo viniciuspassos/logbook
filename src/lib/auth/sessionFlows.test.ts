@@ -4,6 +4,7 @@ import {
   SIGNED_OUT,
   SIGN_OUT_NEEDS_CONNECTION,
   SIGN_OUT_NEEDS_SIGN_IN,
+  UnsyncedItemsError,
   isVerified,
   refreshAuthConfig,
   resolveAuthConfig,
@@ -24,7 +25,7 @@ import {
   putCachedAuthConfig,
   putCachedIdentity,
 } from '../db/identityStore.ts'
-import { clearLocalData, hasLocalData } from '../db/localData.ts'
+import { clearLocalData, countOutbox, hasLocalData } from '../db/localData.ts'
 import { getAuthConfig, getMe, loginWithGoogle, logout } from '../sync/authApi.ts'
 import { SyncAuthError, SyncHttpError, SyncNetworkError } from '../sync/errors.ts'
 import { drainOutbox, type DrainSummary } from '../sync/outboxRunner.ts'
@@ -51,6 +52,7 @@ beforeEach(() => {
   mocked(getCachedIdentity).mockResolvedValue(null)
   mocked(getMe).mockResolvedValue(ada)
   mocked(hasLocalData).mockResolvedValue(false)
+  mocked(countOutbox).mockResolvedValue({ retryable: 0, parked: 0 })
   mocked(logout).mockResolvedValue({ status: 'ok' })
   mocked(loginWithGoogle).mockResolvedValue({ status: 'ok' })
   mocked(drainOutbox).mockResolvedValue(drained('empty'))
@@ -118,6 +120,20 @@ describe('settleProfile (one account per device)', () => {
     mocked(getCachedIdentity).mockResolvedValue(ada)
     mocked(clearLocalData).mockRejectedValue(new Error('boom'))
     await expect(settleProfile(grace)).rejects.toThrow('boom')
+    expect(putCachedIdentity).not.toHaveBeenCalled()
+  })
+
+  it('does nothing destructive when a newer sign-in superseded the check (no wipe, no cache)', async () => {
+    mocked(getCachedIdentity).mockResolvedValue(ada)
+    const controller = new AbortController()
+    mocked(getCachedIdentity).mockImplementation(async () => {
+      controller.abort()
+      return ada
+    })
+
+    await settleProfile(grace, controller.signal)
+
+    expect(clearLocalData).not.toHaveBeenCalled()
     expect(putCachedIdentity).not.toHaveBeenCalled()
   })
 
@@ -312,29 +328,34 @@ describe('signInWithIdToken', () => {
 })
 
 describe('signOut (needs a connection)', () => {
-  it('syncs the outbox, signs out on the server, then forgets the identity and wipes local data, in that order', async () => {
+  it('syncs, checks the outbox is empty, signs out on the server, wipes local data, and only then forgets the identity', async () => {
     const order: string[] = []
     mocked(drainOutbox).mockImplementation(async () => {
       order.push('drain')
       return drained('empty')
     })
+    mocked(countOutbox).mockImplementation(async () => {
+      order.push('count')
+      return { retryable: 0, parked: 0 }
+    })
     mocked(logout).mockImplementation(async () => {
       order.push('server')
       return { status: 'ok' }
     })
-    mocked(clearCachedIdentity).mockImplementation(async () => void order.push('forget'))
     mocked(clearLocalData).mockImplementation(async () => void order.push('wipe'))
+    mocked(clearCachedIdentity).mockImplementation(async () => void order.push('forget'))
 
     await signOut()
 
-    expect(order).toEqual(['drain', 'server', 'forget', 'wipe'])
+    expect(order).toEqual(['drain', 'count', 'server', 'wipe', 'forget'])
     expect(disableGoogleAutoSelect).toHaveBeenCalled()
   })
 
   it.each(['unreachable', 'error', 'aborted'] as const)(
-    'refuses with a connect-and-sync message, changing nothing, when the drain ends %s',
+    'refuses with a connect-and-sync message, changing nothing, when items are still queued and the drain ends %s',
     async (reason) => {
       mocked(drainOutbox).mockResolvedValue(drained(reason))
+      mocked(countOutbox).mockResolvedValue({ retryable: 2, parked: 0 })
 
       await expect(signOut()).rejects.toThrow(SIGN_OUT_NEEDS_CONNECTION)
 
@@ -344,21 +365,48 @@ describe('signOut (needs a connection)', () => {
     },
   )
 
-  it('refuses with a sign-in message when the drain finds the session gone', async () => {
+  it('refuses with a sign-in message when items are queued and the drain finds the session gone', async () => {
     mocked(drainOutbox).mockResolvedValue(drained('auth'))
+    mocked(countOutbox).mockResolvedValue({ retryable: 1, parked: 0 })
     await expect(signOut()).rejects.toThrow(SIGN_OUT_NEEDS_SIGN_IN)
+    expect(clearLocalData).not.toHaveBeenCalled()
+  })
+
+  it('proceeds when the outbox is empty even though the drain was a no-op (an unverified session has its drain gate closed)', async () => {
+    mocked(drainOutbox).mockResolvedValue(drained('aborted'))
+    await expect(signOut()).resolves.toBeUndefined()
+    expect(logout).toHaveBeenCalled()
+    expect(clearLocalData).toHaveBeenCalled()
+  })
+
+  it('refuses, changing nothing, and reports how many items can never sync when only parked ones remain', async () => {
+    mocked(drainOutbox).mockResolvedValue(drained('rejected'))
+    mocked(countOutbox).mockResolvedValue({ retryable: 0, parked: 3 })
+
+    const failure = await signOut().catch((error: unknown) => error)
+
+    expect(failure).toBeInstanceOf(UnsyncedItemsError)
+    expect((failure as UnsyncedItemsError).count).toBe(3)
     expect(logout).not.toHaveBeenCalled()
     expect(clearLocalData).not.toHaveBeenCalled()
   })
 
-  it.each(['rejected', 'unsupported'] as const)(
-    'goes ahead when the drain ends %s (nothing that can still sync is queued)',
-    async (reason) => {
-      mocked(drainOutbox).mockResolvedValue(drained(reason))
-      await expect(signOut()).resolves.toBeUndefined()
-      expect(clearLocalData).toHaveBeenCalled()
-    },
-  )
+  it('prefers the connect message when some items are retryable and some parked', async () => {
+    mocked(countOutbox).mockResolvedValue({ retryable: 1, parked: 2 })
+    mocked(drainOutbox).mockResolvedValue(drained('unreachable'))
+    await expect(signOut()).rejects.toThrow(SIGN_OUT_NEEDS_CONNECTION)
+  })
+
+  it('discards the parked items and signs out when the user asked for exactly that, without draining or counting', async () => {
+    mocked(countOutbox).mockResolvedValue({ retryable: 0, parked: 3 })
+
+    await expect(signOut(true)).resolves.toBeUndefined()
+
+    expect(drainOutbox).not.toHaveBeenCalled()
+    expect(countOutbox).not.toHaveBeenCalled()
+    expect(logout).toHaveBeenCalled()
+    expect(clearLocalData).toHaveBeenCalled()
+  })
 
   it('counts a 401 from /auth/logout as already signed out', async () => {
     mocked(logout).mockRejectedValue(new SyncAuthError(401, null))
@@ -379,9 +427,10 @@ describe('signOut (needs a connection)', () => {
     expect(clearLocalData).not.toHaveBeenCalled()
   })
 
-  it('says so when the entries cannot be removed, so signing out again can finish the job', async () => {
+  it('keeps the cached identity, and says so, when the entries cannot be removed (so the data is never orphaned)', async () => {
     mocked(clearLocalData).mockRejectedValue(new Error('boom'))
     await expect(signOut()).rejects.toThrow("Couldn't remove this device's entries")
+    expect(clearCachedIdentity).not.toHaveBeenCalled()
   })
 })
 

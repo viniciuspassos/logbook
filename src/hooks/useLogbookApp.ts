@@ -16,13 +16,14 @@ export type { AttachmentPreview, AttachmentStatus } from './useEntryAttachments.
 export type { AuthState, UseAuthResult } from './useAuth.ts'
 
 /**
- * A different account signing in replaces this device's local data, so the
- * in-memory list (and anything open from it) has to follow.
+ * This device's local data was wiped (sign-out, or a different account), so the
+ * in-memory list (and anything open from it) has to follow. Awaited by
+ * `useAuth` before the new session shows, and a failure is surfaced there.
  */
 export function localDataReset(closeOverlay: () => void, replaceEntries: (entries: Entry[]) => Promise<void>) {
-  return () => {
+  return async () => {
     closeOverlay()
-    void replaceEntries([]).catch(() => {})
+    await replaceEntries([])
   }
 }
 
@@ -52,6 +53,7 @@ export function useLogbookApp() {
   const auth = useAuth({ onLocalDataReset: localDataReset(nav.closeOverlay, replaceEntries) })
   const syncOutbox = useSyncOutbox({
     onAuthRequired: auth.noteAuthRequired,
+    onSynced: auth.noteSynced,
     syncOff: auth.mode === 'none',
   })
   const attachments = useEntryAttachments(nav.selectedEntry, {

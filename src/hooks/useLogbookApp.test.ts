@@ -432,10 +432,23 @@ describe('localDataReset', () => {
     expect(replaceEntries).toHaveBeenCalledWith([])
   })
 
-  it('swallows a failed write instead of leaving an unhandled rejection', async () => {
-    const replaceEntries = jest.fn().mockRejectedValue(new Error('boom'))
+  it('waits for the list to be emptied, so the caller can order it before the new session shows', async () => {
+    let finish: (() => void) | undefined
+    const replaceEntries = jest.fn().mockReturnValue(new Promise<void>((resolve) => (finish = resolve)))
+    let done = false
 
-    expect(() => localDataReset(jest.fn(), replaceEntries)()).not.toThrow()
+    void localDataReset(jest.fn(), replaceEntries)().then(() => (done = true))
     await Promise.resolve()
+    expect(done).toBe(false)
+
+    finish?.()
+    await Promise.resolve()
+    await Promise.resolve()
+    expect(done).toBe(true)
+  })
+
+  it('rejects when the write fails, so the failure can be shown instead of swallowed', async () => {
+    const replaceEntries = jest.fn().mockRejectedValue(new Error('boom'))
+    await expect(localDataReset(jest.fn(), replaceEntries)()).rejects.toThrow('boom')
   })
 })

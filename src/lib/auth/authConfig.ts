@@ -1,13 +1,7 @@
 /**
- * Which login the server wants, as the client understands it.
- *
- * Authentication is the backend's responsibility: the frontend owns no flag
- * and no client ID. It asks `GET /auth/config`, which answers
- * `{ methods: [] }` (login is off) or
- * `{ methods: [{ type: 'google', clientId }] }`. The list shape leaves room for
- * more login types; today only `google` is understood and anything else is
- * ignored. This module is pure: parsing, the derived mode, and the small
- * state shape `useAuthConfig` keeps.
+ * Which login the server wants. `GET /auth/config` answers `{ methods: [] }`
+ * (login off) or `{ methods: [{ type: 'google', clientId }] }`; unknown method
+ * types are ignored. Pure: parsing, the derived mode, and `useAuthConfig`'s state.
  */
 
 export interface GoogleMethod {

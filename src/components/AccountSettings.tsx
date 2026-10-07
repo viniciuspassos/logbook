@@ -9,6 +9,9 @@ export interface AccountSettingsProps {
   pending: boolean
   /** Sign-out progress or an error, announced politely; `null` when there is nothing to say. */
   status: string | null
+  /** Entries that can never sync and would be lost by signing out; `> 0` offers the discard button. */
+  unsyncedCount: number
+  onDiscard: () => void
   onLogout: () => void
 }
 
@@ -39,7 +42,7 @@ function Avatar({ profile }: { profile: AuthProfile }) {
  * Signing in lives on the login gate (`LoginScreen`), not here — by the time
  * Settings is reachable there is a known identity.
  */
-export function AccountSettings({ profile, pending, status, onLogout }: AccountSettingsProps) {
+export function AccountSettings({ profile, pending, status, unsyncedCount, onDiscard, onLogout }: AccountSettingsProps) {
   return (
     <div className="account-settings">
       <div className="account-settings__row">
@@ -67,6 +70,16 @@ export function AccountSettings({ profile, pending, status, onLogout }: AccountS
       {/* Reserved height, so progress or an error never shifts the group. */}
       <div className="account-settings__status" aria-live="polite">
         {status}
+        {unsyncedCount > 0 && (
+          <button
+            type="button"
+            className="account-settings__button account-settings__button--secondary"
+            onClick={onDiscard}
+            disabled={pending}
+          >
+            Discard {unsyncedCount} unsynced {unsyncedCount === 1 ? 'item' : 'items'} and sign out
+          </button>
+        )}
       </div>
     </div>
   )

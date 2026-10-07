@@ -38,6 +38,11 @@ function useGoogleButton(clientId: string | null, onCredential: (idToken: string
   const slotRef = useRef<HTMLDivElement>(null)
   const [buttonState, setButtonState] = useState<ButtonState>('loading')
   const [attempt, setAttempt] = useState(0)
+  // `onCredential` changes with session state; the button must survive that, so it is called through a ref.
+  const onCredentialRef = useRef(onCredential)
+  useEffect(() => {
+    onCredentialRef.current = onCredential
+  }, [onCredential])
 
   // On a retry the slot has been un-hidden by the same render that bumped
   // `attempt`, so Google's button is measured against a laid-out container.
@@ -45,7 +50,12 @@ function useGoogleButton(clientId: string | null, onCredential: (idToken: string
     const slot = slotRef.current
     if (!slot) return
     const controller = new AbortController()
-    void renderGoogleSignInButton(slot, { clientId, onCredential, signal: controller.signal }).then((result) => {
+    const options = {
+      clientId,
+      onCredential: (idToken: string) => onCredentialRef.current(idToken),
+      signal: controller.signal,
+    }
+    void renderGoogleSignInButton(slot, options).then((result) => {
       if (result.status === 'cancelled' || controller.signal.aborted) return
       if (result.status === 'rendered') setButtonState('ready')
       else setButtonState(result.reason === 'offline' ? 'offline' : 'unconfigured')
@@ -54,7 +64,7 @@ function useGoogleButton(clientId: string | null, onCredential: (idToken: string
       controller.abort()
       slot.replaceChildren()
     }
-  }, [attempt, clientId, onCredential])
+  }, [attempt, clientId])
 
   const retry = () => {
     setButtonState('loading')

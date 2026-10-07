@@ -1,5 +1,6 @@
 import { ENTRIES_STORE, OUTBOX_STORE, SYNC_STATE_STORE, isPersistenceSupported, openLogbookDb } from './database.ts'
 import { getAllEntries } from './entriesStore.ts'
+import { getAllRecords } from './outboxStore.ts'
 
 /**
  * What this device holds locally: entries, the outbox and the sync-state map
@@ -41,4 +42,16 @@ export async function hasLocalData(): Promise<boolean> {
   } catch {
     return true
   }
+}
+
+/**
+ * What is still waiting in the outbox: `retryable` operations that can still
+ * sync, and `parked` ones the server rejected for good (they never will).
+ * Sign-out decides from this, not from how the last drain happened to end.
+ */
+export async function countOutbox(): Promise<{ retryable: number; parked: number }> {
+  if (!isPersistenceSupported()) return { retryable: 0, parked: 0 }
+  const records = await getAllRecords()
+  const parked = records.filter((record) => record.rejected).length
+  return { retryable: records.length - parked, parked }
 }
