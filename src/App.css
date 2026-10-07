@@ -20,7 +20,7 @@
   display: none;
 }
 
-/* Room for the fixed "sign in again" banner above the shell. */
+/* Room for the fixed banner above the shell. */
 .app--with-banner {
   padding-top: var(--lb-banner-height);
 }
@@ -35,18 +35,13 @@
   background: var(--lb-bg);
 }
 
-/* Shown for the instant it takes to read the cached identity on startup. */
+/* The instant it takes to read the cached identity on startup. */
 .splash {
   width: 100%;
   min-height: 100dvh;
   display: grid;
   place-items: center;
   background: var(--lb-page-bg);
-}
-
-.splash__text {
-  margin: 0;
-  font-size: 14px;
   color: var(--lb-muted);
 }
 

@@ -2,7 +2,8 @@ import { act, renderHook, waitFor } from '@testing-library/react'
 import { useAuth } from './useAuth.ts'
 import { useSyncOutbox } from './useSyncOutbox.ts'
 import { getAuthConfig, getMe } from '../lib/sync/authApi.ts'
-import { checkLocalOwner } from '../lib/db/localOwner.ts'
+import { clearLocalData } from '../lib/db/localData.ts'
+import { getCachedIdentity } from '../lib/db/identityStore.ts'
 import { getAllRecords, hasRecord, removeRecord } from '../lib/db/outboxStore.ts'
 import { putSyncState } from '../lib/db/syncStateStore.ts'
 import { isBackendReachable } from '../lib/sync/health.ts'
@@ -21,11 +22,8 @@ jest.mock('../lib/db/identityStore.ts', () => ({
   clearCachedIdentity: jest.fn().mockResolvedValue(undefined),
   getCachedAuthConfig: jest.fn().mockResolvedValue(null),
   putCachedAuthConfig: jest.fn().mockResolvedValue(undefined),
-  hasPendingLogout: jest.fn().mockResolvedValue(false),
-  setPendingLogout: jest.fn().mockResolvedValue(undefined),
-  clearPendingLogout: jest.fn().mockResolvedValue(undefined),
 }))
-jest.mock('../lib/db/localOwner.ts')
+jest.mock('../lib/db/localData.ts')
 jest.mock('../lib/sync/connectivity.ts', () => ({ onBackOnline: jest.fn().mockReturnValue(() => undefined) }))
 jest.mock('../lib/db/database.ts', () => ({ isPersistenceSupported: jest.fn().mockReturnValue(true) }))
 jest.mock('../lib/db/outboxStore.ts')
@@ -49,7 +47,8 @@ beforeEach(() => {
   jest.clearAllMocks()
   mocked(getAuthConfig).mockResolvedValue({ methods: [{ type: 'google', clientId: 'cid' }] })
   mocked(getMe).mockResolvedValue(ada)
-  mocked(checkLocalOwner).mockResolvedValue('ok')
+  mocked(getCachedIdentity).mockResolvedValue(null)
+  mocked(clearLocalData).mockResolvedValue(undefined)
   mocked(isBackendReachable).mockResolvedValue(true)
   mocked(getAllRecords).mockResolvedValue([
     {
@@ -72,7 +71,7 @@ async function settle() {
 }
 
 describe('the outbox never uploads before the session is matched to this device', () => {
-  it('uploads once /auth/me answered and the owner matches', async () => {
+  it('uploads once /auth/me answered and the identity check passed', async () => {
     const { result } = renderHook(() => useApp())
     await waitFor(() => expect(result.current.profile).toEqual(ada))
 
@@ -88,13 +87,18 @@ describe('the outbox never uploads before the session is matched to this device'
     expect(createEntry).not.toHaveBeenCalled()
   })
 
-  it('never uploads for a different account (the cookie is B, the data is A\'s)', async () => {
-    mocked(checkLocalOwner).mockResolvedValue('mismatch')
+  it('wipes the queue BEFORE anything can upload when the cookie is another account (cached A, session B)', async () => {
+    mocked(getCachedIdentity).mockResolvedValue({ ...ada, id: 'previous' })
+    mocked(clearLocalData).mockImplementation(async () => {
+      // The wipe empties the (mocked) outbox, as the real one does.
+      mocked(getAllRecords).mockResolvedValue([])
+    })
     const { result } = renderHook(() => useApp())
-    await waitFor(() => expect(result.current.pendingSwitch).toEqual(ada))
+    await waitFor(() => expect(result.current.notice).not.toBeNull())
 
     await settle()
 
+    expect(clearLocalData).toHaveBeenCalledTimes(1)
     expect(createEntry).not.toHaveBeenCalled()
   })
 

@@ -42,16 +42,15 @@ function makeAuth(overrides: Partial<UseAuthResult> = {}): UseAuthResult {
     state: 'signedIn',
     unverified: false,
     needsSignIn: false,
-    pendingSwitch: null,
+    notice: null,
     profile: { id: 'u1', email: 'ada@example.com', name: 'Ada Lovelace', picture: null },
     pending: false,
     error: null,
     signInWithGoogle: jest.fn().mockResolvedValue(true),
-    confirmSwitch: jest.fn(),
-    cancelSwitch: jest.fn(),
     logout: jest.fn(),
     noteAuthRequired: jest.fn(),
     dismissSignInPrompt: jest.fn(),
+    dismissNotice: jest.fn(),
     clearError: jest.fn(),
     ...overrides,
   }
@@ -225,5 +224,10 @@ describe('SettingsScreen', () => {
   it('keeps the account row under dev:mocked', async () => {
     await renderScreen({ auth: { mode: 'mock' } })
     expect(screen.getByRole('button', { name: /sign out/i })).toBeInTheDocument()
+  })
+
+  it('shows why signing out was refused in the Account status region, politely', async () => {
+    await renderScreen({ auth: { error: 'Connect to the internet and sync your entries before signing out.' } })
+    expect(screen.getByText('Connect to the internet and sync your entries before signing out.')).toBeInTheDocument()
   })
 })

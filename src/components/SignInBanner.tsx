@@ -1,26 +1,31 @@
 import './SignInBanner.css'
 
 export interface SignInBannerProps {
-  onSignIn: () => void
-  /** Hides the banner until the next 401. */
+  message: string
+  /** Shows a "Sign in" button; leave out for a plain notice. */
+  onSignIn?: () => void
   onDismiss: () => void
+  dismissLabel?: string
 }
 
 /**
- * A non-blocking notice that the session has expired: a background sync
- * request got a 401. It deliberately doesn't replace the app (that would throw
- * away an in-progress capture draft); entries keep saving locally and the
- * outbox waits. Announced politely, since it appears without user action.
+ * A non-blocking notice, fixed to the top: either "sign in again" (a background
+ * sync request got a 401) or a plain message such as "your entries were
+ * removed". It deliberately doesn't replace the app (that would throw away an
+ * in-progress capture draft). Announced politely, since it appears without
+ * user action.
  */
-export function SignInBanner({ onSignIn, onDismiss }: SignInBannerProps) {
+export function SignInBanner({ message, onSignIn, onDismiss, dismissLabel = 'Not now' }: SignInBannerProps) {
   return (
     <div className="signin-banner" role="status" aria-live="polite">
-      <span className="signin-banner__text">Sign in again to resume syncing.</span>
-      <button type="button" className="signin-banner__button" onClick={onSignIn}>
-        Sign in
-      </button>
+      <span>{message}</span>
+      {onSignIn && (
+        <button type="button" className="signin-banner__button" onClick={onSignIn}>
+          Sign in
+        </button>
+      )}
       <button type="button" className="signin-banner__dismiss" onClick={onDismiss}>
-        Not now
+        {dismissLabel}
       </button>
     </div>
   )

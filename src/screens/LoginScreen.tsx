@@ -1,5 +1,4 @@
 import { useEffect, useRef, useState } from 'react'
-import type { AuthProfile } from '../types/auth.ts'
 import { ContourArt } from '../components/ContourArt.tsx'
 import { cx } from '../lib/cx.ts'
 import { renderGoogleSignInButton } from '../lib/auth/googleIdentity.ts'
@@ -14,10 +13,6 @@ export interface LoginScreenProps {
   clientId: string | null
   /** Called with the signed Google ID token when the user picks an account. */
   onCredential: (idToken: string) => void
-  /** A different account signed in and must confirm replacing this device's data. */
-  pendingSwitch: AuthProfile | null
-  onConfirmSwitch: () => void
-  onCancelSwitch: () => void
   /** Set when this is shown over the running app (a "sign in again"), so it can be closed. */
   onDismiss?: () => void
 }
@@ -43,26 +38,14 @@ function useGoogleButton(clientId: string | null, onCredential: (idToken: string
   const slotRef = useRef<HTMLDivElement>(null)
   const [buttonState, setButtonState] = useState<ButtonState>('loading')
   const [attempt, setAttempt] = useState(0)
-  // The effect below must not re-run (and re-render Google's button) just
-  // because the parent passed a new callback, so it calls through a ref.
-  const onCredentialRef = useRef(onCredential)
-  useEffect(() => {
-    onCredentialRef.current = onCredential
-  }, [onCredential])
 
-  // Re-runs only for a retry. On a retry the slot has been un-hidden by the
-  // same render that bumped `attempt`, so Google's button is measured against
-  // a laid-out container rather than the hidden offline one.
+  // On a retry the slot has been un-hidden by the same render that bumped
+  // `attempt`, so Google's button is measured against a laid-out container.
   useEffect(() => {
     const slot = slotRef.current
     if (!slot) return
     const controller = new AbortController()
-    const options = {
-      clientId,
-      onCredential: (idToken: string) => onCredentialRef.current(idToken),
-      signal: controller.signal,
-    }
-    void renderGoogleSignInButton(slot, options).then((result) => {
+    void renderGoogleSignInButton(slot, { clientId, onCredential, signal: controller.signal }).then((result) => {
       if (result.status === 'cancelled' || controller.signal.aborted) return
       if (result.status === 'rendered') setButtonState('ready')
       else setButtonState(result.reason === 'offline' ? 'offline' : 'unconfigured')
@@ -71,40 +54,13 @@ function useGoogleButton(clientId: string | null, onCredential: (idToken: string
       controller.abort()
       slot.replaceChildren()
     }
-  }, [attempt, clientId])
+  }, [attempt, clientId, onCredential])
 
   const retry = () => {
     setButtonState('loading')
     setAttempt((current) => current + 1)
   }
   return { slotRef, buttonState, retry }
-}
-
-interface SwitchConfirmProps {
-  account: AuthProfile
-  pending: boolean
-  onConfirm: () => void
-  onCancel: () => void
-}
-
-/** Asks before replacing another account's local entries (shown instead of Google's button). */
-function SwitchConfirm({ account, pending, onConfirm, onCancel }: SwitchConfirmProps) {
-  return (
-    <div className="login__switch">
-      <p className="login__switch-text">
-        This device holds entries from a different Google account. Continuing as <strong>{account.email}</strong>{' '}
-        removes them from this device, including anything that hasn&apos;t synced.
-      </p>
-      <div className="login__switch-actions">
-        <button type="button" className="login__primary" onClick={onConfirm} disabled={pending}>
-          Remove them and continue
-        </button>
-        <button type="button" className="login__retry" onClick={onCancel} disabled={pending}>
-          Cancel
-        </button>
-      </div>
-    </div>
-  )
 }
 
 /**
@@ -120,20 +76,10 @@ function SwitchConfirm({ account, pending, onConfirm, onCancel }: SwitchConfirmP
  * never an exception. A returning user who signed in before doesn't see this
  * screen offline at all (see `useAuth`).
  */
-export function LoginScreen({
-  pending,
-  error,
-  clientId,
-  onCredential,
-  pendingSwitch,
-  onConfirmSwitch,
-  onCancelSwitch,
-  onDismiss,
-}: LoginScreenProps) {
+export function LoginScreen({ pending, error, clientId, onCredential, onDismiss }: LoginScreenProps) {
   const { slotRef, buttonState, retry } = useGoogleButton(clientId, onCredential)
   const message = statusFor(pending, error, buttonState)
   const isProblem = !pending && message !== ''
-  const googleUsable = buttonState === 'loading' || buttonState === 'ready'
 
   return (
     <main className="login">
@@ -150,12 +96,9 @@ export function LoginScreen({
           ref={slotRef}
           className={cx('login__google', pending && 'is-pending')}
           data-state={buttonState}
-          hidden={!googleUsable || pendingSwitch !== null}
+          hidden={buttonState === 'offline' || buttonState === 'unconfigured'}
         />
-        {pendingSwitch !== null && (
-          <SwitchConfirm account={pendingSwitch} pending={pending} onConfirm={onConfirmSwitch} onCancel={onCancelSwitch} />
-        )}
-        {buttonState === 'offline' && pendingSwitch === null && (
+        {buttonState === 'offline' && (
           <button type="button" className="login__retry" onClick={retry}>
             Try again
           </button>

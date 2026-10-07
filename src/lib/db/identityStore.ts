@@ -3,35 +3,27 @@ import { parseAuthConfig, type AuthConfig } from '../auth/authConfig.ts'
 import type { AuthProfile } from '../../types/auth.ts'
 
 /**
- * Thin wrapper over IndexedDB for who this device belongs to. Three small
- * records share the `identity` store:
+ * Thin wrapper over IndexedDB for who this device belongs to (one account per
+ * device). Two small records share the `identity` store:
  *
  * - `current`: the last signed-in profile. It lets the login gate stay open
  *   offline: after one successful Google sign-in, reopening the app with no
- *   signal still counts as "a known identity" and never locks the user out of
- *   their own local logbook. Cleared by an explicit sign-out.
- * - `pendingLogout`: a durable "the user signed out" marker. Signing out while
- *   offline can't clear the server cookie, so the marker makes the next
- *   startup retry the server logout instead of letting `GET /auth/me`
- *   silently sign the user back in.
+ *   signal still counts as "a known identity", and it is what a later sign-in
+ *   is compared against (a different id means a different account). Cleared by
+ *   sign-out.
  * - `authConfig`: the last good `GET /auth/config` answer, so the app can decide
  *   offline whether this server wants a login at all.
- * - `owner`: the id of the account that owns this device's local entries,
- *   outbox and sync state (see localOwner.ts). It survives sign-out on
- *   purpose: signing back in as the same account keeps everything, signing in
- *   as a different one is caught.
  *
  * None of this is a security boundary (the backend session cookie is what
  * authorises sync), so every function degrades quietly (null / no-op) when
  * IndexedDB is unavailable or fails, rather than blocking the app from opening.
  */
 
-type RecordKey = 'current' | 'pendingLogout' | 'owner' | 'authConfig'
+type RecordKey = 'current' | 'authConfig'
 
-export interface IdentityRecord {
+interface IdentityRecord {
   key: RecordKey
   profile?: AuthProfile
-  ownerId?: string
   authConfig?: unknown
 }
 
@@ -106,35 +98,4 @@ export async function getCachedAuthConfig(): Promise<AuthConfig | null> {
 /** Remembers the server's auth config so a later offline start can still decide. */
 export function putCachedAuthConfig(config: AuthConfig): Promise<void> {
   return writeRecord({ key: 'authConfig', authConfig: config })
-}
-
-/** Whether the user signed out and the server-side logout hasn't been confirmed yet. */
-export async function hasPendingLogout(): Promise<boolean> {
-  return (await readRecord('pendingLogout')) !== undefined
-}
-
-/** Records that the user signed out, until the server confirms it. */
-export function setPendingLogout(): Promise<void> {
-  return writeRecord({ key: 'pendingLogout' })
-}
-
-/** The server-side logout went through (or a new sign-in superseded it). */
-export function clearPendingLogout(): Promise<void> {
-  return deleteRecord('pendingLogout')
-}
-
-/** The account id that owns this device's local data, or `null` if none is recorded yet. */
-export async function getLocalOwnerId(): Promise<string | null> {
-  const record = await readRecord('owner')
-  return typeof record?.ownerId === 'string' ? record.ownerId : null
-}
-
-/** The `owner` record, for callers that must write it inside their own transaction (see localOwner.ts). */
-export function ownerRecord(ownerId: string): IdentityRecord {
-  return { key: 'owner', ownerId }
-}
-
-/** Records which account owns this device's local data. */
-export function putLocalOwnerId(ownerId: string): Promise<void> {
-  return writeRecord(ownerRecord(ownerId))
 }

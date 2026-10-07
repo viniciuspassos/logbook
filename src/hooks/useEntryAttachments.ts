@@ -66,8 +66,8 @@ function removalStatus(summary: DrainSummary): AttachmentStatus {
 }
 
 export interface UseEntryAttachmentsOptions {
-  /** The upload's drain was refused by the server (401: session gone; 403: a refusal), with that status. */
-  onAuthRequired?: (status?: number) => void
+  /** The upload's drain discovered the session is gone (a 401). */
+  onAuthRequired?: () => void
 }
 
 /**
@@ -192,7 +192,7 @@ export function useEntryAttachments(
         // the bug this fixes: a reachable-but-unauthenticated backend
         // looked identical to no connectivity at all).
         setStatus({ tone: 'info', message: 'Photo queued — sign in to sync it.' })
-        onAuthRequired?.(summary.authStatus)
+        onAuthRequired?.()
       } else {
         setStatus({ tone: 'info', message: "Photo queued — it'll upload once you're back online." })
       }
@@ -266,7 +266,7 @@ export function useEntryAttachments(
       if (summary.processed > 0) {
         await load(target)
       } else if (summary.stoppedReason === 'auth') {
-        onAuthRequired?.(summary.authStatus)
+        onAuthRequired?.()
       }
       return removalStatus(summary)
     },

@@ -14,10 +14,10 @@ export interface ContourRing {
 }
 
 const CENTER = 200
-const POINTS = 24
+const POINTS = 16
 const FIRST_RADIUS = 26
 const RADIUS_STEP = 25
-const DEFAULT_RING_COUNT = 10
+const DEFAULT_RING_COUNT = 8
 
 function round(value: number): number {
   return Math.round(value * 10) / 10

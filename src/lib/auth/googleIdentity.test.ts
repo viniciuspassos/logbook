@@ -273,17 +273,14 @@ describe('renderGoogleSignInButton', () => {
     })
   })
 
-  it('re-initializes GIS when the client ID changes, and only then', async () => {
+  it('uses the first client ID for the page lifetime: GIS is initialized once', async () => {
     const gis = installGoogle()
     const div = () => document.createElement('div')
     await renderGoogleSignInButton(div(), { clientId: 'one', onCredential: jest.fn() })
-    await renderGoogleSignInButton(div(), { clientId: 'one', onCredential: jest.fn() })
-    expect(gis.initialize).toHaveBeenCalledTimes(1)
-
     await renderGoogleSignInButton(div(), { clientId: 'two', onCredential: jest.fn() })
 
-    expect(gis.initialize).toHaveBeenCalledTimes(2)
-    expect(gis.initialize).toHaveBeenLastCalledWith(expect.objectContaining({ client_id: 'two' }))
+    expect(gis.initialize).toHaveBeenCalledTimes(1)
+    expect(gis.initialize).toHaveBeenCalledWith(expect.objectContaining({ client_id: 'one' }))
   })
 
   it('is unavailable when the script loads but defines no google global', async () => {

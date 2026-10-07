@@ -9,62 +9,47 @@ import {
   type SetStateAction,
 } from 'react'
 import { useAuthConfig } from './useAuthConfig.ts'
-import { useBackoffRetry } from './useBackoffRetry.ts'
 import type { AuthMode } from '../lib/auth/authConfig.ts'
 import {
-  AUTH_MODE_PAUSE,
   LOADING,
-  RESTORE_TIMEOUT_MS,
   SIGNED_OUT,
-  SIGNED_OUT_PAUSE,
-  STARTUP_VERIFY_PAUSE,
-  adoptAccount,
-  healRefusedDrain,
-  resolveStuckStartup,
+  STARTUP_TIMEOUT_MS,
+  isVerified,
   restoreSession,
   signInWithIdToken,
   signOut,
+  startupFallback,
   verifiedSession,
   verifySession,
 } from '../lib/auth/sessionFlows.ts'
+import { onBackOnline } from '../lib/sync/connectivity.ts'
 import { SyncAuthError, SyncHttpError, SyncNetworkError } from '../lib/sync/errors.ts'
-import { drainOutbox, pauseDrains, resumeDrains } from '../lib/sync/outboxRunner.ts'
+import { drainOutbox, setDrainsAllowed } from '../lib/sync/outboxRunner.ts'
 import type { AuthProfile, AuthState, Session } from '../types/auth.ts'
 
 export type { AuthState } from '../types/auth.ts'
 
 /**
- * Owns who is signed in (Sign in with Google, #122) — a distinct concern from
- * `useSyncOutbox` (background drain scheduling) and `useEntryAttachments`
- * (one entry's gallery), so it's its own hook per CLAUDE.md's state-composition
- * rule. The decisions themselves live in `src/lib/auth/sessionFlows.ts`; this
- * hook wires them to state. `App.tsx` gates on `state`.
+ * Owns who is signed in (Sign in with Google, #122); the decisions live in
+ * `src/lib/auth/sessionFlows.ts`, this hook wires them to state. `App.tsx`
+ * gates on `state`. Whether there is a login at all is the server's call
+ * (`GET /auth/config`, via `useAuthConfig`): under `google` everything below
+ * applies; under `none` / `unknown` the session is simply local (no gate, no
+ * banner, no `GET /auth/me`, no drains); `dev:mocked` skips it all too.
  *
- * The full-screen gate (`state === 'signedOut'`) shows only at startup with no
- * known identity, after an explicit sign-out, when `GET /auth/me` says 401 at
- * startup, or when a different account must confirm replacing this device's
- * data (`pendingSwitch`). It never shows because of a *background* 401 (an
- * outbox drain, a photo upload): that only raises `needsSignIn`, which the UI
- * shows as a non-blocking banner so an in-progress capture draft survives.
- *
- * It also never locks a user out offline: the cached profile, or just local
- * entries, open the app as `unverified` and a later drain that reaches the
- * server confirms it. A startup that gets stuck (e.g. IndexedDB blocked by
- * another tab) opens the same way after a short timeout instead of leaving the
- * splash up forever. Sign-in and sign-out supersede a slow startup check, so
- * a stale result can never overwrite them or re-cache a signed-out identity.
- *
- * Whether there is a gate at all is the server's call (`GET /auth/config`,
- * resolved by `useAuthConfig`): `google` runs everything above; `none` (login
- * off on the server) and `unknown` (couldn't ask, nothing cached) open the app
- * local-only, with no gate, no banner, no `GET /auth/me`, and every outbox
- * drain held back so there is no 401 churn; `unknown` asks again on reconnect
- * and switches to `google` or `none` as soon as the server answers. Under
- * `npm run dev:mocked` (sample data, no backend) the gate is skipped too.
+ * - The full-screen gate shows with no known identity, after sign-out, or on a
+ *   401 from `GET /auth/me`. A background 401 only raises `needsSignIn` (a
+ *   banner), so an in-progress capture draft survives.
+ * - A cached identity or local entries open the app offline as `unverified`;
+ *   it is verified when the app regains the network or focus.
+ * - One account per device: a different user id wipes local data (`notice`).
+ * - Sign-in and sign-out supersede a slow startup check, so a stale result can
+ *   never overwrite them.
+ * - The outbox only drains once the session is verified (`setDrainsAllowed`).
  */
 
 export interface UseAuthOptions {
-  /** The device's local data was replaced (an account switch), so cached lists must reload. */
+  /** This device's local data was wiped (sign-out, or a different account), so in-memory lists must reload. */
   onLocalDataReset?: () => void
 }
 
@@ -76,30 +61,23 @@ export interface UseAuthResult {
   state: AuthState
   /** The signed-in account, when known. */
   profile: AuthProfile | null
-  /** Open on a cached profile or local entries, not yet confirmed by the server. */
+  /** Open on a cached identity or local entries, not yet confirmed by the server. */
   unverified: boolean
   /** A background request found the session gone; show a non-blocking "sign in again". */
   needsSignIn: boolean
-  /** A different account signed in and must confirm removing this device's local data. */
-  pendingSwitch: AuthProfile | null
+  /** Set when a different account signed in and this device's previous entries were removed. */
+  notice: string | null
   pending: boolean
   error: string | null
   /** Exchanges a Google ID token for a session. Resolves to whether `/auth/google` accepted it; never rejects. */
   signInWithGoogle: (idToken: string) => Promise<boolean>
-  /** Confirms an account switch: removes the previous account's local data and opens as the new one. */
-  confirmSwitch: () => Promise<void>
-  /** Declines an account switch: signs the new account back out. */
-  cancelSwitch: () => Promise<void>
+  /** Needs a connection: syncs first, then wipes this device. Failures land in `error`. */
   logout: () => Promise<void>
-  /**
-   * Call when a background request is refused by the server, with its status.
-   * A 401 (or no status) raises `needsSignIn`; a 403 is a refusal rather than
-   * an expired session, so it triggers one self-heal instead. Ignored unless
-   * signed in.
-   */
-  noteAuthRequired: (status?: number) => void
+  /** Call when a background request discovers the session is gone (a 401). Ignored outside `google` mode. */
+  noteAuthRequired: () => void
   /** Hides the "sign in again" prompt until the next 401. */
   dismissSignInPrompt: () => void
+  dismissNotice: () => void
   clearError: () => void
 }
 
@@ -122,20 +100,10 @@ function messageForSignInError(error: unknown): string {
   return 'Something went wrong. Try again.'
 }
 
-interface AccountDeps {
-  session: Session
-  needsSignIn: boolean
-  setSession: (session: Session) => void
-  setNeedsSignIn: (needed: boolean) => void
-  setPending: (pending: boolean) => void
-  setError: (error: string | null) => void
-  supersede: () => void
-  onLocalDataReset?: () => void
-}
-
-/** Startup check, with a timeout so a stuck one never leaves the splash up forever. */
+/** Startup check; a slow one opens a known device unverified rather than leaving the splash up. */
 function useRestoreOnMount(
   enabled: boolean,
+  applySession: (session: Session) => void,
   setSession: Dispatch<SetStateAction<Session>>,
   restoreRef: MutableRefObject<AbortController | null>,
 ) {
@@ -144,140 +112,76 @@ function useRestoreOnMount(
     const controller = new AbortController()
     restoreRef.current = controller
     const apply = (next: Session) => {
-      if (!controller.signal.aborted) setSession(next)
+      if (!controller.signal.aborted) applySession(next)
     }
-    // Only fills in a startup that is still waiting; never overwrites a real answer.
+    // Only fills in a startup that is still waiting; never overwrites a real
+    // answer. A device we don't know (nothing cached, nothing local) keeps waiting.
     const settleIfLoading = (next: Session | null) => {
       if (next && !controller.signal.aborted) setSession((cur) => (cur.state === 'loading' ? next : cur))
     }
-    // If startup itself blows up there is nothing to wait for: open for an
-    // existing user, otherwise show the gate.
-    restoreSession(controller.signal, apply).catch(() =>
-      resolveStuckStartup().then((next) => settleIfLoading(next ?? SIGNED_OUT)),
-    )
-    // Opening unverified is only right for someone who has local data. A
-    // first-time user keeps waiting for the server (opening the app for them
-    // would only gate them again mid-capture); stuck storage falls to the gate.
-    const timer = setTimeout(() => void resolveStuckStartup().then(settleIfLoading), RESTORE_TIMEOUT_MS)
+    void restoreSession(controller.signal, apply)
+    const timer = setTimeout(() => void startupFallback().then(settleIfLoading), STARTUP_TIMEOUT_MS)
     return () => {
       clearTimeout(timer)
       controller.abort()
     }
-  }, [enabled, setSession, restoreRef])
+  }, [enabled, applySession, setSession, restoreRef])
 }
 
 interface VerifyDeps {
   awaiting: boolean
   hasProfile: boolean
   epochRef: MutableRefObject<number>
-  setSession: (session: Session) => void
+  applySession: (session: Session) => void
   setNeedsSignIn: (needed: boolean) => void
 }
 
 /**
- * While a Google session is unverified, retry `GET /auth/me` (+ the owner
- * check) on a backoff timer and whenever connectivity returns. Not on drain
- * events: drains are held back until this succeeds.
+ * While a Google session is unverified, retry `GET /auth/me` whenever the app
+ * may be reachable again (online, focus, visible). Not on drain events: drains
+ * are held back until this succeeds.
  */
-function useVerifyWhenReachable({ awaiting, hasProfile, epochRef, setSession, setNeedsSignIn }: VerifyDeps) {
-  useBackoffRetry(awaiting, async () => {
-    const epoch = epochRef.current
-    const result = await verifySession()
-    if (epoch !== epochRef.current) return true
-    if (result === 'expired') {
-      // A session that was verified before only needs a banner. One that
-      // never was (no cached identity) has no standing: show the gate.
-      if (hasProfile) setNeedsSignIn(true)
-      else setSession(SIGNED_OUT)
-      return true
-    }
-    if (!result) return false
-    setSession(result)
-    return true
-  })
+function useVerifyOnReconnect({ awaiting, hasProfile, epochRef, applySession, setNeedsSignIn }: VerifyDeps) {
+  useEffect(() => {
+    if (!awaiting) return
+    let verifying = false
+    return onBackOnline(() => {
+      if (verifying) return
+      verifying = true
+      const epoch = epochRef.current
+      void verifySession().then((result) => {
+        verifying = false
+        if (epoch !== epochRef.current) return
+        if (result === 'expired') {
+          // A session verified before only needs a banner; one that never was has no standing.
+          if (hasProfile) setNeedsSignIn(true)
+          else applySession(SIGNED_OUT)
+        } else if (result) applySession(result)
+      })
+    })
+  }, [awaiting, hasProfile, epochRef, applySession, setNeedsSignIn])
 }
 
-interface Lifecycle {
-  supersede: () => void
-  setPending: (pending: boolean) => void
-  setError: (error: string | null) => void
-}
-
-/** Runs one async account action behind the shared pending/error handling. */
-async function runAction(
-  { supersede, setPending, setError }: Lifecycle,
-  action: () => Promise<void>,
-  failureMessage: (error: unknown) => string | null,
-): Promise<boolean> {
-  supersede()
-  setPending(true)
-  setError(null)
-  try {
-    await action()
-    return true
-  } catch (err) {
-    setError(failureMessage(err))
-    return false
-  } finally {
-    setPending(false)
-  }
-}
-
-function useAccountActions(deps: AccountDeps) {
-  const { session, needsSignIn, setSession, setNeedsSignIn, setPending, setError, supersede, onLocalDataReset } = deps
-  const { unverified, pendingSwitch } = session
-  const lifecycle = useMemo(() => ({ supersede, setPending, setError }), [supersede, setPending, setError])
-
-  const signInWithGoogle = useCallback(
-    (idToken: string) =>
-      runAction(
-        lifecycle,
-        async () => {
-          const next = await signInWithIdToken(idToken)
-          setSession(next)
-          if (next.state !== 'signedIn') return
-          setNeedsSignIn(false)
-          // Anything the outbox queued while signed out can go through, but
-          // only once the account is matched to this device (verified); an
-          // unverified sign-in is released later by its verification.
-          if (!next.unverified) void drainOutbox()
-        },
-        messageForSignInError,
-      ),
-    [lifecycle, setSession, setNeedsSignIn],
-  )
-
-  const logout = useCallback(async () => {
-    // Push unsynced entries to the right account while its session still works.
-    const flushFirst = session.state === 'signedIn' && !unverified && !needsSignIn
-    // Signing out locally never depends on the network, so a failed step has no message to show.
-    await runAction(lifecycle, () => signOut(flushFirst), () => null)
-    setSession(SIGNED_OUT)
-    setNeedsSignIn(false)
-  }, [lifecycle, session.state, unverified, needsSignIn, setSession, setNeedsSignIn])
-
-  const confirmSwitch = useCallback(async () => {
-    if (!pendingSwitch) return
-    await runAction(
-      lifecycle,
-      async () => {
-        const next = await adoptAccount(pendingSwitch)
-        onLocalDataReset?.()
-        setSession(next)
-        setNeedsSignIn(false)
-        void drainOutbox()
-      },
-      () => "Couldn't remove the previous account's entries from this device. Try again.",
-    )
-  }, [lifecycle, pendingSwitch, onLocalDataReset, setSession, setNeedsSignIn])
-
-  return { signInWithGoogle, logout, confirmSwitch }
+/**
+ * The outbox drains only when it is safe: with Google login, once the session
+ * is verified (`/auth/me` answered and the identity check ran); never under
+ * `none` / `unknown` or while the mode is still loading. `dev:mocked` always
+ * drains, as it did. Declared before `useSyncOutbox` in the composition root, so
+ * the gate is closed before its mount-time drain can run.
+ */
+function useDrainGate(mode: AuthMode, verified: boolean) {
+  useEffect(() => {
+    const allowed = mode === 'mock' || (mode === 'google' && verified)
+    setDrainsAllowed(allowed)
+    if (allowed && mode === 'google') void drainOutbox()
+  }, [mode, verified])
+  useEffect(() => () => setDrainsAllowed(true), [])
 }
 
 /**
  * With no login to do (`none`, or `unknown` while the server can't be asked)
- * the session is simply local: signed in, nothing to verify, nothing pending.
- * This also stands down a startup check or banner left over from `google`.
+ * the session is simply local: signed in, nothing to verify. This also stands
+ * down a startup check or banner left over from `google`.
  */
 function useLocalOnlySession(
   mode: AuthMode,
@@ -293,77 +197,81 @@ function useLocalOnlySession(
   }, [mode, setSession, setNeedsSignIn, supersede])
 }
 
-/**
- * Keeps the outbox quiet until it is safe. Under `none`/`unknown`, and until
- * the mode is known, every drain is a no-op (reason `auth-mode`). Under
- * `google` they stay held (reason `startup-verify`, taken before the first
- * drain can run) until the session is verified: `/auth/me` answered AND the
- * local-owner check passed. So a live cookie for account B can never upload
- * account A's queue, and an unreachable server just keeps drains paused until
- * verification succeeds. `dev:mocked` is left exactly as it was.
- */
-function useDrainGuard(mode: AuthMode, ownerVerified: boolean) {
-  // Declared in this order on purpose: effects run in order, so the verify
-  // hold is taken before the auth-mode hold is let go of.
-  useEffect(() => {
-    if (mode !== 'google') return
-    if (ownerVerified) resumeDrains(STARTUP_VERIFY_PAUSE)
-    else void pauseDrains(STARTUP_VERIFY_PAUSE)
-  }, [mode, ownerVerified])
-
-  useEffect(() => {
-    if (mode === 'mock') return
-    if (mode === 'google') {
-      resumeDrains(AUTH_MODE_PAUSE)
-      return
-    }
-    // With no login at all, a leftover sign-out hold has nothing to wait for.
-    if (mode === 'none') resumeDrains(SIGNED_OUT_PAUSE)
-    void pauseDrains(AUTH_MODE_PAUSE)
-  }, [mode])
-
-  useEffect(() => {
-    if (mode === 'google' && ownerVerified) void drainOutbox()
-  }, [mode, ownerVerified])
-
-  useEffect(
-    () => () => {
-      resumeDrains(AUTH_MODE_PAUSE)
-      resumeDrains(STARTUP_VERIFY_PAUSE)
-    },
-    [],
-  )
+interface Lifecycle {
+  supersede: () => void
+  setPending: (pending: boolean) => void
+  setError: (error: string | null) => void
 }
 
-/** How long a failed self-heal blocks another one. */
-const HEAL_RETRY_AFTER_MS = 60_000
+/** Runs one async account action behind the shared pending/error handling. */
+async function runAction(
+  { supersede, setPending, setError }: Lifecycle,
+  action: () => Promise<void>,
+  failureMessage: (error: unknown) => string,
+): Promise<boolean> {
+  supersede()
+  setPending(true)
+  setError(null)
+  try {
+    await action()
+    return true
+  } catch (err) {
+    setError(failureMessage(err))
+    return false
+  } finally {
+    setPending(false)
+  }
+}
 
-/**
- * A 403 on a drain is a refusal (e.g. a stale CSRF cookie), not an expired
- * session: heal once (`GET /auth/me` re-syncs cookies, the drain is retried),
- * never loop, and never show the sign-in prompt for it unless /auth/me proves
- * the session is gone. A failed heal blocks further ones for a minute.
- */
-function useRefusalHealing(setNeedsSignIn: (needed: boolean) => void): () => void {
-  const stateRef = useRef<'idle' | 'busy' | 'failed'>('idle')
-  const resetTimer = useRef<ReturnType<typeof setTimeout> | undefined>(undefined)
-  useEffect(() => () => clearTimeout(resetTimer.current), [])
+interface AccountDeps extends Lifecycle {
+  session: Session
+  applySession: (session: Session) => void
+  setNeedsSignIn: (needed: boolean) => void
+  resetLocalData: () => void
+}
 
-  return useCallback(() => {
-    if (stateRef.current !== 'idle') return
-    stateRef.current = 'busy'
-    void healRefusedDrain().then((outcome) => {
-      if (outcome === 'expired') setNeedsSignIn(true)
-      if (outcome === 'recovered') {
-        stateRef.current = 'idle'
-        return
-      }
-      stateRef.current = 'failed'
-      resetTimer.current = setTimeout(() => {
-        stateRef.current = 'idle'
-      }, HEAL_RETRY_AFTER_MS)
-    })
-  }, [setNeedsSignIn])
+function useAccountActions(deps: AccountDeps) {
+  const { session, applySession, setNeedsSignIn, resetLocalData, supersede, setPending, setError } = deps
+  const lifecycle = useMemo(() => ({ supersede, setPending, setError }), [supersede, setPending, setError])
+  const wasVerified = isVerified(session)
+
+  const signInWithGoogle = useCallback(
+    (idToken: string) =>
+      runAction(
+        lifecycle,
+        async () => {
+          // Never drain while a session that hasn't been matched to this
+          // device's identity exists (a re-sign-in as another account).
+          setDrainsAllowed(false)
+          let next: Session | null = null
+          try {
+            next = await signInWithIdToken(idToken)
+          } finally {
+            setDrainsAllowed(next ? isVerified(next) : wasVerified)
+          }
+          applySession(next)
+          setNeedsSignIn(false)
+          if (isVerified(next)) void drainOutbox()
+        },
+        messageForSignInError,
+      ),
+    [lifecycle, applySession, setNeedsSignIn, wasVerified],
+  )
+
+  const logout = useCallback(async () => {
+    await runAction(
+      lifecycle,
+      async () => {
+        await signOut()
+        resetLocalData()
+        applySession(SIGNED_OUT)
+        setNeedsSignIn(false)
+      },
+      (err) => (err instanceof Error && err.message ? err.message : 'Something went wrong. Try again.'),
+    )
+  }, [lifecycle, resetLocalData, applySession, setNeedsSignIn])
+
+  return { signInWithGoogle, logout }
 }
 
 export function useAuth(options: UseAuthOptions = {}): UseAuthResult {
@@ -375,6 +283,21 @@ export function useAuth(options: UseAuthOptions = {}): UseAuthResult {
   const epochRef = useRef(0)
   const restoreRef = useRef<AbortController | null>(null)
 
+  // The reset callback is a fresh function each render, so it is read through a ref.
+  const resetRef = useRef(options.onLocalDataReset)
+  useEffect(() => {
+    resetRef.current = options.onLocalDataReset
+  }, [options.onLocalDataReset])
+  const resetLocalData = useCallback(() => resetRef.current?.(), [])
+  // Every session that comes with a notice has just wiped this device's data.
+  const applySession = useCallback(
+    (next: Session) => {
+      if (next.notice) resetLocalData()
+      setSession(next)
+    },
+    [resetLocalData],
+  )
+
   // Any sign-in/out outranks whatever the startup check or a background
   // verification is still working on.
   const supersede = useCallback(() => {
@@ -382,43 +305,32 @@ export function useAuth(options: UseAuthOptions = {}): UseAuthResult {
     restoreRef.current?.abort()
   }, [])
 
-  useDrainGuard(mode, mode === 'google' && session.state === 'signedIn' && !session.unverified && session.profile !== null)
-  useRestoreOnMount(mode === 'google', setSession, restoreRef)
+  useDrainGate(mode, isVerified(session))
+  useRestoreOnMount(mode === 'google', applySession, setSession, restoreRef)
   useLocalOnlySession(mode, setSession, setNeedsSignIn, supersede)
-  useVerifyWhenReachable({
-    awaiting: session.state === 'signedIn' && session.unverified,
+  useVerifyOnReconnect({
+    awaiting: mode === 'google' && session.state === 'signedIn' && session.unverified,
     hasProfile: session.profile !== null,
     epochRef,
-    setSession,
+    applySession,
     setNeedsSignIn,
   })
-  const { signInWithGoogle, logout, confirmSwitch } = useAccountActions({
+  const { signInWithGoogle, logout } = useAccountActions({
     session,
-    needsSignIn,
-    setSession,
+    applySession,
     setNeedsSignIn,
+    resetLocalData,
+    supersede,
     setPending,
     setError,
-    supersede,
-    onLocalDataReset: options.onLocalDataReset,
   })
 
-  const sessionRef = useRef(session)
-  useEffect(() => {
-    sessionRef.current = session
-  }, [session])
-  const heal = useRefusalHealing(setNeedsSignIn)
-  // Only a signed-in Google session can expire: with no login, or once signed
-  // out, there is nothing to sign in again to.
-  const noteAuthRequired = useCallback(
-    (status?: number) => {
-      if (mode !== 'google' || sessionRef.current.state !== 'signedIn') return
-      if (status === 403) heal()
-      else setNeedsSignIn(true)
-    },
-    [mode, heal],
-  )
+  // Only a Google session can expire; with no login there is nothing to sign in to.
+  const noteAuthRequired = useCallback(() => {
+    if (mode === 'google') setNeedsSignIn(true)
+  }, [mode])
   const dismissSignInPrompt = useCallback(() => setNeedsSignIn(false), [])
+  const dismissNotice = useCallback(() => setSession((cur) => ({ ...cur, notice: null })), [])
   const clearError = useCallback(() => setError(null), [])
 
   return {
@@ -428,15 +340,14 @@ export function useAuth(options: UseAuthOptions = {}): UseAuthResult {
     profile: session.profile,
     unverified: session.unverified,
     needsSignIn,
-    pendingSwitch: session.pendingSwitch,
+    notice: session.notice,
     pending,
     error,
     signInWithGoogle,
-    confirmSwitch,
-    cancelSwitch: logout,
     logout,
     noteAuthRequired,
     dismissSignInPrompt,
+    dismissNotice,
     clearError,
   }
 }

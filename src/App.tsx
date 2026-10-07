@@ -82,9 +82,6 @@ function App() {
         error={auth.error}
         clientId={auth.googleClientId}
         onCredential={auth.signInWithGoogle}
-        pendingSwitch={auth.pendingSwitch}
-        onConfirmSwitch={auth.confirmSwitch}
-        onCancelSwitch={auth.cancelSwitch}
       />
     )
   }
@@ -106,7 +103,14 @@ function App() {
 
   return (
     <>
-    {auth.needsSignIn && <SignInBanner onSignIn={() => setReauthOpen(true)} onDismiss={auth.dismissSignInPrompt} />}
+    {auth.needsSignIn && (
+      <SignInBanner
+        message="Sign in again to resume syncing."
+        onSignIn={() => setReauthOpen(true)}
+        onDismiss={auth.dismissSignInPrompt}
+      />
+    )}
+    {auth.notice && <SignInBanner message={auth.notice} dismissLabel="OK" onDismiss={auth.dismissNotice} />}
     {auth.needsSignIn && reauthOpen && (
       <div className="reauth">
         <LoginScreen
@@ -114,14 +118,11 @@ function App() {
           error={auth.error}
           clientId={auth.googleClientId}
           onCredential={auth.signInWithGoogle}
-          pendingSwitch={auth.pendingSwitch}
-          onConfirmSwitch={auth.confirmSwitch}
-          onCancelSwitch={auth.cancelSwitch}
           onDismiss={() => setReauthOpen(false)}
         />
       </div>
     )}
-    <div className={cx('app', auth.needsSignIn && 'app--with-banner')}>
+    <div className={cx('app', (auth.needsSignIn || auth.notice) && 'app--with-banner')}>
       <div className="app-screen">
         {tab === 'timeline' && (
           <TimelineScreen

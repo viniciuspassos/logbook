@@ -15,9 +15,6 @@ function makeProps(overrides: Partial<LoginScreenProps> = {}): LoginScreenProps 
     error: null,
     clientId: 'cid.apps.googleusercontent.com',
     onCredential: jest.fn(),
-    pendingSwitch: null,
-    onConfirmSwitch: jest.fn(),
-    onCancelSwitch: jest.fn(),
     ...overrides,
   }
 }
@@ -139,20 +136,6 @@ describe('LoginScreen', () => {
     expect(screen.getByRole('status')).toHaveTextContent('Sign-in expired. Try again.')
   })
 
-  it('does not re-render Google\'s button when the parent passes a new callback, but uses the latest one', async () => {
-    const first = jest.fn()
-    const second = jest.fn()
-    const { rerender } = await renderScreen(makeProps({ onCredential: first }))
-
-    rerender(<LoginScreen {...makeProps({ onCredential: second })} />)
-    await act(async () => {})
-
-    expect(renderMock).toHaveBeenCalledTimes(1)
-    renderMock.mock.calls[0][1].onCredential('id-token')
-    expect(first).not.toHaveBeenCalled()
-    expect(second).toHaveBeenCalledWith('id-token')
-  })
-
   it('removes the rendered button from its slot on unmount', async () => {
     const { container, unmount } = await renderScreen()
     const slot = container.querySelector('.login__google') as HTMLElement
@@ -179,41 +162,6 @@ describe('LoginScreen', () => {
     expect(container.querySelector('.login__google')).not.toHaveAttribute('hidden')
   })
 
-  describe('when a different account must confirm', () => {
-    const grace = { id: 'u2', email: 'grace@example.com', name: 'Grace', picture: null }
-
-    it('warns what will be removed, and hides Google\'s button', async () => {
-      const { container } = await renderScreen(makeProps({ pendingSwitch: grace }))
-      expect(screen.getByText(/different Google account/)).toHaveTextContent('grace@example.com')
-      expect(screen.getByText(/hasn.t synced/)).toBeInTheDocument()
-      expect(container.querySelector('.login__google')).toHaveAttribute('hidden')
-    })
-
-    it('confirms or cancels through the callbacks', async () => {
-      const user = userEvent.setup()
-      const props = makeProps({ pendingSwitch: grace })
-      await renderScreen(props)
-
-      await user.click(screen.getByRole('button', { name: 'Remove them and continue' }))
-      await user.click(screen.getByRole('button', { name: 'Cancel' }))
-
-      expect(props.onConfirmSwitch).toHaveBeenCalledTimes(1)
-      expect(props.onCancelSwitch).toHaveBeenCalledTimes(1)
-    })
-
-    it('disables both choices while working', async () => {
-      await renderScreen(makeProps({ pendingSwitch: grace, pending: true }))
-      expect(screen.getByRole('button', { name: 'Remove them and continue' })).toBeDisabled()
-      expect(screen.getByRole('button', { name: 'Cancel' })).toBeDisabled()
-    })
-
-    it('does not offer the offline retry on top of the confirmation', async () => {
-      resolveWith({ status: 'unavailable', reason: 'offline' })
-      await renderScreen(makeProps({ pendingSwitch: grace }))
-      expect(screen.queryByRole('button', { name: 'Try again' })).not.toBeInTheDocument()
-    })
-  })
-
   describe('over the running app', () => {
     it('offers "Not now" only when it can be dismissed', async () => {
       const user = userEvent.setup()
@@ -235,12 +183,13 @@ describe('LoginScreen', () => {
   })
 
   it('renders the button again only if the client ID changes', async () => {
-    const { rerender } = await renderScreen()
-    rerender(<LoginScreen {...makeProps()} />)
+    const props = makeProps()
+    const { rerender } = await renderScreen(props)
+    rerender(<LoginScreen {...props} />)
     await act(async () => {})
     expect(renderMock).toHaveBeenCalledTimes(1)
 
-    rerender(<LoginScreen {...makeProps({ clientId: 'other.apps.googleusercontent.com' })} />)
+    rerender(<LoginScreen {...props} clientId="other.apps.googleusercontent.com" />)
     await act(async () => {})
     expect(renderMock).toHaveBeenCalledTimes(2)
   })

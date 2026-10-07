@@ -100,4 +100,9 @@ describe('AccountSettings', () => {
     rerender(<AccountSettings {...makeProps({ status: null })} />)
     expect(container.querySelector('.account-settings__status')).toBeEmptyDOMElement()
   })
+
+  it('warns, next to Sign out, that signing out removes this device\'s entries but keeps them on the server', () => {
+    render(<AccountSettings {...makeProps()} />)
+    expect(screen.getByText("Signing out removes this device's entries (they stay on the server).")).toBeInTheDocument()
+  })
 })

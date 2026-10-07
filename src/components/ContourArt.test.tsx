@@ -15,11 +15,9 @@ describe('ContourArt', () => {
     expect(container.querySelectorAll('.contour-art__ring--major').length).toBeGreaterThan(0)
   })
 
-  it('staggers each ring through its --ring index', () => {
+  it('is static: no animation, so nothing to switch off for reduced motion', () => {
     const { container } = render(<ContourArt />)
-    const rings = container.querySelectorAll<SVGPathElement>('.contour-art__ring')
-    expect(rings[0].style.getPropertyValue('--ring')).toBe('0')
-    expect(rings[3].style.getPropertyValue('--ring')).toBe('3')
+    expect(container.querySelector('[style]')).toBeNull()
   })
 
   it('marks the summit with the accent dot', () => {

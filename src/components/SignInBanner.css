@@ -1,59 +1,30 @@
 /* Fixed to the top so it never reflows the shell's rail/list/panel layout. */
 .signin-banner {
   position: fixed;
-  top: 0;
-  left: 0;
-  right: 0;
+  inset: 0 0 auto;
   z-index: 40;
   display: flex;
   align-items: center;
-  justify-content: center;
-  gap: var(--lb-space-3);
+  gap: var(--lb-space-2);
   height: var(--lb-banner-height);
   padding: 0 var(--lb-space-3);
   font-size: 14px;
-  color: var(--lb-ink);
   background: var(--lb-accent-bg);
-  border-bottom: 1px solid var(--lb-border);
 }
-
-@media (max-width: 480px) {
-  .signin-banner {
-    justify-content: space-between;
-  }
-  .signin-banner__text {
-    font-size: 13px;
-    line-height: 1.3;
-  }
+.signin-banner span {
+  flex: 1;
 }
-
-.signin-banner__button {
-  flex: none;
+.signin-banner button {
   min-height: 44px;
-  padding: 0 var(--lb-space-4);
-  border: none;
+  padding: 0 var(--lb-space-3);
+  border: 0;
   border-radius: var(--lb-radius-sm);
-  font: inherit;
-  font-weight: 600;
-  color: var(--lb-on-accent);
-  background: var(--lb-accent-fill);
-  cursor: pointer;
-}
-/* The quiet option beside the primary one; still a 44px target. */
-.signin-banner__dismiss {
-  flex: none;
-  min-height: 44px;
-  padding: 0 var(--lb-space-2);
-  border: none;
   font: inherit;
   font-weight: 600;
   color: var(--lb-accent-ink);
   background: none;
-  cursor: pointer;
 }
-
-.signin-banner__button:focus-visible,
-.signin-banner__dismiss:focus-visible {
-  outline: 2px solid var(--lb-accent-ink);
-  outline-offset: 2px;
+.signin-banner .signin-banner__button {
+  color: var(--lb-on-accent);
+  background: var(--lb-accent-fill);
 }

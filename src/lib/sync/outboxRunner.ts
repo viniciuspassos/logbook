@@ -57,12 +57,6 @@ export interface DrainSummary {
    */
   stoppedReason: 'unsupported' | 'unreachable' | 'empty' | 'error' | 'auth' | 'aborted' | 'rejected'
   error?: string
-  /**
-   * With `'auth'`: the HTTP status the server answered. 401 means the session
-   * is gone; 403 is a refusal that isn't an expired session (e.g. a CSRF
-   * problem), so callers must not treat it as "sign in again".
-   */
-  authStatus?: number
 }
 
 function errorMessage(error: unknown): string {
@@ -194,17 +188,17 @@ async function attemptRecord(
       return null
     }
     await recordAttemptFailure(record.queueId, message).catch(() => {})
-    if (error instanceof SyncAuthError) {
-      return { processed: state.processed, stoppedReason: 'auth', error: message, authStatus: error.status }
-    }
-    return { processed: state.processed, stoppedReason: 'error', error: message }
+    // Only a 401 means the session is gone. A 403 is a refusal (e.g. a stale
+    // CSRF cookie), shown as a generic sync error rather than "sign in".
+    const stoppedReason = error instanceof SyncAuthError && error.status === 401 ? 'auth' : 'error'
+    return { processed: state.processed, stoppedReason, error: message }
   }
 }
 
 async function processQueue(records: OutboxRecord[], signal?: AbortSignal): Promise<DrainSummary> {
   const state: PassState = { processed: 0, blockedEntries: new Map() }
   for (const record of records) {
-    if (signal?.aborted || pauseReasons.size > 0) return { processed: state.processed, stoppedReason: 'aborted' }
+    if (signal?.aborted || !drainsAllowed) return { processed: state.processed, stoppedReason: 'aborted' }
     // The pass works from one snapshot; the user may have removed this op
     // since (deleted its entry or photo), so never run one that's gone.
     if (!(await hasRecord(record.queueId))) continue
@@ -274,7 +268,7 @@ async function drainUntilSettled(signal?: AbortSignal): Promise<DrainSummary> {
 }
 
 export function drainOutbox(signal?: AbortSignal): Promise<DrainSummary> {
-  if (pauseReasons.size > 0) return Promise.resolve({ processed: 0, stoppedReason: 'aborted' })
+  if (!drainsAllowed) return Promise.resolve({ processed: 0, stoppedReason: 'aborted' })
   if (inFlight) {
     rerunRequested = true
     return inFlight
@@ -287,31 +281,21 @@ export function drainOutbox(signal?: AbortSignal): Promise<DrainSummary> {
   return inFlight
 }
 
-// While paused, every drain trigger (mount, save, photo upload, sign-in, the
-// `online` event) is a no-op, because they all go through drainOutbox. Used
-// when the signed-in Google account may not be the one that owns the queue (so
-// one account's entries can never be uploaded under another's session) and
-// when the server has login off or the app can't tell yet (so there is no 401
-// churn). Each caller pauses under its own reason, and drains stay blocked
-// until every reason has been released, so one can't un-pause another.
-const pauseReasons = new Set<string>()
+// While drains are not allowed, every drain trigger (mount, save, photo upload,
+// sign-in, the `online` event) is a no-op, because they all go through
+// drainOutbox. useAuth owns the flag: off while the server's login type is
+// unknown or there is no login, and (with Google login) until the session is
+// verified, so nothing uploads under a session that hasn't been matched to this
+// device's identity, and a login-less app never churns on 401s.
+let drainsAllowed = true
 
 /**
- * Blocks all drains and stops the one in flight at its next operation,
- * resolving once it has actually stopped (so nothing is mid-upload when the
- * caller carries on). A request already on the wire finishes rather than being
- * cut off half-sent. A blocked drain reports `'aborted'`, which consumers
- * already ignore.
+ * Allows or blocks all drains. A drain already running stops at its next
+ * operation (a request on the wire finishes rather than being cut off
+ * half-sent). A blocked drain reports `'aborted'`, which consumers ignore.
  */
-export async function pauseDrains(reason = 'default'): Promise<void> {
-  pauseReasons.add(reason)
-  // A drain never rejects (failures become a summary), so this only waits.
-  await inFlight
-}
-
-/** Releases one reason for pausing; drains run again once none are left. */
-export function resumeDrains(reason = 'default'): void {
-  pauseReasons.delete(reason)
+export function setDrainsAllowed(allowed: boolean): void {
+  drainsAllowed = allowed
 }
 
 /**

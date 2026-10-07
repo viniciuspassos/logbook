@@ -6,11 +6,11 @@ if (typeof globalThis.structuredClone === 'undefined') {
 }
 import 'fake-indexeddb/auto'
 import { IDBFactory } from 'fake-indexeddb'
-import { checkLocalOwner, claimLocalData, hasLocalData } from './localOwner.ts'
-import { getLocalOwnerId, putLocalOwnerId } from './identityStore.ts'
+import { clearLocalData, hasLocalData } from './localData.ts'
 import { getAllEntries, putEntry } from './entriesStore.ts'
 import { enqueueOperation, getAllRecords } from './outboxStore.ts'
 import { getSyncState, putSyncState } from './syncStateStore.ts'
+import { getCachedAuthConfig, putCachedAuthConfig, putCachedIdentity, getCachedIdentity } from './identityStore.ts'
 import type { Entry } from '../../types/entry.ts'
 
 const entry = { id: 1, title: 'Old summit' } as Entry
@@ -25,35 +25,25 @@ beforeEach(() => {
   globalThis.indexedDB = new IDBFactory()
 })
 
-describe('checkLocalOwner', () => {
-  it('adopts the account when no owner is recorded yet (existing data belongs to the first user)', async () => {
-    expect(await checkLocalOwner('u1')).toBe('ok')
-    expect(await getLocalOwnerId()).toBe('u1')
-  })
-
-  it('is ok for the same account, whatever the id type', async () => {
-    await putLocalOwnerId('7')
-    expect(await checkLocalOwner(7)).toBe('ok')
-  })
-
-  it('reports a mismatch for a different account, without changing the owner', async () => {
-    await putLocalOwnerId('u1')
-    expect(await checkLocalOwner('u2')).toBe('mismatch')
-    expect(await getLocalOwnerId()).toBe('u1')
-  })
-})
-
-describe('claimLocalData', () => {
-  it('wipes entries, outbox and sync state, then records the new owner', async () => {
+describe('clearLocalData', () => {
+  it('wipes entries, outbox and sync state', async () => {
     await seedLocalData()
-    await putLocalOwnerId('u1')
 
-    await claimLocalData('u2')
+    await clearLocalData()
 
     expect(await getAllEntries()).toEqual([])
     expect(await getAllRecords()).toEqual([])
     expect(await getSyncState(1)).toBeUndefined()
-    expect(await getLocalOwnerId()).toBe('u2')
+  })
+
+  it('leaves the identity store alone (the caller decides what happens to the cached identity and config)', async () => {
+    await putCachedIdentity({ id: 'u', email: 'a@b.co', name: null, picture: null })
+    await putCachedAuthConfig({ methods: [] })
+
+    await clearLocalData()
+
+    expect(await getCachedIdentity()).not.toBeNull()
+    expect(await getCachedAuthConfig()).toEqual({ methods: [] })
   })
 
   it.each(['onerror', 'onabort'] as const)('rejects when the clearing transaction fires %s', async (handler) => {
@@ -62,55 +52,24 @@ describe('claimLocalData', () => {
       error: Error
       onerror?: () => void
       onabort?: () => void
-      objectStore: () => { clear: () => void; put: () => void }
-      abort: () => void
+      objectStore: () => { clear: () => void }
     }
     const spy = jest.spyOn(IDBDatabase.prototype, 'transaction').mockImplementation(() => {
-      const tx: FakeTx = { error: new Error('boom'), objectStore: () => ({ clear: () => undefined, put: () => undefined }), abort: () => undefined }
+      const tx: FakeTx = { error: new Error('boom'), objectStore: () => ({ clear: () => undefined }) }
       queueMicrotask(() => tx[handler]?.())
       return tx as unknown as IDBTransaction
     })
     try {
-      await expect(claimLocalData('u2')).rejects.toThrow('boom')
-      expect(await getLocalOwnerId()).toBeNull()
+      await expect(clearLocalData()).rejects.toThrow('boom')
     } finally {
       spy.mockRestore()
     }
   })
 
-  it('is atomic: when the owner write fails nothing is wiped and the call rejects', async () => {
-    await seedLocalData()
-    await putLocalOwnerId('u1')
-    const spy = jest.spyOn(IDBObjectStore.prototype, 'put').mockImplementation(() => {
-      throw new Error('owner write failed')
-    })
-    try {
-      await expect(claimLocalData('u2')).rejects.toThrow('owner write failed')
-    } finally {
-      spy.mockRestore()
-    }
-
-    expect(await getAllEntries()).toHaveLength(1)
-    expect(await getAllRecords()).toHaveLength(1)
-    expect(await getSyncState(1)).toBeDefined()
-    expect(await getLocalOwnerId()).toBe('u1')
-  })
-
-  it('writes the owner in the same transaction as the wipe', async () => {
-    await seedLocalData()
-    const spy = jest.spyOn(IDBDatabase.prototype, 'transaction')
-
-    await claimLocalData('u2')
-
-    expect(spy).toHaveBeenCalledTimes(1)
-    spy.mockRestore()
-    expect(await getLocalOwnerId()).toBe('u2')
-  })
-
-  it('rejects, and does not record the owner, when the data cannot be cleared', async () => {
+  it('has nothing to wipe, and does not throw, when IndexedDB is unavailable', async () => {
     // @ts-expect-error simulating an environment without IndexedDB
     delete globalThis.indexedDB
-    await expect(claimLocalData('u2')).rejects.toBeDefined()
+    await expect(clearLocalData()).resolves.toBeUndefined()
   })
 })
 

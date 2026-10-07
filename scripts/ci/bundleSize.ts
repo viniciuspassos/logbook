@@ -21,7 +21,7 @@ export interface BundleFile {
  *
  * Budget rationale (as of Oct 2026, measured at build time, adjusted +12% and rounded up):
  * - Total JS: baseline 77777 bytes → 89088 bytes (87 KiB; largest chunks grow as features are added)
- * - Total CSS: baseline 5279 bytes → 6144 bytes (6 KiB; theme tokens + component styles); raised to 7168 bytes (7 KiB) for the sign-in screen (see below)
+ * - Total CSS: baseline 5279 bytes → 6144 bytes (6 KiB; theme tokens + component styles)
  * - Single JS chunk: baseline 77777 bytes → 89088 bytes (87 KiB; prevents any one chunk runaway)
  *
  * To raise the budget: run `npm ci && npm run build`, measure gzip sizes with your own
@@ -32,11 +32,8 @@ export interface BundleFile {
 export const BUNDLE_BUDGET: BudgetConfig = {
   // Measured Oct 2026: 77777 bytes + 12% = 87110 bytes, rounded to 87 KiB (89088 bytes)
   maxTotalJsBytes: 89088,
-  // Measured Oct 2026: 5279 bytes + 12% = 5913 bytes, rounded to 6 KiB (6144 bytes).
-  // Raised for Sign in with Google (#122): the login screen, its contour-line art, the
-  // sign-in banner and the account row added ~1.3 KiB gzip of CSS (6548 bytes measured with
-  // the feature) + 12% = 7334 bytes, rounded down to 7 KiB (7168 bytes) to keep the headroom small.
-  maxTotalCssBytes: 7168,
+  // Measured Oct 2026: 5279 bytes + 12% = 5913 bytes, rounded to 6 KiB (6144 bytes)
+  maxTotalCssBytes: 6144,
   // Measured Oct 2026: 77777 bytes (single file) + 12% = 87110 bytes, rounded to 87 KiB (89088 bytes)
   maxSingleJsChunkBytes: 89088,
 }

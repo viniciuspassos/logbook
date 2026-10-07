@@ -38,59 +38,47 @@ export interface GoogleSignInOptions {
 /** How long the GIS script may take before the load counts as failed (offline, blocked, stalled). */
 export const SCRIPT_LOAD_TIMEOUT_MS = 8000
 
-// The one injected GIS tag. It is kept while its request is in flight (even
-// past a caller's timeout, because the request may still finish) so a retry
-// reuses it instead of injecting a second copy.
-let scriptTag: HTMLScriptElement | null = null
+// One shared load at a time. On a timeout the tag stays (its request may still
+// finish), so a retry reuses it instead of injecting a duplicate.
+let pendingLoad: Promise<boolean> | null = null
 
 function isGoogleLoaded(): boolean {
   return typeof google !== 'undefined'
 }
 
-function forgetScript(script: HTMLScriptElement): void {
-  script.remove()
-  if (scriptTag === script) scriptTag = null
-}
-
-/** Injects the tag, with permanent handlers that drop it if it fails or loads without defining `google`. */
 function injectScript(): HTMLScriptElement {
   const script = document.createElement('script')
   script.src = GSI_SRC
   script.async = true
-  // Permanent, so a request that fails long after a caller gave up still
-  // clears the dead tag and the next retry injects a fresh one.
-  script.addEventListener('error', () => forgetScript(script))
-  script.addEventListener('load', () => {
-    if (!isGoogleLoaded()) forgetScript(script)
-  })
+  // Permanent: a request that fails long after a caller gave up still drops the dead tag.
+  script.addEventListener('error', () => script.remove())
   document.head.appendChild(script)
-  scriptTag = script
   return script
 }
 
-/** Waits for the (possibly shared) tag; resolves whether the `google` global exists, `false` on failure or timeout. */
+/** Resolves whether the `google` global exists once the (shared) script settles; `false` on failure or timeout. */
 function loadGoogleScript(): Promise<boolean> {
   if (isGoogleLoaded()) return Promise.resolve(true)
-  const script = scriptTag?.isConnected ? scriptTag : injectScript()
-
-  return new Promise<boolean>((resolve) => {
-    let settled = false
+  pendingLoad ??= new Promise<boolean>((resolve) => {
+    const script = document.querySelector<HTMLScriptElement>(`script[src="${GSI_SRC}"]`) ?? injectScript()
     const finish = (loaded: boolean) => {
-      if (settled) return
-      settled = true
       clearTimeout(timer)
       script.removeEventListener('load', onLoad)
       script.removeEventListener('error', onError)
+      pendingLoad = null
       resolve(loaded)
     }
-    const onLoad = () => finish(isGoogleLoaded())
+    const onLoad = () => {
+      const loaded = isGoogleLoaded()
+      if (!loaded) script.remove() // loaded without defining `google`: a retry needs a fresh tag
+      finish(loaded)
+    }
     const onError = () => finish(false)
-    // A request that stalls (neither load nor error, e.g. a captive portal)
-    // must not leave this caller waiting forever; the tag itself stays.
     const timer = setTimeout(() => finish(false), SCRIPT_LOAD_TIMEOUT_MS)
     script.addEventListener('load', onLoad)
     script.addEventListener('error', onError)
   })
+  return pendingLoad
 }
 
 /** Resolves `'aborted'` as soon as the signal fires, else the load's outcome. */
@@ -125,10 +113,11 @@ export function clampButtonWidth(containerWidth: number): number {
   return Math.min(MAX_BUTTON_WIDTH, Math.max(MIN_BUTTON_WIDTH, width))
 }
 
-// GIS warns if `initialize` is called twice, so it runs once per GIS instance
-// and client ID (again only if the ID changes) and always delegates to whichever button was rendered last.
+// GIS warns if `initialize` is called twice, so it runs once per GIS instance:
+// the first client ID wins for the page lifetime (it is the server's, and the
+// server's doesn't change under a running page). Credentials go to whichever
+// button was rendered last.
 let initializedGis: unknown = null
-let initializedClientId: string | null = null
 let activeOptions: GoogleSignInOptions | null = null
 
 function handleCredential(response: GoogleCredentialResponse): void {
@@ -139,10 +128,9 @@ function handleCredential(response: GoogleCredentialResponse): void {
 }
 
 function initializeOnce(clientId: string): void {
-  if (initializedGis === google.accounts.id && initializedClientId === clientId) return
+  if (initializedGis === google.accounts.id) return
   google.accounts.id.initialize({ client_id: clientId, callback: handleCredential, auto_select: false })
   initializedGis = google.accounts.id
-  initializedClientId = clientId
 }
 
 /**

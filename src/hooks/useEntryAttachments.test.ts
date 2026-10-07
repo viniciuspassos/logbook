@@ -277,7 +277,7 @@ describe('useEntryAttachments', () => {
   })
 
   it('shows a "sign in" hint (not the generic offline message) when the drain finds the session is gone', async () => {
-    drainMock.mockResolvedValue({ processed: 0, stoppedReason: 'auth', error: 'Authentication required.', authStatus: 401 })
+    drainMock.mockResolvedValue({ processed: 0, stoppedReason: 'auth', error: 'Authentication required.' })
     const onAuthRequired = jest.fn()
     const { result } = renderHook(() => useEntryAttachments(makeEntry(1), { onAuthRequired }))
     await waitFor(() => expect(sourcesMock).toHaveBeenCalled())
@@ -291,7 +291,6 @@ describe('useEntryAttachments', () => {
       }),
     )
     expect(onAuthRequired).toHaveBeenCalledTimes(1)
-    expect(onAuthRequired).toHaveBeenCalledWith(401)
   })
 
   it('still shows the generic offline message for a non-auth reason not to sync', async () => {
@@ -437,7 +436,7 @@ describe('useEntryAttachments', () => {
     it('asks to sign in when the drain finds the session is gone', async () => {
       const onAuthRequired = jest.fn()
       const { result } = await renderWith({ serverAttachments: [attachment], pending: [] }, { onAuthRequired })
-      drainMock.mockResolvedValue({ processed: 0, stoppedReason: 'auth', authStatus: 401 })
+      drainMock.mockResolvedValue({ processed: 0, stoppedReason: 'auth' })
 
       act(() => result.current.removePhoto(result.current.attachments[0]))
 
@@ -445,7 +444,6 @@ describe('useEntryAttachments', () => {
         expect(result.current.status?.message).toBe('Photo removed here — sign in to remove it from the server.'),
       )
       expect(onAuthRequired).toHaveBeenCalledTimes(1)
-      expect(onAuthRequired).toHaveBeenCalledWith(401)
     })
 
     it('reports a server that refuses the delete', async () => {

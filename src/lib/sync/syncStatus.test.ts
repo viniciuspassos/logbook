@@ -20,9 +20,6 @@ describe('syncStatusLabel', () => {
     [{ processed: 0, stoppedReason: 'empty' }, 'Saved locally · synced'],
     [{ processed: 2, stoppedReason: 'empty' }, 'Saved locally · synced'],
     [{ processed: 0, stoppedReason: 'auth' }, 'Saved locally · sign in to sync'],
-    [{ processed: 0, stoppedReason: 'auth', authStatus: 401 }, 'Saved locally · sign in to sync'],
-    // A 403 is not an expired session (e.g. a CSRF problem): never tell the user to sign in for it.
-    [{ processed: 0, stoppedReason: 'auth', authStatus: 403 }, 'Saved locally · sync failed'],
     [{ processed: 1, stoppedReason: 'error', error: 'boom' }, 'Saved locally · sync failed'],
     [{ processed: 1, stoppedReason: 'rejected', error: 'File too large' }, 'Saved locally · some changes rejected'],
   ])('%j -> %s', (summary, label) => {

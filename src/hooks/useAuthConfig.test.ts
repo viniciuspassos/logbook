@@ -1,15 +1,15 @@
 import { act, renderHook, waitFor } from '@testing-library/react'
 import { useAuthConfig } from './useAuthConfig.ts'
 import { getAuthConfig } from '../lib/sync/authApi.ts'
-import { getCachedAuthConfig, putCachedAuthConfig } from '../lib/db/identityStore.ts'
-import { hasLocalData } from '../lib/db/localOwner.ts'
+import { getCachedAuthConfig, getCachedIdentity, putCachedAuthConfig } from '../lib/db/identityStore.ts'
+import { hasLocalData } from '../lib/db/localData.ts'
 import { onBackOnline } from '../lib/sync/connectivity.ts'
-import { LOCAL_PROBE_TIMEOUT_MS, RESTORE_TIMEOUT_MS } from '../lib/auth/sessionFlows.ts'
+import { STARTUP_TIMEOUT_MS } from '../lib/auth/sessionFlows.ts'
 import type { AuthConfig } from '../lib/auth/authConfig.ts'
 
 jest.mock('../lib/sync/authApi.ts')
 jest.mock('../lib/db/identityStore.ts')
-jest.mock('../lib/db/localOwner.ts')
+jest.mock('../lib/db/localData.ts')
 jest.mock('../lib/sync/connectivity.ts')
 
 const mocked = <T extends (...args: never[]) => unknown>(fn: T) => fn as unknown as jest.Mock
@@ -33,6 +33,7 @@ beforeEach(() => {
     }
   })
   mocked(getCachedAuthConfig).mockResolvedValue(null)
+  mocked(getCachedIdentity).mockResolvedValue(null)
   mocked(putCachedAuthConfig).mockResolvedValue(undefined)
   mocked(getAuthConfig).mockResolvedValue(google)
   mocked(hasLocalData).mockResolvedValue(false)
@@ -109,42 +110,33 @@ describe('useAuthConfig: when the server cannot answer', () => {
     expect(onlineListeners).toHaveLength(0)
   })
 
-  it('also retries on a backoff timer while unknown, even with no online event', async () => {
-    jest.useFakeTimers()
-    mocked(getAuthConfig).mockResolvedValueOnce(null)
+  it('asks again whenever the app may be reachable again (online, focus or visible are all the same trigger)', async () => {
+    mocked(getAuthConfig).mockResolvedValue(null)
     const { result } = renderHook(() => useAuthConfig())
-    await act(async () => {
-      await jest.advanceTimersByTimeAsync(0)
-    })
-    expect(result.current.mode).toBe('unknown')
+    await waitFor(() => expect(result.current.mode).toBe('unknown'))
+    mocked(getAuthConfig).mockClear()
 
-    mocked(getAuthConfig).mockResolvedValue(none)
-    await act(async () => {
-      await jest.advanceTimersByTimeAsync(15_000)
-    })
+    goOnline()
+    await act(async () => {})
+    goOnline()
+    await act(async () => {})
 
-    expect(result.current.mode).toBe('none')
     expect(getAuthConfig).toHaveBeenCalledTimes(2)
   })
 
-  it('stops retrying once the mode is known', async () => {
-    jest.useFakeTimers()
+  it('does not run two re-asks at once', async () => {
     mocked(getAuthConfig).mockResolvedValueOnce(null)
-    renderHook(() => useAuthConfig())
-    await act(async () => {
-      await jest.advanceTimersByTimeAsync(0)
-    })
-    mocked(getAuthConfig).mockResolvedValue(google)
-    await act(async () => {
-      await jest.advanceTimersByTimeAsync(15_000)
-    })
-    const calls = mocked(getAuthConfig).mock.calls.length
+    const { result } = renderHook(() => useAuthConfig())
+    await waitFor(() => expect(result.current.mode).toBe('unknown'))
+    let finish: ((config: AuthConfig | null) => void) | undefined
+    mocked(getAuthConfig).mockClear()
+    mocked(getAuthConfig).mockReturnValue(new Promise((resolve) => (finish = resolve)))
 
-    await act(async () => {
-      await jest.advanceTimersByTimeAsync(20 * 60_000)
-    })
+    goOnline()
+    goOnline()
+    expect(getAuthConfig).toHaveBeenCalledTimes(1)
 
-    expect(mocked(getAuthConfig).mock.calls.length).toBe(calls)
+    await act(async () => finish?.(null))
   })
 
   it('stays "unknown" if it is still unreachable when connectivity returns', async () => {
@@ -176,12 +168,22 @@ describe('useAuthConfig: a slow startup', () => {
     })
   }
 
-  it('opens as "unknown" (local-only) after the timeout for an existing user with local data', async () => {
+  it('opens as "unknown" (local-only) after the timeout for a known device with local data', async () => {
     mocked(getAuthConfig).mockReturnValue(new Promise(() => undefined))
     mocked(hasLocalData).mockResolvedValue(true)
     const { result } = renderHook(() => useAuthConfig())
 
-    await advance(RESTORE_TIMEOUT_MS)
+    await advance(STARTUP_TIMEOUT_MS)
+
+    expect(result.current.mode).toBe('unknown')
+  })
+
+  it('opens as "unknown" for a known device with a cached identity but no local entries', async () => {
+    mocked(getAuthConfig).mockReturnValue(new Promise(() => undefined))
+    mocked(getCachedIdentity).mockResolvedValue({ id: 'u', email: 'a@b.co', name: null, picture: null })
+    const { result } = renderHook(() => useAuthConfig())
+
+    await advance(STARTUP_TIMEOUT_MS)
 
     expect(result.current.mode).toBe('unknown')
   })
@@ -191,21 +193,11 @@ describe('useAuthConfig: a slow startup', () => {
     mocked(getAuthConfig).mockReturnValue(new Promise((resolve) => (resolveConfig = resolve)))
     const { result } = renderHook(() => useAuthConfig())
 
-    await advance(RESTORE_TIMEOUT_MS + LOCAL_PROBE_TIMEOUT_MS)
+    await advance(STARTUP_TIMEOUT_MS * 3)
     expect(result.current.mode).toBe('loading')
 
     await act(async () => resolveConfig?.(google))
     expect(result.current.mode).toBe('google')
-  })
-
-  it('opens as "unknown" rather than trapping anyone when storage itself is stuck', async () => {
-    mocked(getCachedAuthConfig).mockReturnValue(new Promise(() => undefined))
-    mocked(hasLocalData).mockReturnValue(new Promise(() => undefined))
-    const { result } = renderHook(() => useAuthConfig())
-
-    await advance(RESTORE_TIMEOUT_MS + LOCAL_PROBE_TIMEOUT_MS)
-
-    expect(result.current.mode).toBe('unknown')
   })
 
   it('does not let the timeout overwrite an answer that already arrived', async () => {
@@ -215,7 +207,7 @@ describe('useAuthConfig: a slow startup', () => {
     await advance(10)
     expect(result.current.mode).toBe('none')
 
-    await advance(RESTORE_TIMEOUT_MS + LOCAL_PROBE_TIMEOUT_MS)
+    await advance(STARTUP_TIMEOUT_MS)
 
     expect(result.current.mode).toBe('none')
   })

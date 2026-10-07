@@ -5,7 +5,7 @@ import { entries } from './data/entries.ts'
 import { subscribeToDrains } from './lib/sync/outboxRunner.ts'
 import { getAuthConfig, getMe, loginWithGoogle } from './lib/sync/authApi.ts'
 import { getCachedIdentity } from './lib/db/identityStore.ts'
-import { hasLocalData } from './lib/db/localOwner.ts'
+import { hasLocalData } from './lib/db/localData.ts'
 import { renderGoogleSignInButton } from './lib/auth/googleIdentity.ts'
 import { SyncAuthError, SyncNetworkError } from './lib/sync/errors.ts'
 
@@ -30,13 +30,9 @@ jest.mock('./lib/db/identityStore.ts', () => ({
   clearCachedIdentity: jest.fn().mockResolvedValue(undefined),
   getCachedAuthConfig: jest.fn().mockResolvedValue(null),
   putCachedAuthConfig: jest.fn().mockResolvedValue(undefined),
-  hasPendingLogout: jest.fn().mockResolvedValue(false),
-  setPendingLogout: jest.fn().mockResolvedValue(undefined),
-  clearPendingLogout: jest.fn().mockResolvedValue(undefined),
 }))
-jest.mock('./lib/db/localOwner.ts', () => ({
-  checkLocalOwner: jest.fn().mockResolvedValue('ok'),
-  claimLocalData: jest.fn().mockResolvedValue(undefined),
+jest.mock('./lib/db/localData.ts', () => ({
+  clearLocalData: jest.fn().mockResolvedValue(undefined),
   hasLocalData: jest.fn().mockResolvedValue(false),
 }))
 jest.mock('./lib/auth/googleIdentity.ts', () => ({
@@ -320,26 +316,15 @@ describe('App', () => {
       ;(getMe as jest.Mock).mockResolvedValue(ada)
       render(<App />)
       await screen.findByRole('button', { name: /new entry/i })
-      emitDrain({ processed: 0, stoppedReason: 'auth', authStatus: 401 })
+      emitDrain({ processed: 0, stoppedReason: 'auth' })
       await screen.findByText('Sign in again to resume syncing.')
 
       await user.click(screen.getByRole('button', { name: 'Not now' }))
       expect(screen.queryByText('Sign in again to resume syncing.')).not.toBeInTheDocument()
 
-      emitDrain({ processed: 0, stoppedReason: 'auth', authStatus: 401 })
+      emitDrain({ processed: 0, stoppedReason: 'auth' })
       expect(await screen.findByText('Sign in again to resume syncing.')).toBeInTheDocument()
       await act(async () => {})
-    })
-
-    it('does not show the sign-in banner for a 403 (a refusal, not an expired session)', async () => {
-      ;(getMe as jest.Mock).mockResolvedValue(ada)
-      render(<App />)
-      await screen.findByRole('button', { name: /new entry/i })
-
-      emitDrain({ processed: 0, stoppedReason: 'auth', authStatus: 403 })
-      await act(async () => {})
-
-      expect(screen.queryByText('Sign in again to resume syncing.')).not.toBeInTheDocument()
     })
 
     it('lets the user dismiss the sign-in screen opened from the banner', async () => {
@@ -355,6 +340,19 @@ describe('App', () => {
 
       expect(screen.queryByText('Record climbs and jumps, even with no signal.')).not.toBeInTheDocument()
       expect(screen.getByText('Sign in again to resume syncing.')).toBeInTheDocument()
+      await act(async () => {})
+    })
+
+    it('tells the user their previous entries were removed when a different account is signed in, until dismissed', async () => {
+      const user = userEvent.setup()
+      ;(getCachedIdentity as jest.Mock).mockResolvedValue({ ...ada, id: 'someone-else' })
+      ;(getMe as jest.Mock).mockResolvedValue(ada)
+      render(<App />)
+
+      expect(await screen.findByText(/Signed in as a different account/)).toBeInTheDocument()
+      await user.click(screen.getByRole('button', { name: 'OK' }))
+
+      expect(screen.queryByText(/Signed in as a different account/)).not.toBeInTheDocument()
       await act(async () => {})
     })
 

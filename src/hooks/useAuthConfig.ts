@@ -1,6 +1,7 @@
 import { useCallback, useEffect, useState, type Dispatch, type SetStateAction } from 'react'
 import {
   LOADING_CONFIG,
+  UNKNOWN_CONFIG,
   googleClientIdOf,
   knownConfig,
   modeOfConfigState,
@@ -9,13 +10,13 @@ import {
   type ConfigState,
 } from '../lib/auth/authConfig.ts'
 import {
-  RESTORE_TIMEOUT_MS,
+  STARTUP_TIMEOUT_MS,
   refreshAuthConfig,
   resolveAuthConfig,
-  resolveStuckConfig,
+  startupFallback,
 } from '../lib/auth/sessionFlows.ts'
 import { shouldUseMockData } from '../lib/config/mockData.ts'
-import { useBackoffRetry } from './useBackoffRetry.ts'
+import { onBackOnline } from '../lib/sync/connectivity.ts'
 
 export interface AuthModeState {
   mode: AuthMode
@@ -23,10 +24,14 @@ export interface AuthModeState {
   googleClientId: string | null
 }
 
-/** Fills in a startup that is still waiting (see resolveStuckConfig); never overwrites a real answer. */
-async function openIfStuck(signal: AbortSignal, setState: Dispatch<SetStateAction<ConfigState>>) {
-  const next = await resolveStuckConfig()
-  if (next && !signal.aborted) setState((cur) => (cur.status === 'loading' ? next : cur))
+/**
+ * A slow start: a device we already know (cached identity or local entries)
+ * opens as `unknown`, i.e. local-only; a first-time device keeps waiting for the
+ * answer. Never overwrites a real answer.
+ */
+async function openIfKnownDevice(signal: AbortSignal, setState: Dispatch<SetStateAction<ConfigState>>) {
+  const known = await startupFallback()
+  if (known && !signal.aborted) setState((cur) => (cur.status === 'loading' ? UNKNOWN_CONFIG : cur))
 }
 
 /** Startup: cached config first, then the server's answer, with the slow-start rules of `useAuth`. */
@@ -41,9 +46,7 @@ function useStartupConfig(
     void resolveAuthConfig(controller.signal, (next) => {
       if (!controller.signal.aborted) update(next)
     })
-    // The same rule as a slow `GET /auth/me`: an existing user (or stuck
-    // storage) opens local-only as `unknown`; a first-time user keeps waiting.
-    const timer = setTimeout(() => void openIfStuck(controller.signal, setState), RESTORE_TIMEOUT_MS)
+    const timer = setTimeout(() => void openIfKnownDevice(controller.signal, setState), STARTUP_TIMEOUT_MS)
     return () => {
       clearTimeout(timer)
       controller.abort()
@@ -51,14 +54,20 @@ function useStartupConfig(
   }, [mock, update, setState])
 }
 
-/** While the config is unknown, ask the server again: on a backoff timer and whenever connectivity returns. */
+/** While the config is unknown, ask again whenever the app may be reachable (online, focus, visible). */
 function useRetryWhileUnknown(unknown: boolean, update: (next: ConfigState) => void) {
-  useBackoffRetry(unknown, async (signal) => {
-    const config = await refreshAuthConfig(signal)
-    if (!config || signal.aborted) return false
-    update(knownConfig(config))
-    return true
-  })
+  useEffect(() => {
+    if (!unknown) return
+    let asking = false
+    return onBackOnline(() => {
+      if (asking) return
+      asking = true
+      void refreshAuthConfig().then((config) => {
+        asking = false
+        if (config) update(knownConfig(config))
+      })
+    })
+  }, [unknown, update])
 }
 
 /**

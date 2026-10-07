@@ -15,8 +15,8 @@ import { syncStatusLabel } from '../lib/sync/syncStatus.ts'
 import type { Entry } from '../types/entry.ts'
 
 export interface UseSyncOutboxOptions {
-  /** A drain was refused by the server (401: session gone; 403: a refusal), with that status. */
-  onAuthRequired?: (status?: number) => void
+  /** A drain discovered the session is gone (a 401 mid-queue). */
+  onAuthRequired?: () => void
   /** The server has login off (local-only mode): the status line says sync is off. */
   syncOff?: boolean
 }
@@ -58,7 +58,7 @@ export function useSyncOutbox(options: UseSyncOutboxOptions = {}) {
         // An aborted pass says nothing new about the queue or the session.
         if (summary.stoppedReason === 'aborted') return
         setLastDrain(summary)
-        if (summary.stoppedReason === 'auth') onAuthRequired?.(summary.authStatus)
+        if (summary.stoppedReason === 'auth') onAuthRequired?.()
       }),
     [onAuthRequired],
   )

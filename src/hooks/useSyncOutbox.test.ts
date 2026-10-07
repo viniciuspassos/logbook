@@ -189,17 +189,10 @@ describe('useSyncOutbox', () => {
       return { onAuthRequired, listener }
     }
 
-    it('calls onAuthRequired with the status when any drain finds the session is gone, wherever it started', () => {
+    it('calls onAuthRequired when any drain finds the session is gone, wherever it started', () => {
       const { onAuthRequired, listener } = renderWithAuth()
-      act(() => listener({ processed: 0, stoppedReason: 'auth', error: 'Authentication required.', authStatus: 401 }))
+      act(() => listener({ processed: 0, stoppedReason: 'auth', error: 'Authentication required.' }))
       expect(onAuthRequired).toHaveBeenCalledTimes(1)
-      expect(onAuthRequired).toHaveBeenCalledWith(401)
-    })
-
-    it('passes a 403 through as such, so the caller can tell it from an expired session', () => {
-      const { onAuthRequired, listener } = renderWithAuth()
-      act(() => listener({ processed: 0, stoppedReason: 'auth', authStatus: 403 }))
-      expect(onAuthRequired).toHaveBeenCalledWith(403)
     })
 
     it('does not call it when a drain succeeded, found nothing to do or was aborted', () => {

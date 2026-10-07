@@ -1,101 +1,95 @@
 import { disableGoogleAutoSelect } from './googleIdentity.ts'
 import {
   clearCachedIdentity,
-  clearPendingLogout,
   getCachedAuthConfig,
   getCachedIdentity,
-  hasPendingLogout,
   putCachedAuthConfig,
   putCachedIdentity,
-  setPendingLogout,
 } from '../db/identityStore.ts'
-import { checkLocalOwner, claimLocalData, hasLocalData } from '../db/localOwner.ts'
+import { clearLocalData, hasLocalData } from '../db/localData.ts'
 import { getAuthConfig, getMe, loginWithGoogle, logout as logoutRequest } from '../sync/authApi.ts'
 import { SyncAuthError } from '../sync/errors.ts'
-import { drainOutbox, pauseDrains, resumeDrains } from '../sync/outboxRunner.ts'
+import { drainOutbox } from '../sync/outboxRunner.ts'
 import { UNKNOWN_CONFIG, knownConfig, type AuthConfig, type ConfigState } from './authConfig.ts'
 import type { AuthProfile, Session } from '../../types/auth.ts'
 
 /**
  * The sign-in gate's decisions, as plain async functions so `useAuth` only
- * wires state. The rules they implement (also in docs/ARCHITECTURE.md):
+ * wires state. The rules (also in docs/ARCHITECTURE.md):
  *
+ * - One account per device. The cached identity is what a sign-in or startup
+ *   verification is compared with: a different user id wipes this device's
+ *   local data (entries, outbox, sync state) and says so (`notice`).
  * - The gate shows only with no known identity, after sign-out, or when
- *   `GET /auth/me` says 401 at startup. A network failure never gates a user
- *   who has a cached profile or local entries: they get an `unverified`
- *   session that is confirmed later.
- * - Signing out is durable: a marker survives until the server confirms the
- *   logout, and startup honours it, so `GET /auth/me` can't resurrect a user
- *   who signed out offline.
- * - Local data belongs to one account. A different account must confirm
- *   before the old data is removed (`settleProfile` -> `pendingSwitch`).
+ *   `GET /auth/me` says 401. A network failure never gates a user who has a
+ *   cached identity or local entries: they get an `unverified` session that is
+ *   confirmed when the app regains the network or focus.
+ * - Signing out needs a connection: the outbox must be synced first and the
+ *   server must confirm, so nothing queued is lost; it then wipes local data.
  */
 
-/** Why drains are held back, so the two guards can't release each other (see outboxRunner.ts). */
-export const ACCOUNT_PAUSE = 'account'
-export const AUTH_MODE_PAUSE = 'auth-mode'
-/** Held in `google` mode until /auth/me answered and the owner check passed, so nothing uploads under an unmatched session. */
-export const STARTUP_VERIFY_PAUSE = 'startup-verify'
-/** Held from sign-out until the next sign-in: a live cookie must not let an `online` drain upload. */
-export const SIGNED_OUT_PAUSE = 'signed-out'
+export const ACCOUNT_CHANGED_NOTICE =
+  "Signed in as a different account. This device's entries from the previous account were removed."
+export const SIGN_OUT_NEEDS_CONNECTION = 'Connect to the internet and sync your entries before signing out.'
+export const SIGN_OUT_NEEDS_SIGN_IN = 'Sign in again to sync your entries before signing out.'
+const SIGN_OUT_WIPE_FAILED = "Couldn't remove this device's entries. Try again."
 
-export const LOADING: Session = { state: 'loading', profile: null, unverified: false, pendingSwitch: null }
-export const SIGNED_OUT: Session = { state: 'signedOut', profile: null, unverified: false, pendingSwitch: null }
+/** How long startup may wait on the network before a known device opens anyway. */
+export const STARTUP_TIMEOUT_MS = 4000
 
-export function verifiedSession(profile: AuthProfile | null): Session {
-  return { state: 'signedIn', profile, unverified: false, pendingSwitch: null }
+export const LOADING: Session = { state: 'loading', profile: null, unverified: false, notice: null }
+export const SIGNED_OUT: Session = { state: 'signedOut', profile: null, unverified: false, notice: null }
+
+export function verifiedSession(profile: AuthProfile | null, notice: string | null = null): Session {
+  return { state: 'signedIn', profile, unverified: false, notice }
 }
 
 export function unverifiedSession(profile: AuthProfile | null): Session {
-  return { state: 'signedIn', profile, unverified: true, pendingSwitch: null }
+  return { state: 'signedIn', profile, unverified: true, notice: null }
+}
+
+/** Whether the server confirmed who is signed in, which is what lets the outbox drain. */
+export function isVerified(session: Session): boolean {
+  return session.state === 'signedIn' && !session.unverified && session.profile !== null
 }
 
 /**
- * A profile the server just confirmed: check it owns this device's data, and
- * only then cache it. A different owner returns a gate session carrying the
- * profile as `pendingSwitch` and caches nothing.
+ * A profile the server just confirmed. If its id differs from the cached
+ * identity (a different account on this device) local data is wiped first;
+ * then the profile becomes the cached identity.
  */
 export async function settleProfile(profile: AuthProfile, signal?: AbortSignal): Promise<Session> {
-  if ((await checkLocalOwner(profile.id)) === 'mismatch') {
-    // The new account's session may already be live while the previous
-    // account's queue is still here: block every drain until this is resolved.
-    await pauseDrains(ACCOUNT_PAUSE)
-    return { ...SIGNED_OUT, pendingSwitch: profile }
-  }
-  // Confirmed as the owner: the only point at which the account guard lifts.
-  resumeDrains(ACCOUNT_PAUSE)
+  const cached = await getCachedIdentity()
+  const changed = cached !== null && String(cached.id) !== String(profile.id)
+  if (changed) await clearLocalData()
   if (!signal?.aborted) await putCachedIdentity(profile)
-  return verifiedSession(profile)
+  return verifiedSession(profile, changed ? ACCOUNT_CHANGED_NOTICE : null)
 }
 
-async function retryServerLogout(): Promise<void> {
-  try {
-    await logoutRequest()
-    await clearPendingLogout()
-  } catch {
-    // Still offline: the marker stays and the next startup tries again.
-  }
+/**
+ * The one startup fallback: a device that is already known (cached identity or
+ * local entries) opens unverified; anything else returns `null`, so the caller
+ * keeps waiting on the splash (or shows the gate).
+ */
+export async function startupFallback(): Promise<Session | null> {
+  const cached = await getCachedIdentity()
+  if (cached) return unverifiedSession(cached)
+  return (await hasLocalData()) ? unverifiedSession(null) : null
 }
 
 /** What a failed `GET /auth/me` means: only a 401/403 revokes access. */
-async function sessionAfterFailedCheck(error: unknown, cached: AuthProfile | null): Promise<Session> {
+async function sessionAfterFailedCheck(error: unknown): Promise<Session> {
   if (error instanceof SyncAuthError) return SIGNED_OUT
-  if (cached) return unverifiedSession(cached)
-  return (await hasLocalData()) ? unverifiedSession(null) : SIGNED_OUT
+  return (await startupFallback()) ?? SIGNED_OUT
 }
 
 /**
  * Works out the session on startup and reports each step through `apply`
- * (first the cached profile, then the server's verdict). `signal` aborts it
+ * (first the cached identity, then the server's verdict). `signal` aborts it
  * when a sign-in or sign-out supersedes it, after which nothing is applied
  * or cached.
  */
 export async function restoreSession(signal: AbortSignal, apply: (session: Session) => void): Promise<void> {
-  if (await hasPendingLogout()) {
-    await retryServerLogout()
-    if (!signal.aborted) apply(SIGNED_OUT)
-    return
-  }
   const cached = await getCachedIdentity()
   if (signal.aborted) return
   if (cached) apply(unverifiedSession(cached))
@@ -106,7 +100,7 @@ export async function restoreSession(signal: AbortSignal, apply: (session: Sessi
     if (!signal.aborted) apply(settled)
   } catch (error) {
     if (signal.aborted) return
-    const next = await sessionAfterFailedCheck(error, cached)
+    const next = await sessionAfterFailedCheck(error)
     if (!signal.aborted) apply(next)
   }
 }
@@ -124,141 +118,47 @@ export async function verifySession(): Promise<Session | 'expired' | null> {
   }
 }
 
-async function fetchProfileWithRetry(): Promise<AuthProfile | null> {
-  for (let attempt = 0; attempt < 2; attempt++) {
-    try {
-      return await getMe()
-    } catch {
-      // Retry once, then fall back to an unverified session.
-    }
-  }
-  return null
-}
-
 /**
  * Exchanges the Google ID token for a session. Throws only when
  * `POST /auth/google` itself fails. If the follow-up profile lookup fails the
- * session is live server-side, so the user opens unverified rather than being
- * stuck at the gate; the profile is filled in later by `verifySession`.
- *
- * Drains are paused *before* the new session exists and are released only by
- * a successful ownership check (`settleProfile`). They stay paused for a
- * different account (`pendingSwitch`) and for an unverified result (the
- * profile couldn't be fetched, so there is nothing to check yet; a later
- * `verifySession` releases them), so the previous account's queue can't be
- * uploaded under a session that hasn't been matched to the device.
+ * session is live server-side, so the app opens unverified (and verifies when
+ * it can) rather than leaving the user at the gate.
  */
 export async function signInWithIdToken(idToken: string): Promise<Session> {
-  await pauseDrains(ACCOUNT_PAUSE)
-  let session: Session
+  await loginWithGoogle(idToken)
   try {
-    await loginWithGoogle(idToken)
-    await clearPendingLogout()
-    // A session exists now, so the sign-out pause has done its job.
-    resumeDrains(SIGNED_OUT_PAUSE)
-    const profile = await fetchProfileWithRetry()
-    session = profile ? await settleProfile(profile) : unverifiedSession(null)
+    return await settleProfile(await getMe())
+  } catch {
+    return unverifiedSession(null)
+  }
+}
+
+/**
+ * Signs out. It needs a connection: first the outbox is synced (anything left
+ * queued, or an unreachable server, throws a message and changes nothing),
+ * then the server confirms the logout (a 401 means already signed out), then
+ * the cached identity and all local data are removed. Throws an `Error` whose
+ * message is meant for the user.
+ */
+export async function signOut(): Promise<void> {
+  const { stoppedReason } = await drainOutbox()
+  if (stoppedReason === 'auth') throw new Error(SIGN_OUT_NEEDS_SIGN_IN)
+  // 'rejected' ops are parked for good (they can never sync), so they don't block signing out.
+  if (stoppedReason !== 'empty' && stoppedReason !== 'rejected' && stoppedReason !== 'unsupported') {
+    throw new Error(SIGN_OUT_NEEDS_CONNECTION)
+  }
+  try {
+    await logoutRequest()
   } catch (error) {
-    resumeDrains(ACCOUNT_PAUSE)
-    throw error
+    if (!(error instanceof SyncAuthError && error.status === 401)) throw new Error(SIGN_OUT_NEEDS_CONNECTION, { cause: error })
   }
-  return session
-}
-
-/** The user confirmed a switch: remove the previous account's local data and open as the new one. */
-export async function adoptAccount(profile: AuthProfile): Promise<Session> {
-  await claimLocalData(profile.id)
-  await putCachedIdentity(profile)
-  await clearPendingLogout()
-  resumeDrains(ACCOUNT_PAUSE)
-  resumeDrains(SIGNED_OUT_PAUSE)
-  return verifiedSession(profile)
-}
-
-/** How long sign-out waits for the final flush before signing out regardless. */
-export const SIGN_OUT_FLUSH_TIMEOUT_MS = 5000
-
-async function drainBeforeSignOut(): Promise<void> {
-  const controller = new AbortController()
-  let timer: ReturnType<typeof setTimeout> | undefined
-  const bound = new Promise<void>((resolve) => {
-    timer = setTimeout(() => {
-      controller.abort()
-      resolve()
-    }, SIGN_OUT_FLUSH_TIMEOUT_MS)
-  })
-  try {
-    // Best-effort and bounded: a hung drain must never keep the user signed in.
-    await Promise.race([drainOutbox(controller.signal).then(() => undefined, () => undefined), bound])
-  } finally {
-    clearTimeout(timer)
-  }
-}
-
-/**
- * Signs out durably. With `flushFirst` it tries to push the queue while the
- * session is still valid (so unsynced entries reach the right account), then
- * pauses every drain.
- * The marker is written before anything else can fail, and removed only once
- * the server confirms the logout.
- */
-export async function signOut(flushFirst: boolean): Promise<void> {
-  if (flushFirst) await drainBeforeSignOut()
-  // After the flush, before anything is cleared: with the cookie still alive
-  // (offline sign-out), an `online` drain would otherwise upload for a user
-  // who signed out. Lifted by the next sign-in.
-  await pauseDrains(SIGNED_OUT_PAUSE)
-  await setPendingLogout()
   await clearCachedIdentity()
-  await retryServerLogout()
-  disableGoogleAutoSelect()
-}
-
-/** How long a startup with no cached identity may wait before checking what is on this device. */
-export const RESTORE_TIMEOUT_MS = 4000
-/** How long that check itself may take before IndexedDB is considered stuck. */
-export const LOCAL_PROBE_TIMEOUT_MS = 1000
-
-/**
- * What this device holds, without letting a stuck IndexedDB hang the caller:
- * `'data'` (local entries), `'none'` (a fresh device), or `'stuck'` (storage
- * didn't answer within LOCAL_PROBE_TIMEOUT_MS).
- */
-export async function probeLocalData(): Promise<'data' | 'none' | 'stuck'> {
-  let timer: ReturnType<typeof setTimeout> | undefined
-  const stuck = new Promise<'stuck'>((resolve) => {
-    timer = setTimeout(() => resolve('stuck'), LOCAL_PROBE_TIMEOUT_MS)
-  })
   try {
-    const hasData = await Promise.race([hasLocalData(), stuck])
-    if (hasData === 'stuck') return 'stuck'
-    return hasData ? 'data' : 'none'
-  } finally {
-    clearTimeout(timer)
+    await clearLocalData()
+  } catch (error) {
+    throw new Error(SIGN_OUT_WIPE_FAILED, { cause: error })
   }
-}
-
-/**
- * Decides what a startup that is still waiting should do. An existing user
- * (local entries) opens unverified; a first-time user (nothing local) returns
- * `null` and keeps waiting on the splash for the server's answer, since opening
- * the app for them would only gate them again mid-capture. If IndexedDB is the
- * thing that's stuck, there is nothing to open: show the gate.
- */
-export async function resolveStuckStartup(): Promise<Session | null> {
-  const found = await probeLocalData()
-  if (found === 'stuck') return SIGNED_OUT
-  return found === 'data' ? unverifiedSession(null) : null
-}
-
-/**
- * The same rule for the wait on `GET /auth/config`: an existing user, or stuck
- * storage, opens as `unknown` (local-only; asking again when back online), and
- * a first-time user with nothing local keeps waiting on the splash. Nobody is
- * gated here, because without a config there is no login to gate on.
- */
-export async function resolveStuckConfig(): Promise<ConfigState | null> {
-  return (await probeLocalData()) === 'none' ? null : UNKNOWN_CONFIG
+  disableGoogleAutoSelect()
 }
 
 /** Asks the server which login it wants and remembers a good answer; `null` when it can't say. */
@@ -283,21 +183,4 @@ export async function resolveAuthConfig(signal: AbortSignal, apply: (state: Conf
   if (signal.aborted) return
   if (fresh) apply(knownConfig(fresh))
   else if (!cached) apply(UNKNOWN_CONFIG)
-}
-
-/**
- * A drain was refused with a 403 (not an expired session; e.g. the CSRF cookie
- * is stale). `GET /auth/me` re-syncs the cookies; then the drain is retried
- * once. `'expired'` means /auth/me itself said 401, so the session really is
- * gone; `'refused'` means it is still being refused (or the server can't be
- * reached), which is a sync problem, not a sign-in one.
- */
-export async function healRefusedDrain(): Promise<'recovered' | 'refused' | 'expired'> {
-  try {
-    await getMe()
-  } catch (error) {
-    return error instanceof SyncAuthError && error.status === 401 ? 'expired' : 'refused'
-  }
-  const summary = await drainOutbox()
-  return summary.stoppedReason === 'auth' ? 'refused' : 'recovered'
 }

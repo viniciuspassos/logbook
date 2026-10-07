@@ -1,4 +1,4 @@
-import { drainOutbox, pauseDrains, resumeDrains, startAutoSync, subscribeToDrains } from './outboxRunner.ts'
+import { drainOutbox, setDrainsAllowed, startAutoSync, subscribeToDrains } from './outboxRunner.ts'
 import { getAllRecords, hasRecord, markRejected, recordAttemptFailure, removeRecord } from '../db/outboxStore.ts'
 import { deleteSyncState, getSyncState, putSyncState } from '../db/syncStateStore.ts'
 import { isPersistenceSupported } from '../db/database.ts'
@@ -302,17 +302,18 @@ describe('drainOutbox', () => {
 
     const summary = await drainOutbox()
 
-    expect(summary).toEqual({ processed: 0, stoppedReason: 'auth', error: 'Authentication required.', authStatus: 401 })
+    expect(summary).toEqual({ processed: 0, stoppedReason: 'auth', error: 'Authentication required.' })
     expect(recordFailureMock).toHaveBeenCalledWith(1, 'Authentication required.')
   })
 
-  it('also reports "auth" for a 403 (forbidden session), not just a 401', async () => {
+  it('reports a 403 as a generic "error", not "auth": a refusal (e.g. a stale CSRF cookie) is not an expired session', async () => {
     createEntryMock.mockRejectedValue(new SyncAuthError(403, null, 'Forbidden.'))
     getAllRecordsMock.mockResolvedValue([createRecord({ queueId: 1 })])
 
     const summary = await drainOutbox()
 
-    expect(summary).toMatchObject({ stoppedReason: 'auth', authStatus: 403 })
+    expect(summary).toEqual({ processed: 0, stoppedReason: 'error', error: 'Forbidden.' })
+    expect(recordFailureMock).toHaveBeenCalledWith(1, 'Forbidden.')
   })
 
   it('stops mid-drain when the signal is aborted before a record is processed', async () => {
@@ -637,42 +638,13 @@ describe('drainOutbox with permanently rejected ops (#91)', () => {
   })
 })
 
-describe('pauseDrains / resumeDrains (no sync under the wrong account, or with no login)', () => {
-  afterEach(() => {
-    resumeDrains()
-    resumeDrains('account')
-    resumeDrains('auth-mode')
-  })
-
-  it('stays paused until every reason that paused it has been released', async () => {
-    await pauseDrains('account')
-    await pauseDrains('auth-mode')
-
-    resumeDrains('account')
-    expect((await drainOutbox()).stoppedReason).toBe('aborted')
-
-    resumeDrains('auth-mode')
-    expect((await drainOutbox()).stoppedReason).toBe('empty')
-  })
-
-  it('treats pausing twice for one reason as one pause', async () => {
-    await pauseDrains('account')
-    await pauseDrains('account')
-    resumeDrains('account')
-    expect((await drainOutbox()).stoppedReason).toBe('empty')
-  })
-
-  it('ignores releasing a reason that was never held', async () => {
-    await pauseDrains('account')
-    resumeDrains('auth-mode')
-    expect((await drainOutbox()).stoppedReason).toBe('aborted')
-  })
-
+describe('setDrainsAllowed (no sync until the app knows who is signed in, or with no login)', () => {
+  afterEach(() => setDrainsAllowed(true))
 
   it('blocks a direct drain: nothing is read, probed or sent, and listeners hear nothing', async () => {
     const listener = jest.fn()
     const unsubscribe = subscribeToDrains(listener)
-    await pauseDrains()
+    setDrainsAllowed(false)
 
     const summary = await drainOutbox()
 
@@ -687,7 +659,7 @@ describe('pauseDrains / resumeDrains (no sync under the wrong account, or with n
   it('blocks the reconnect trigger (the browser `online` event)', async () => {
     const stop = startAutoSync()
     try {
-      await pauseDrains()
+      setDrainsAllowed(false)
       window.dispatchEvent(new Event('online'))
       await Promise.resolve()
       expect(reachableMock).not.toHaveBeenCalled()
@@ -697,15 +669,15 @@ describe('pauseDrains / resumeDrains (no sync under the wrong account, or with n
   })
 
   it('blocks every caller, so the mount, save and upload triggers (all drainOutbox) are blocked too', async () => {
-    await pauseDrains()
+    setDrainsAllowed(false)
     const results = await Promise.all([drainOutbox(), drainOutbox(), drainOutbox(new AbortController().signal)])
     expect(results.every((summary) => summary.stoppedReason === 'aborted')).toBe(true)
     expect(reachableMock).not.toHaveBeenCalled()
   })
 
-  it('lets drains run again after resumeDrains', async () => {
-    await pauseDrains()
-    resumeDrains()
+  it('lets drains run again once allowed', async () => {
+    setDrainsAllowed(false)
+    setDrainsAllowed(true)
 
     const summary = await drainOutbox()
 
@@ -713,7 +685,7 @@ describe('pauseDrains / resumeDrains (no sync under the wrong account, or with n
     expect(reachableMock).toHaveBeenCalled()
   })
 
-  it('aborts a drain that is already in flight and waits for it to stop before resolving', async () => {
+  it('stops a drain already in flight at its next operation', async () => {
     let releaseUpload: (() => void) | undefined
     getAllRecordsMock.mockResolvedValue([createRecord({ queueId: 1 }), createRecord({ queueId: 2 })])
     createEntryMock.mockImplementation(
@@ -723,9 +695,8 @@ describe('pauseDrains / resumeDrains (no sync under the wrong account, or with n
     await new Promise((resolve) => setTimeout(resolve, 0))
     expect(createEntryMock).toHaveBeenCalledTimes(1)
 
-    const paused = pauseDrains()
+    setDrainsAllowed(false)
     releaseUpload?.()
-    await paused
 
     expect(await running).toEqual({ processed: 1, stoppedReason: 'aborted' })
     expect(createEntryMock).toHaveBeenCalledTimes(1)

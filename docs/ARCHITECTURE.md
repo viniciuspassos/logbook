@@ -126,106 +126,62 @@ Two properties of this flow are load-bearing and easy to break by accident:
 
 [Issue #122](https://github.com/viniciuspassos/logbook/issues/122) replaced the shared-password
 login (which had no UI) with **Sign in with Google**, the only method. The backend verifies a
-Google ID token (`POST /auth/google`), allowlists accounts, and starts a session cookie;
-`GET /auth/me` says who a session belongs to. On the client:
+Google ID token (`POST /auth/google`, which carries the header `X-Logbook-Client: web` against
+login CSRF), allowlists accounts, and starts a session cookie; `GET /auth/me` says who a session
+belongs to.
 
-- **The server decides which login.** Authentication is the backend's responsibility, so the
-  frontend owns no flag and no client ID. `GET /auth/config` (public) answers `{ methods: [] }` or
-  `{ methods: [{ type: 'google', clientId }] }`; the list shape leaves room for more login types
-  (unknown types are ignored; only a well-formed `{ methods: [] }` means "off", while a body that is malformed, or lists methods none of which is usable, counts as "unknown" and is never cached as "off"). `useAuthConfig`
-  resolves one **mode** in one place: `none` (login off: local-only), `google`, `unknown` (couldn't
-  ask, nothing cached: local-only, re-asked on reconnect), plus `mock` for `dev:mocked`. The last
-  good answer is cached in IndexedDB (`identityStore`), so the decision works offline.
-- `src/lib/auth/googleIdentity.ts` is the only module that touches Google Identity Services. It
-  lazy-loads `accounts.google.com/gsi/client`, renders Google's button with the client ID the server
-  gave, and degrades to an "unavailable" result offline instead of throwing.
-- `useAuth` owns `state` (`'loading' | 'signedIn' | 'signedOut'`), the `profile`, the `mode`,
-  `signInWithGoogle` and `logout`. `App.tsx` renders `LoginScreen` while `signedOut`. It is a gate in
-  `App`, not a `useNavigation` overlay, because nothing else in the shell should be reachable
-  behind it.
-- `src/lib/db/identityStore.ts` caches the last signed-in profile and the auth config in IndexedDB.
-- `POST /auth/google` carries the header `X-Logbook-Client: web` (login-CSRF protection; the server answers 403 without it). It is sent on that call only.
+**The server decides which login.** Authentication is the backend's responsibility, so the frontend
+owns no flag and no client ID. `GET /auth/config` (public) answers `{ methods: [] }` or
+`{ methods: [{ type: 'google', clientId }] }`; the list leaves room for more login types (unknown
+types are ignored; only a well-formed `{ methods: [] }` means "off", while a malformed body, or one
+whose methods are all unusable, is "unknown" and never cached as "off"). `useAuthConfig` resolves one
+**mode**: `none` (login off: local-only), `google`, `unknown` (couldn't ask, nothing cached:
+local-only, re-asked on `online`/focus/visible), plus `mock` for `dev:mocked`. The last good answer is
+cached in IndexedDB so the decision works offline. Under `none`/`unknown` the session is simply
+local: no gate, no banner, no Google script, no `GET /auth/me`, no drains (Settings and the timeline
+say so). A server answer of `none` after a cached identity leaves that identity and all local data
+untouched.
 
-**The server's auth config versus the gate.** Everything below applies in `google` mode only.
-In `none` and `unknown` mode the session is simply local: no gate, no banner, no Google script, no
-`GET /auth/me`, no cached-identity or owner logic, and every outbox drain is held back (under its own
-pause reason, so the account guard below can't release it) so there is no 401 churn; Settings and the
-timeline say so. `unknown` is never a trap: with no cached config and no answer the app opens
-local-only (an existing user, or stuck storage, after the same startup timeout as below; a first-time
-user with nothing local waits on the splash for the answer, which fails fast offline), asks again on
-the browser's `online` event, and on an answer switches to `google` (the gate rules below then apply,
-as for any never-verified session) or `none`. If the server later says `none` while a cached identity
-exists, that identity and all local data are left untouched and the app is just local-only. A cached
-config means a start with no signal decides instantly, then the fresh answer replaces it.
+**Client pieces.** `src/lib/auth/googleIdentity.ts` is the only module that touches Google Identity
+Services (lazy script, one shared load with a timeout, Google's own button, the first client ID wins
+for the page lifetime). `src/lib/auth/sessionFlows.ts` holds the decisions; `useAuth` owns `state`,
+`profile`, `mode`, `needsSignIn`, `notice`, `signInWithGoogle`, `logout`; `App.tsx` renders
+`LoginScreen` while `signedOut` (a gate in `App`, not a navigation overlay). `identityStore` caches the
+last signed-in profile and the auth config.
 
-**The gate versus the offline rule.** The offline-first rule says creating and reading entries must
-work with no network, and a mandatory login is in tension with that. The full-screen gate therefore
-shows only when there is **no known identity**, and a handful of rules keep it from ever costing the
-user their data or their work. The logic lives in `src/lib/auth/sessionFlows.ts`; `useAuth` wires it.
+**The gate versus the offline rule** (`google` mode). The offline-first rule says creating and
+reading entries must work with no network, so the full-screen gate shows only with no known
+identity, after sign-out, or on a 401 from `GET /auth/me` at startup or verification:
 
-- *Where the gate shows.* At startup with no cached profile and no local entries; after an explicit
-  sign-out; when `GET /auth/me` returns 401 at startup; when a different account must confirm
-  replacing this device's data; and when a session that was never verified (opened offline on local
-  entries alone, no cached identity) later gets a 401, because it has no standing. A session that
-  *was* verified before only gets the banner. A 5xx from `/auth/me` is not a verdict and leaves the
-  session unverified. Nowhere else.
-- *Offline open.* A cached profile, or just existing local entries (an existing user from before
-  sign-in shipped, with no cached identity yet), opens the app as an **unverified** session. A later
-  drain that reaches the server triggers `GET /auth/me`, which fills in the profile or, on a 401,
-  raises the banner below. IndexedDB being unavailable is treated like "entries exist". A startup that is slow
-  opens unverified after a timeout only when there is a cached identity or local data. A first-time
-  user with nothing local keeps the splash until the server answers (opening the app for them would
-  gate them again mid-capture, so it would be worse), and if IndexedDB itself is what is stuck (another
-  tab blocking the v3 upgrade) the gate is shown after a second short probe. `openLogbookDb` rejects
-  on `blocked` and closes on `versionchange` so one old tab can't wedge the new one.
-- *A background 401 never gates.* An outbox drain or a photo upload that gets a 401 (and only a
-  401, while signed in) sets `needsSignIn`, shown as a non-blocking, dismissible banner ("Sign in again to resume syncing", with "Not now" until the next 401) whose action opens
-  the sign-in screen *over* the still-mounted app. Unmounting the app would lose an in-progress
-  capture draft. Entries, photos and the outbox are untouched, and the cached identity is kept. A 403 is
-  a refusal rather than an expired session (e.g. a stale CSRF cookie): it never raises the banner; the
-  client heals once (`GET /auth/me` re-syncs the cookies, then the drain is retried) and otherwise
-  leaves it to the sync status line ("sync failed").
-- *Sign-out is durable.* `signOut` first flushes the outbox (while the session still works), then
-  writes a `pendingLogout` marker, forgets the cached profile, and calls `POST /auth/logout`; the
-  marker is removed only once the server confirms. Offline, the cookie survives, so startup honours
-  the marker by retrying the server logout and **never calling `GET /auth/me`**. Without it, the next
-  online open would silently sign the user back in.
-- *Local data belongs to one account.* Entries, outbox and sync state are per browser, not per user,
-  so `src/lib/db/localOwner.ts` records the owning account id (the server user id from `/auth/me`).
-  Data with no recorded owner belongs to the first account to sign in (matching the backend's
-  first-user claim). Re-signing in as the same account keeps everything; a different account is a
-  `pendingSwitch`: the sign-in screen asks, warning that unsynced entries are removed, and only then
-  `claimLocalData` clears the three stores and records the new owner in a single transaction (all or
-  nothing; if it fails the confirmation stays open with an error). Cancelling signs the new session
-  back out.
-- *Drains stay paused until the owner is verified.* The previous account's outbox must never be
-  uploaded under a session that hasn't been matched to this device. `pauseDrains(reason)` in
-  `outboxRunner` turns every drain trigger (mount, save, upload, `online`) into a no-op, with
-  independent reasons so one guard can't release another:
-  `auth-mode` (mode loading/none/unknown), `startup-verify` (in `google` mode, held from the first
-  render until the session is verified: `GET /auth/me` answered AND the owner check passed; the
-  pause is installed synchronously, before `useSyncOutbox`'s mount drain can run), `account` (taken
-  before `POST /auth/google` and released only by a successful owner check, so a mismatch, or an
-  unverified sign-in whose `/auth/me` failed, stays paused) and `signed-out` (taken by sign-out after
-  its bounded flush and before the marker, held until the next sign-in or `none` mode, so an `online`
-  event after an offline sign-out can't upload on the still-live cookie). If `/auth/me` can't be
-  reached the app still opens (unverified) so the user can capture, drains stay paused, and
-  verification retries on a backoff timer (15s, 30s, 60s, then every 5 minutes) plus the `online`
-  event, releasing only after a successful owner check. The same retry loop re-asks for an `unknown`
-  auth config.
-  Sign-out's final flush is bounded (a hung drain can't keep the user signed in), and so is the
-  Google script load (a stalled request turns into the offline message with a retry).
-- *Races.* Sign-in and sign-out supersede a slow startup check (abort signal plus an epoch counter),
-  so a late `GET /auth/me` can neither overwrite newer state nor re-cache a signed-out identity.
-- *First sign-in needs a network.* This is unavoidable: Google and the backend both have to be
-  reached once. With no cached identity, no local entries and no connection the screen says it
-  couldn't reach Google and offers a retry.
+- *Known device, offline.* A cached identity, or just existing local entries, opens the app as
+  **unverified**. `GET /auth/me` is retried whenever the app may be reachable (`online`, window focus,
+  tab visible; no timers) and confirms it, or on a 401 raises the banner (verified before) or the gate
+  (never verified). A slow start opens a known device unverified after one timeout
+  (`STARTUP_TIMEOUT_MS`); a first-time device with nothing local keeps waiting for the answer.
+- *A background 401* (only a 401; a 403 is a generic sync error) never unmounts the app, because that
+  would lose an in-progress capture draft. It sets `needsSignIn`: a dismissible banner whose action
+  opens sign-in over the still-mounted app.
+- *One account per device.* The cached identity is what a sign-in or verification is compared with: a
+  different user id wipes entries, outbox and sync state (`clearLocalData`, one transaction) and shows
+  a one-line notice; the in-memory list is reset. The same id, or no cached identity yet (an existing
+  user from before sign-in), keeps everything.
+- *Sign-out needs a connection.* It syncs the outbox first (anything still queued, or an unreachable
+  server, aborts with a message in Settings and changes nothing), calls `POST /auth/logout` (a 401
+  counts as already signed out), then clears the cached identity and wipes local data. Settings warns
+  that this removes the device's entries (they stay on the server). Parked-as-rejected operations
+  can never sync, so they don't block it.
+- *One drain gate.* `setDrainsAllowed(boolean)` in `outboxRunner` turns every drain trigger (mount,
+  save, upload, `online`) into a no-op. `useAuth` owns it: closed under `none`/`unknown`, while the mode
+  loads, and in `google` mode until the session is verified (a fresh `GET /auth/me` answered and the
+  identity check ran); a sign-in closes it for its duration. So nothing uploads under a session that
+  hasn't been matched to this device's identity.
+- *Races.* Sign-in and sign-out supersede a slow startup check (abort signal plus an epoch counter).
+- *First sign-in needs a network.* Google and the backend both have to be reached once.
 
-Why: a hard gate that also required a live check on every open would lock a signed-in climber out
-of their own logbook on a mountain, which is the product's core scenario, and a gate that unmounted
-the app on any background 401 would throw away a half-dictated entry. The identity cache is not a
-security boundary (the session cookie is what authorises sync), so keeping the profile for offline
-reopening gives nothing to someone holding the unlocked device that they didn't already have.
+Why: a hard gate that also required a live check on every open would lock a signed-in climber out of
+their own logbook on a mountain, which is the product's core scenario, and a gate that unmounted the
+app on any background 401 would throw away a half-dictated entry. The identity cache is not a security
+boundary (the session cookie is what authorises sync).
 
 ## State composition
 
@@ -240,7 +196,7 @@ everything else is delegated to a single-concern hook:
 | `useNewEntryFlow` | The capture → listening → processing → review state machine, speech, AI orchestration |
 | `useExportActions` | Markdown/PDF export, JSON backup export/restore, a `busy` guard and status message |
 | `useSyncOutbox` | Registers the reconnect trigger and does a mount-time drain against the backend outbox; exposes `queueEntryCreate`, `queueEntryCreates` (backup restore), `queueEntryDeletion` and the timeline's `syncStatus`, read from every finished drain via `subscribeToDrains` |
-| `useAuth` | Who is signed in (Sign in with Google): `state`, `profile`, `unverified`, `needsSignIn`, `pendingSwitch`, `signInWithGoogle`, `confirmSwitch`, `logout`; resolved on mount from the cached identity plus `GET /auth/me` (logic in `lib/auth/sessionFlows.ts`). `App.tsx` gates on `state`; a background 401 only raises `needsSignIn` |
+| `useAuth` | Who is signed in (Sign in with Google): `mode`, `state`, `profile`, `unverified`, `needsSignIn`, `notice`, `signInWithGoogle`, `logout`; resolved on mount from the cached identity plus `GET /auth/me` (logic in `lib/auth/sessionFlows.ts`); owns the outbox drain gate. `App.tsx` gates on `state`; a background 401 only raises `needsSignIn` |
 | `useEntryAttachments` | The attachment gallery (server-confirmed + locally-queued photos) for whichever entry is open, the upload flow, and removing a single photo |
 
 **Why this shape instead of one hook, or a global store (Redux/Zustand):** the app has several

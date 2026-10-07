@@ -63,6 +63,7 @@ export function AccountSettings({ profile, pending, status, onLogout }: AccountS
           Sign out
         </button>
       </div>
+      <p className="account-settings__hint">Signing out removes this device's entries (they stay on the server).</p>
       {/* Reserved height, so progress or an error never shifts the group. */}
       <div className="account-settings__status" aria-live="polite">
         {status}
