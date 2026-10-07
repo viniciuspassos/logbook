@@ -24,7 +24,7 @@ export class User {
    * deliberately NOT unique: a recycled address (the same e-mail now held by a
    * different Google account, i.e. a different `sub`) must not lock a new
    * legitimate user out. Identity is `googleSub`; the e-mail is only the
-   * allowlist/legacy-owner key.
+   * allowlist key.
    */
   @Index()
   @Column()

@@ -28,32 +28,9 @@ import {
   withAuth,
 } from './test-support/auth-e2e.helper'
 
-function ownerlessEntry(title: string): Partial<Entry> {
-  return {
-    title,
-    shape: 'circle',
-    location: 'somewhere',
-    date: 'Jul 3',
-    metric: 'm',
-    excerpt: 'e',
-    weather: 'w',
-    duration: 'd',
-    difficulty: 'x',
-    equipment: 'q',
-    participants: 'p',
-    raw: 'r',
-    story: 's',
-    photoHint: 'h',
-    media: ['a', 'b', 'c'],
-    mapX: 1,
-    mapY: 2,
-    userId: null,
-  }
-}
-
 /**
  * Integration test for the auth module in isolation (Google sign-in, cookie
- * issuance, /auth/me, logout, the first-user data claim, and the health
+ * issuance, /auth/me, logout, and the health
  * endpoint's @Public() opt-out). Per-user scoping of entries/attachments is
  * covered by users/user-isolation.e2e.test.ts. GoogleTokenVerifier is
  * overridden with a fake so no test talks to Google.
@@ -236,54 +213,6 @@ describe('Auth (e2e)', () => {
     await withAuth(request(app.getHttpServer()).get('/auth/me'), auth).expect(401)
     // The session row was deleted, not just refused once.
     await withAuth(request(app.getHttpServer()).get('/auth/me'), auth).expect(401)
-  })
-
-  it('only the configured legacy owner inherits ownerless entries and attachments, on any of their sign-ins, even when another allowlisted user signed in first', async () => {
-    const entries = dataSource.getRepository(Entry)
-    const attachments = dataSource.getRepository(Attachment)
-    const legacyEntry = await entries.save(entries.create(ownerlessEntry('legacy')))
-    const legacyAttachment = await attachments.save(
-      attachments.create({
-        entryId: legacyEntry.id,
-        originalFilename: 'a.jpg',
-        storageKey: 'k',
-        mimeType: 'image/jpeg',
-        sizeBytes: 1,
-        userId: null,
-      }),
-    )
-    // Everyone signed in earlier in this file is already a user, so wipe the
-    // users (and their sessions) to put the app back in its "no accounts yet" state.
-    await dataSource.getRepository(Session).clear()
-    await dataSource.getRepository(User).clear()
-
-    // B (not the legacy owner, see TEST_AUTH_ENV) signs in first and gets nothing.
-    await loginForTests(app, TEST_USER_B_EMAIL)
-    await expect(entries.findOneByOrFail({ id: legacyEntry.id })).resolves.toMatchObject({
-      userId: null,
-    })
-
-    // The owner signs in and inherits both rows.
-    await loginForTests(app, TEST_USER_A_EMAIL)
-    const userA = await dataSource.getRepository(User).findOneByOrFail({ email: TEST_USER_A_EMAIL })
-    await expect(entries.findOneByOrFail({ id: legacyEntry.id })).resolves.toMatchObject({
-      userId: userA.id,
-    })
-    await expect(attachments.findOneByOrFail({ id: legacyAttachment.id })).resolves.toMatchObject({
-      userId: userA.id,
-    })
-
-    // Rows that are still ownerless later are claimed by the owner's next
-    // sign-in (the claim is an idempotent step), never by anyone else's.
-    const lateOrphan = await entries.save(entries.create(ownerlessEntry('late orphan')))
-    await loginForTests(app, TEST_USER_B_EMAIL)
-    await expect(entries.findOneByOrFail({ id: lateOrphan.id })).resolves.toMatchObject({
-      userId: null,
-    })
-    await loginForTests(app, TEST_USER_A_EMAIL)
-    await expect(entries.findOneByOrFail({ id: lateOrphan.id })).resolves.toMatchObject({
-      userId: userA.id,
-    })
   })
 
   it('logout with a valid session but no CSRF header is rejected with 403 and the session survives', async () => {

@@ -8,7 +8,7 @@ export interface AppConfig {
   maxUploadSizeBytes: number
   /**
    * Feature flag (`GOOGLE_AUTH_ENABLED`, default false). Off means no sign-in
-   * route and therefore no session: the API stays closed. The three Google
+   * route and therefore no session: the API stays closed. The two Google
    * settings below are only required (and validated) when this is on; when
    * off they are '' / [].
    */
@@ -17,12 +17,6 @@ export interface AppConfig {
   googleClientId: string
   /** Lowercased e-mail addresses allowed to sign in; anyone else gets 403. */
   allowedEmails: string[]
-  /**
-   * Lowercased e-mail of the one user who inherits every entry/attachment with
-   * no owner (everything written before accounts existed) when they first sign
-   * in. Always one of `allowedEmails`; see resolveLegacyOwnerEmail.
-   */
-  legacyOwnerEmail: string
   /** Session lifetime, extended (sliding) on use — see auth/sessions.service.ts. */
   sessionTtlDays: number
   /** Whether the `Secure` cookie attribute is set on session/CSRF cookies. */
@@ -65,37 +59,11 @@ function parseInteger(
   return value
 }
 
-/**
- * Who inherits the pre-accounts (ownerless) rows. Unset means "the sole
- * allowlisted e-mail"; with several allowlisted addresses there is no safe
- * guess (the first to sign in could be the wrong person), so it must be set
- * explicitly and the app refuses to boot otherwise. A value that is not on
- * the allowlist could never sign in to claim anything, so that is an error too.
- */
-function resolveLegacyOwnerEmail(raw: string | undefined, allowedEmails: string[]): string {
-  const configured = raw?.trim().toLowerCase()
-  if (!configured) {
-    if (allowedEmails.length === 1) {
-      return allowedEmails[0]
-    }
-    throw new Error(
-      'LEGACY_OWNER_EMAIL is required when ALLOWED_EMAILS lists more than one address: ' +
-        'it names the user who inherits the entries and photos that existed before accounts ' +
-        '(see server/.env.example).',
-    )
-  }
-  if (!allowedEmails.includes(configured)) {
-    throw new Error(`LEGACY_OWNER_EMAIL (${configured}) must be one of ALLOWED_EMAILS.`)
-  }
-  return configured
-}
-
-type GoogleSettings = Pick<AppConfig, 'googleClientId' | 'allowedEmails' | 'legacyOwnerEmail'>
+type GoogleSettings = Pick<AppConfig, 'googleClientId' | 'allowedEmails'>
 
 const DISABLED_GOOGLE_SETTINGS: GoogleSettings = {
   googleClientId: '',
   allowedEmails: [],
-  legacyOwnerEmail: '',
 }
 
 /** Reads and validates the Google settings, which only matter (and are only required) when the flag is on. */
@@ -116,11 +84,7 @@ function loadGoogleSettings(env: Env): GoogleSettings {
     )
   }
 
-  return {
-    googleClientId,
-    allowedEmails,
-    legacyOwnerEmail: resolveLegacyOwnerEmail(env.LEGACY_OWNER_EMAIL, allowedEmails),
-  }
+  return { googleClientId, allowedEmails }
 }
 
 /**

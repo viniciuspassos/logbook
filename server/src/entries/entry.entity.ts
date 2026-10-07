@@ -110,12 +110,8 @@ export class Entry {
   /**
    * Owner (users.id). Every read/write is scoped by it — a row another user
    * owns is indistinguishable from a missing one (404). Nullable only for
-   * rows that predate accounts. Those are handed to the configured legacy
-   * owner (LEGACY_OWNER_EMAIL, or the sole allowlisted e-mail) by an
-   * idempotent claim run on each of that user's sign-ins (see
-   * UsersRepository.findOrCreate); it only ever touches rows whose `userId`
-   * is still NULL, so it never takes a row from anyone. New rows always carry
-   * an owner.
+   * rows written before accounts existed: they have no owner and are inert
+   * (visible to nobody). New rows always carry an owner.
    */
   @Index()
   @Column({ type: 'int', nullable: true })

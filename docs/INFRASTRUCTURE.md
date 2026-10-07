@@ -47,7 +47,7 @@ docker compose down -v        # stop and also wipe db/upload volumes
 ```
 
 `GOOGLE_AUTH_ENABLED` (default `false`), and, when it is `true`, `GOOGLE_CLIENT_ID` and
-`ALLOWED_EMAILS` (and `LEGACY_OWNER_EMAIL` when several addresses are allowed) come from your shell or an uncommitted root `.env` (copy the root `.env.example`). Compose
+`ALLOWED_EMAILS` come from your shell or an uncommitted root `.env` (copy the root `.env.example`). Compose
 defaults them to empty, so `docker compose config/build/down/ps` work without a `.env`; the
 backend itself fails fast at boot with a clear config error (see `docker compose logs backend`)
 until the required ones are set — see "Backend authentication" below.
@@ -177,8 +177,8 @@ rationale lives in the auth PR descriptions; this section is the operational sum
 - **`GOOGLE_AUTH_ENABLED`** (feature flag, default `false`) — strict boolean: `true`/`false` or
   `1`/`0`, case-insensitive; anything else throws a config error at boot. **Off** (the safe
   default): `POST /auth/google` answers 404 (a route guard, so not even a 400 for a bad body), the
-  Google verifier never builds a client, `GOOGLE_CLIENT_ID`/`ALLOWED_EMAILS`/`LEGACY_OWNER_EMAIL`
-  are neither required nor validated, and the legacy-row claim never runs. No session can ever be
+  Google verifier never builds a client, `GOOGLE_CLIENT_ID`/`ALLOWED_EMAILS`
+  are neither required nor validated. No session can ever be
   created, so every protected route (including `GET /auth/me`) answers 401: the API stays closed.
   `POST /auth/logout` is protected like every route, so it answers 401 too. **On**: the behaviour
   described below, with the Google variables required.
@@ -188,7 +188,7 @@ rationale lives in the auth PR descriptions; this section is the operational sum
   flipping the flag takes effect on the next call. Response, a list so more methods can be added
   later: `{ "methods": [] }` when the flag is off, or
   `{ "methods": [ { "type": "google", "clientId": "<GOOGLE_CLIENT_ID>" } ] }` when it is on. The
-  client ID is public by design (browsers need it); the allowlist, the legacy owner and any secret
+  client ID is public by design (browsers need it); the allowlist and any secret
   are never returned. The list is built in one place (`AuthConfigService`, a typed `AuthMethod`
   union), so a new method is a one-file change.
 
@@ -223,39 +223,28 @@ rationale lives in the auth PR descriptions; this section is the operational sum
   (`${GOOGLE_CLIENT_ID:-}`) instead of committing a value; the backend refuses to boot without it.
 - **`ALLOWED_EMAILS`** (required when `GOOGLE_AUTH_ENABLED`, at least one address) — comma-separated, case-insensitive
   allowlist, parsed once in `loadConfig`. Same compose treatment as `GOOGLE_CLIENT_ID`.
-- **`LEGACY_OWNER_EMAIL`** (only read when `GOOGLE_AUTH_ENABLED`; optional with exactly one allowed address, otherwise required) — who
-  inherits the entries/attachments that existed before accounts (`userId IS NULL`). Unset with a
-  single allowlisted address means that address; with several allowlisted addresses and no owner
-  the app throws at config load (guessing "whoever signs in first" could hand the data to the
-  wrong person). It must be one of `ALLOWED_EMAILS`.
 - **Users and data ownership**: accounts live in a `users` table keyed by Google's stable `sub`
   claim (never the e-mail, which can change or be recycled); e-mail/name/picture are refreshed
   from each verified token. `entries`, `attachments` and `sessions` carry a `userId` foreign key;
   every entries/attachments query is filtered by the session's user, and an id belonging to
-  another user answers `404` (not `403`) so ids can't be probed. **Only the legacy owner
-  (`LEGACY_OWNER_EMAIL`) inherits the pre-existing `entries`/`attachments` rows with
-  `userId IS NULL`**, through an idempotent claim run on **every** sign-in of that user (not only
-  when their row is created), in the same transaction as find-or-create: it works when another allowlisted user signed in first, when the owner already had a row, and
-  when `LEGACY_OWNER_EMAIL` later names someone else, and it is a cheap no-op when nothing is left.
-  It only touches rows whose `userId IS NULL`, so it can never take a row away from anyone, and no
-  other user ever takes those rows. Two simultaneous first sign-ins of the same account can lose a
-  race on the unique `googleSub`; the repository catches that outside the transaction, re-reads, and
-  reuses the user the other request created (verified on Postgres 16 with 24 concurrent sign-ins). **E-mails are stored trimmed and
+  another user answers `404` (not `403`) so ids can't be probed. There is no legacy-data
+  inheritance: rows that already exist with `userId IS NULL` (local test data from before accounts)
+  are inert, visible to nobody; reset a dev database with `docker compose down -v`. Two simultaneous
+  first sign-ins of the same account can lose a
+  race on the unique `googleSub`; the repository guards only the insert, re-reads by `sub` and reuses
+  the user the other request created (rethrowing the original error if none exists). **E-mails are stored trimmed and
   lowercased** (the `GoogleAuth` migration normalises on creation) and `users.email` is
   indexed but deliberately **not unique**: Google can recycle an address to a different account
   (a different `sub`), and a unique constraint would lock that new legitimate user out. Identity
-  is `googleSub`; the e-mail is only the allowlist / legacy-owner key. Because the claim only
-  touches `userId IS NULL` rows, a recycled address matching the legacy owner can claim nothing
-  that is already owned. `sessions.userId` is indexed too (every request joins the session's user). Attachment access follows the *parent entry's* owner (a join on
+  is `googleSub`; the e-mail is only the allowlist key. `sessions.userId` is indexed too (every request joins the session's user). Attachment access follows the *parent entry's* owner (a join on
   `entries.userId`, tombstoned entries excluded, so an attachment of a deleted entry answers `404`
   like upload does), not the attachment's own nullable `userId` (that column is informational:
-  set at upload and by the claim, never read for access control); an attachment delete is a single
+  set at upload, never read for access control); an attachment delete is a single
   ownership-scoped statement whose affected count decides the outcome (`404`, and the stored file is
   left alone, when nothing was deleted), and the file is only removed, best-effort, after the row. Numeric env vars are validated at boot (`PORT` 0-65535, where 0 means an
   ephemeral port; `SESSION_TTL_DAYS` and `MAX_UPLOAD_SIZE_BYTES` positive integers). Migration
   `GoogleAuth` deletes existing sessions (they were password sessions with no user), so everyone
-  signs in again once after upgrading, and nulls any pre-existing `userId` on entries/attachments
-  before adding the foreign keys. Its `down` cannot restore the deleted sessions or ownership.
+  signs in again once after upgrading. Its `down` cannot restore the deleted sessions.
 - **`SESSION_TTL_DAYS`** (optional, default `30`) — how long a session cookie lives before
   expiring. It slides forward on use (renewed once less than half the TTL remains) rather than on
   a fixed schedule, so a session doesn't get a full database write on every single request. The

@@ -62,20 +62,16 @@ services:
       # without a `.env`; the backend itself refuses to boot (clear error in
       # `docker compose logs backend`) until the required ones are set.
       #   GOOGLE_AUTH_ENABLED: feature flag, true/false (default false). Off =
-      #     no sign-in route, API closed; the three variables below are then
+      #     no sign-in route, API closed; the two variables below are then
       #     not required.
       #   GOOGLE_CLIENT_ID: the OAuth "Web application" client ID from Google
       #     Cloud Console (public, but specific to your project). Required.
       #   ALLOWED_EMAILS: comma-separated e-mail addresses allowed to sign in.
       #     Required.
-      #   LEGACY_OWNER_EMAIL: which allowlisted user inherits the entries and
-      #     photos that existed before accounts. Optional with one allowed
-      #     address (that one inherits); required with several.
       # See docs/INFRASTRUCTURE.md -> "Backend authentication".
       GOOGLE_AUTH_ENABLED: ${GOOGLE_AUTH_ENABLED:-false}
       GOOGLE_CLIENT_ID: ${GOOGLE_CLIENT_ID:-}
       ALLOWED_EMAILS: ${ALLOWED_EMAILS:-}
-      LEGACY_OWNER_EMAIL: ${LEGACY_OWNER_EMAIL:-}
     volumes:
       # Named volume so uploaded files survive container restarts/recreation
       # (server/.env.example flags the bare default `./uploads` as non-durable).

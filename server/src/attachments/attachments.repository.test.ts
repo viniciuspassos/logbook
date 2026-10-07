@@ -106,7 +106,7 @@ describe('AttachmentsRepository', () => {
         sizeBytes: 1,
       }
       ownedWithUserId = await attachments.save(attachments.create({ ...base, userId: owner.id }))
-      // A legacy row whose own userId was never set, under an owned entry.
+      // A row whose own userId was never set, under an owned entry.
       ownedWithNullUserId = await attachments.save(attachments.create({ ...base, userId: null }))
     })
 

@@ -10,7 +10,7 @@ import { Attachment } from './attachment.entity'
  *
  * Every read/delete resolves ownership through the *parent entry's* owner
  * (an inner join on `entries.userId`, tombstoned entries excluded), not the
- * attachment's own nullable `userId`: the entry is the unit of ownership, so a legacy attachment whose
+ * attachment's own nullable `userId`: the entry is the unit of ownership, so an attachment whose
  * own `userId` was never set stays reachable by whoever owns its entry, and
  * can never be reached by anyone else. (The join is a query-builder join on
  * the plain `entryId` column, not a TypeORM relation — see the note on

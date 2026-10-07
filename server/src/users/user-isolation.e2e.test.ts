@@ -250,7 +250,7 @@ describe('Per-user isolation (e2e)', () => {
       .expect(201)
     const goneAttachmentId = uploadRes.body.id as number
     // Tombstone the entry while leaving the attachment row in place (the
-    // state a race or a legacy row can leave behind).
+    // state a race can leave behind).
     await dataSource.getRepository(Entry).update({ id: goneEntryId }, { deletedAt: new Date() })
 
     await withAuth(
@@ -273,6 +273,21 @@ describe('Per-user isolation (e2e)', () => {
     )
       .attach('file', JPEG_BYTES, 'again.jpg')
       .expect(404)
+  })
+
+  it('rows with no owner (userId NULL) are inert: invisible to every user', async () => {
+    const entries = dataSource.getRepository(Entry)
+    const ownerless = await entries.save(
+      entries.create({ ...entryPayload, shape: 'circle', userId: null } as Partial<Entry>),
+    )
+
+    for (const user of [userA, userB]) {
+      const list = await withAuth(request(app.getHttpServer()).get('/entries'), user).expect(200)
+      expect((list.body as Entry[]).map((e) => e.id)).not.toContain(ownerless.id)
+      await withAuth(request(app.getHttpServer()).get(`/entries/${ownerless.id}`), user).expect(
+        404,
+      )
+    }
   })
 
   it("user A still sees exactly their own data, and B's entries never leak to A", async () => {

@@ -1,6 +1,4 @@
-import { DataSource, IsNull, type Repository } from 'typeorm'
-import { Attachment } from '../attachments/attachment.entity'
-import { Entry } from '../entries/entry.entity'
+import type { Repository } from 'typeorm'
 import { User } from './user.entity'
 import { UsersRepository } from './users.repository'
 
@@ -16,43 +14,18 @@ function fakeUser(overrides: Partial<User> = {}): User {
   }
 }
 
-function makeFakeManager() {
+function makeRepoMock() {
   return {
     findOneBy: jest.fn(),
     create: jest.fn(),
     save: jest.fn(),
-    count: jest.fn(),
     update: jest.fn(),
-  }
-}
-
-function makeRepoMock() {
-  const fakeManager = makeFakeManager()
-  const ormRepo = {
-    findOneBy: jest.fn(),
-    update: jest.fn(),
-    manager: {
-      transaction: jest.fn(
-        (cb: (manager: typeof fakeManager) => Promise<unknown>) => cb(fakeManager),
-      ),
-    },
-  } as unknown as jest.Mocked<Repository<User>> & { manager: { transaction: jest.Mock } }
-  return { ormRepo, fakeManager }
+  } as unknown as jest.Mocked<Repository<User>>
 }
 
 describe('UsersRepository', () => {
-  it('findByGoogleSub looks the user up by the sub column', async () => {
-    const { ormRepo } = makeRepoMock()
-    const user = fakeUser()
-    ormRepo.findOneBy.mockResolvedValue(user)
-    const repo = new UsersRepository(ormRepo)
-
-    await expect(repo.findByGoogleSub('sub-1')).resolves.toBe(user)
-    expect(ormRepo.findOneBy).toHaveBeenCalledWith({ googleSub: 'sub-1' })
-  })
-
   it('findById returns null when there is no such user', async () => {
-    const { ormRepo } = makeRepoMock()
+    const ormRepo = makeRepoMock()
     ormRepo.findOneBy.mockResolvedValue(null)
     const repo = new UsersRepository(ormRepo)
 
@@ -61,7 +34,7 @@ describe('UsersRepository', () => {
   })
 
   it('updateProfile writes only the profile snapshot columns', async () => {
-    const { ormRepo } = makeRepoMock()
+    const ormRepo = makeRepoMock()
     const repo = new UsersRepository(ormRepo)
 
     await repo.updateProfile(1, { email: 'new@example.com', name: null, picture: 'p' })
@@ -74,211 +47,56 @@ describe('UsersRepository', () => {
   })
 
   describe('findOrCreate', () => {
-    const profile = { googleSub: 'sub-1', email: 'me@example.com', name: 'Me', picture: null }
+    const data = { googleSub: 'sub-1', email: 'me@example.com', name: 'Me', picture: null }
 
-    it('creates the user and claims every ownerless entry and attachment when asked to, in one transaction', async () => {
-      const { ormRepo, fakeManager } = makeRepoMock()
-      const saved = fakeUser({ id: 4 })
-      fakeManager.findOneBy.mockResolvedValue(null)
-      fakeManager.create.mockReturnValue(profile)
-      fakeManager.save.mockResolvedValue(saved)
-      const repo = new UsersRepository(ormRepo)
-
-      const result = await repo.findOrCreate(profile, { claimLegacyRows: true })
-
-      expect(ormRepo.manager.transaction).toHaveBeenCalledTimes(1)
-      expect(fakeManager.create).toHaveBeenCalledWith(User, profile)
-      expect(fakeManager.update).toHaveBeenCalledWith(Entry, { userId: IsNull() }, { userId: 4 })
-      expect(fakeManager.update).toHaveBeenCalledWith(
-        Attachment,
-        { userId: IsNull() },
-        { userId: 4 },
-      )
-      expect(result).toBe(saved)
-    })
-
-    it('creates the user without touching existing rows when not asked to claim them', async () => {
-      const { ormRepo, fakeManager } = makeRepoMock()
-      const saved = fakeUser({ id: 5 })
-      fakeManager.findOneBy.mockResolvedValue(null)
-      fakeManager.create.mockReturnValue(profile)
-      fakeManager.save.mockResolvedValue(saved)
-      const repo = new UsersRepository(ormRepo)
-
-      const result = await repo.findOrCreate(profile, { claimLegacyRows: false })
-
-      expect(fakeManager.update).not.toHaveBeenCalled()
-      expect(result).toBe(saved)
-    })
-
-    it('runs the claim even when the user already exists, without inserting again (idempotent step on every owner sign-in)', async () => {
-      const { ormRepo, fakeManager } = makeRepoMock()
+    it('returns the existing user, looked up by the sub column, without inserting', async () => {
+      const ormRepo = makeRepoMock()
       const existing = fakeUser({ id: 2 })
-      fakeManager.findOneBy.mockResolvedValue(existing)
+      ormRepo.findOneBy.mockResolvedValue(existing)
       const repo = new UsersRepository(ormRepo)
 
-      const result = await repo.findOrCreate(profile, { claimLegacyRows: true })
-
-      expect(result).toBe(existing)
-      expect(fakeManager.save).not.toHaveBeenCalled()
-      expect(fakeManager.update).toHaveBeenCalledWith(Entry, { userId: IsNull() }, { userId: 2 })
-      expect(fakeManager.update).toHaveBeenCalledWith(
-        Attachment,
-        { userId: IsNull() },
-        { userId: 2 },
-      )
-    })
-
-    it('returns an existing user without inserting or claiming when not asked to claim', async () => {
-      const { ormRepo, fakeManager } = makeRepoMock()
-      const existing = fakeUser({ id: 2 })
-      fakeManager.findOneBy.mockResolvedValue(existing)
-      const repo = new UsersRepository(ormRepo)
-
-      const result = await repo.findOrCreate(profile, { claimLegacyRows: false })
-
-      expect(fakeManager.findOneBy).toHaveBeenCalledWith(User, { googleSub: 'sub-1' })
-      expect(result).toBe(existing)
-      expect(fakeManager.save).not.toHaveBeenCalled()
-      expect(fakeManager.update).not.toHaveBeenCalled()
-    })
-  })
-
-  describe('findOrCreate when a racing sign-in inserts the same sub first', () => {
-    const profile = { googleSub: 'sub-1', email: 'me@example.com', name: 'Me', picture: null }
-    const uniqueViolation = new Error('duplicate key value violates unique constraint')
-
-    it('re-reads outside the aborted transaction and reuses the user the racer created', async () => {
-      const { ormRepo, fakeManager } = makeRepoMock()
-      const racer = fakeUser({ id: 6 })
-      // First attempt: the INSERT loses the race (unique violation aborts the
-      // whole Postgres transaction). Second attempt, in a fresh transaction,
-      // finds the row the racer committed.
-      ormRepo.manager.transaction.mockRejectedValueOnce(uniqueViolation)
-      ormRepo.findOneBy.mockResolvedValue(racer)
-      fakeManager.findOneBy.mockResolvedValue(racer)
-      const repo = new UsersRepository(ormRepo)
-
-      const result = await repo.findOrCreate(profile, { claimLegacyRows: true })
+      await expect(repo.findOrCreate(data)).resolves.toBe(existing)
 
       expect(ormRepo.findOneBy).toHaveBeenCalledWith({ googleSub: 'sub-1' })
-      expect(ormRepo.manager.transaction).toHaveBeenCalledTimes(2)
-      expect(result).toBe(racer)
-      // The retry still runs the idempotent claim for the owner.
-      expect(fakeManager.update).toHaveBeenCalledWith(Entry, { userId: IsNull() }, { userId: 6 })
+      expect(ormRepo.save).not.toHaveBeenCalled()
     })
 
-    it('rethrows the original error when the user still does not exist (not a race)', async () => {
-      const { ormRepo } = makeRepoMock()
-      ormRepo.manager.transaction.mockRejectedValueOnce(uniqueViolation)
+    it('inserts and returns a new user when the sub is unknown', async () => {
+      const ormRepo = makeRepoMock()
+      const saved = fakeUser({ id: 5 })
       ormRepo.findOneBy.mockResolvedValue(null)
+      ormRepo.create.mockReturnValue(data as unknown as User)
+      ormRepo.save.mockResolvedValue(saved)
       const repo = new UsersRepository(ormRepo)
 
-      await expect(repo.findOrCreate(profile, { claimLegacyRows: false })).rejects.toBe(
-        uniqueViolation,
-      )
-      expect(ormRepo.manager.transaction).toHaveBeenCalledTimes(1)
-    })
-  })
+      await expect(repo.findOrCreate(data)).resolves.toBe(saved)
 
-  describe('findOrCreate (real sqljs driver)', () => {
-    let dataSource: DataSource
-
-    beforeEach(async () => {
-      dataSource = new DataSource({
-        type: 'sqljs',
-        autoSave: false,
-        synchronize: true,
-        entities: [Entry, Attachment, User],
-      })
-      await dataSource.initialize()
+      expect(ormRepo.create).toHaveBeenCalledWith(data)
+      expect(ormRepo.save).toHaveBeenCalledWith(data)
     })
 
-    afterEach(async () => {
-      await dataSource.destroy()
+    it('returns the racer\'s user when the insert loses a concurrent first sign-in to the unique googleSub', async () => {
+      const ormRepo = makeRepoMock()
+      const racer = fakeUser({ id: 6 })
+      ormRepo.findOneBy.mockResolvedValueOnce(null).mockResolvedValueOnce(racer)
+      ormRepo.create.mockReturnValue(data as unknown as User)
+      ormRepo.save.mockRejectedValue(new Error('duplicate key value violates unique constraint'))
+      const repo = new UsersRepository(ormRepo)
+
+      await expect(repo.findOrCreate(data)).resolves.toBe(racer)
+
+      expect(ormRepo.findOneBy).toHaveBeenCalledTimes(2)
     })
 
-    async function orphanEntry(userId: number | null): Promise<Entry> {
-      const entries = dataSource.getRepository(Entry)
-      return entries.save(
-        entries.create({
-          title: 't',
-          shape: 'circle',
-          location: 'l',
-          date: 'd',
-          metric: 'm',
-          excerpt: 'e',
-          weather: 'w',
-          duration: 'du',
-          difficulty: 'di',
-          equipment: 'eq',
-          participants: 'p',
-          raw: 'r',
-          story: 's',
-          photoHint: 'h',
-          media: ['a', 'b', 'c'],
-          mapX: 1,
-          mapY: 2,
-          userId,
-        }),
-      )
-    }
+    it('rethrows the original insert error when no user exists afterwards (not a race)', async () => {
+      const ormRepo = makeRepoMock()
+      const failure = new Error('connection lost')
+      ormRepo.findOneBy.mockResolvedValue(null)
+      ormRepo.create.mockReturnValue(data as unknown as User)
+      ormRepo.save.mockRejectedValue(failure)
+      const repo = new UsersRepository(ormRepo)
 
-    const ownerData = { googleSub: 'a', email: 'a@example.com', name: null, picture: null }
-    const strangerData = { googleSub: 'b', email: 'b@example.com', name: null, picture: null }
-
-    async function ownerOf(entry: Entry): Promise<number | null | undefined> {
-      return (await dataSource.getRepository(Entry).findOneByOrFail({ id: entry.id })).userId
-    }
-
-    it('another allowlisted user signing in first takes nothing; the owner claims at their own first sign-in', async () => {
-      const orphan = await orphanEntry(null)
-      const repo = new UsersRepository(dataSource.getRepository(User))
-
-      const stranger = await repo.findOrCreate(strangerData, { claimLegacyRows: false })
-      await expect(ownerOf(orphan)).resolves.toBeNull()
-
-      const owner = await repo.findOrCreate(ownerData, { claimLegacyRows: true })
-
-      expect(owner.id).not.toBe(stranger.id)
-      await expect(ownerOf(orphan)).resolves.toBe(owner.id)
-    })
-
-    it('an owner who already has a user row claims rows that are still ownerless on a later sign-in, without a duplicate user', async () => {
-      const repo = new UsersRepository(dataSource.getRepository(User))
-      // Signed in earlier, before any ownerless row existed (or before they were the owner).
-      const owner = await repo.findOrCreate(ownerData, { claimLegacyRows: false })
-      const late = await orphanEntry(null)
-
-      const again = await repo.findOrCreate(ownerData, { claimLegacyRows: true })
-
-      expect(again.id).toBe(owner.id)
-      await expect(dataSource.getRepository(User).count()).resolves.toBe(1)
-      await expect(ownerOf(late)).resolves.toBe(owner.id)
-    })
-
-    it('a changed LEGACY_OWNER_EMAIL: the new owner claims what is still ownerless, rows already owned are untouched', async () => {
-      const repo = new UsersRepository(dataSource.getRepository(User))
-      const first = await repo.findOrCreate(ownerData, { claimLegacyRows: true })
-      const alreadyOwned = await orphanEntry(first.id)
-      const stillOrphan = await orphanEntry(null)
-
-      const newOwner = await repo.findOrCreate(strangerData, { claimLegacyRows: true })
-
-      await expect(ownerOf(stillOrphan)).resolves.toBe(newOwner.id)
-      await expect(ownerOf(alreadyOwned)).resolves.toBe(first.id)
-    })
-
-    it('repeat owner sign-ins are idempotent: nothing left to claim is a no-op', async () => {
-      const repo = new UsersRepository(dataSource.getRepository(User))
-      const orphan = await orphanEntry(null)
-
-      const owner = await repo.findOrCreate(ownerData, { claimLegacyRows: true })
-      await repo.findOrCreate(ownerData, { claimLegacyRows: true })
-      await repo.findOrCreate(ownerData, { claimLegacyRows: true })
-
-      await expect(dataSource.getRepository(User).count()).resolves.toBe(1)
-      await expect(ownerOf(orphan)).resolves.toBe(owner.id)
+      await expect(repo.findOrCreate(data)).rejects.toBe(failure)
     })
   })
 })

@@ -19,9 +19,8 @@ export interface AuthProfile {
 /**
  * Business logic for sign-in/sign-out. Google is the only login method: the
  * token is verified (401), the verified e-mail is checked against the
- * allowlist (403), the user is upserted by Google `sub` — the very first
- * user also inherits all pre-accounts rows, see UsersRepository — and a
- * session is created for them.
+ * allowlist (403), the user is upserted by Google `sub`, and a session is
+ * created for them.
  */
 @Injectable()
 export class AuthService {

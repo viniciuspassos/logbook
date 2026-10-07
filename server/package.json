@@ -4,7 +4,7 @@
   "version": "0.0.0",
   "description": "Standalone backend for Logbook: entry persistence and photo/file attachment uploads. Independent of the Vite frontend package.",
   "engines": {
-    "node": ">=20"
+    "node": ">=22"
   },
   "scripts": {
     "build": "tsc -p tsconfig.build.json",

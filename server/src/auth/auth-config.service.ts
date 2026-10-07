@@ -7,7 +7,7 @@ import type { AppConfig } from '../config/configuration'
  * A discriminated union on `type`: adding a method later is a new member here
  * plus one branch in AuthConfigService.getMethods. Only data that is public
  * by design belongs in a member (a Google OAuth client ID is shipped to
- * browsers anyway); never secrets, the allowlist or the legacy owner.
+ * browsers anyway); never secrets or the allowlist.
  */
 export type AuthMethod = { type: 'google'; clientId: string }
 

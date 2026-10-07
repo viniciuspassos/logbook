@@ -7,7 +7,6 @@ function serviceFor(overrides: Partial<AppConfig>): AuthConfigService {
     googleAuthEnabled: false,
     googleClientId: '',
     allowedEmails: [],
-    legacyOwnerEmail: '',
     ...overrides,
   }
   return new AuthConfigService({
@@ -26,19 +25,17 @@ describe('AuthConfigService', () => {
     expect(service.getMethods()).toEqual([{ type: 'google', clientId: 'client-id' }])
   })
 
-  it('never leaks the allowlist, the legacy owner or the flag state, in either mode', () => {
+  it('never leaks the allowlist or the flag state, in either mode', () => {
     for (const googleAuthEnabled of [true, false]) {
       const service = serviceFor({
         googleAuthEnabled,
         googleClientId: 'client-id',
         allowedEmails: ['secret-allowed@example.com'],
-        legacyOwnerEmail: 'secret-owner@example.com',
       })
 
       const json = JSON.stringify(service.getMethods())
 
       expect(json).not.toContain('secret-allowed')
-      expect(json).not.toContain('secret-owner')
       expect(json).not.toContain('allowedEmails')
     }
   })
