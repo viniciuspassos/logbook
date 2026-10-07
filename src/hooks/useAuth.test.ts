@@ -554,6 +554,24 @@ describe('useAuth: logout (needs a connection)', () => {
     expect(result.current.state).toBe('signedIn')
   })
 
+  it('leaves an in-flight startup verification able to finish when the sign-out is refused', async () => {
+    let resolveMe: ((profile: AuthProfile) => void) | undefined
+    mocked(getCachedIdentity).mockResolvedValue(grace)
+    mocked(getMe).mockReturnValue(new Promise((resolve) => (resolveMe = resolve)))
+    const { result } = renderHook(() => useAuth())
+    await waitFor(() => expect(result.current.unverified).toBe(true))
+    mocked(drainOutbox).mockResolvedValue({ processed: 0, stoppedReason: 'aborted' })
+
+    await act(async () => {
+      await result.current.logout()
+    })
+    expect(result.current.error).toBe(SIGN_OUT_NEEDS_CONNECTION)
+    await act(async () => resolveMe?.(grace))
+
+    expect(result.current.unverified).toBe(false)
+    expect(result.current.profile).toEqual(grace)
+  })
+
   it('clears the message and succeeds on a retry once the connection is back', async () => {
     const { result } = await renderSignedIn()
     mocked(logout).mockRejectedValueOnce(new SyncNetworkError())

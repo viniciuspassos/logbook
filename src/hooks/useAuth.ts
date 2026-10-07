@@ -198,18 +198,16 @@ function useLocalOnlySession(
 }
 
 interface Lifecycle {
-  supersede: () => void
   setPending: (pending: boolean) => void
   setError: (error: string | null) => void
 }
 
 /** Runs one async account action behind the shared pending/error handling. */
 async function runAction(
-  { supersede, setPending, setError }: Lifecycle,
+  { setPending, setError }: Lifecycle,
   action: () => Promise<void>,
   failureMessage: (error: unknown) => string,
 ): Promise<boolean> {
-  supersede()
   setPending(true)
   setError(null)
   try {
@@ -224,6 +222,7 @@ async function runAction(
 }
 
 interface AccountDeps extends Lifecycle {
+  supersede: () => void
   session: Session
   applySession: (session: Session) => void
   setNeedsSignIn: (needed: boolean) => void
@@ -232,7 +231,7 @@ interface AccountDeps extends Lifecycle {
 
 function useAccountActions(deps: AccountDeps) {
   const { session, applySession, setNeedsSignIn, resetLocalData, supersede, setPending, setError } = deps
-  const lifecycle = useMemo(() => ({ supersede, setPending, setError }), [supersede, setPending, setError])
+  const lifecycle = useMemo(() => ({ setPending, setError }), [setPending, setError])
   const wasVerified = isVerified(session)
 
   const signInWithGoogle = useCallback(
@@ -240,6 +239,7 @@ function useAccountActions(deps: AccountDeps) {
       runAction(
         lifecycle,
         async () => {
+          supersede()
           // Never drain while a session that hasn't been matched to this
           // device's identity exists (a re-sign-in as another account).
           setDrainsAllowed(false)
@@ -255,7 +255,7 @@ function useAccountActions(deps: AccountDeps) {
         },
         messageForSignInError,
       ),
-    [lifecycle, applySession, setNeedsSignIn, wasVerified],
+    [lifecycle, supersede, applySession, setNeedsSignIn, wasVerified],
   )
 
   const logout = useCallback(async () => {
@@ -263,13 +263,15 @@ function useAccountActions(deps: AccountDeps) {
       lifecycle,
       async () => {
         await signOut()
+        // Only a sign-out that went through outranks a startup check; a refused one changes nothing.
+        supersede()
         resetLocalData()
         applySession(SIGNED_OUT)
         setNeedsSignIn(false)
       },
       (err) => (err instanceof Error && err.message ? err.message : 'Something went wrong. Try again.'),
     )
-  }, [lifecycle, resetLocalData, applySession, setNeedsSignIn])
+  }, [lifecycle, supersede, resetLocalData, applySession, setNeedsSignIn])
 
   return { signInWithGoogle, logout }
 }

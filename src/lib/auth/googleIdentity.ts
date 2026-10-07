@@ -50,8 +50,10 @@ function injectScript(): HTMLScriptElement {
   const script = document.createElement('script')
   script.src = GSI_SRC
   script.async = true
-  // Permanent: a request that fails long after a caller gave up still drops the dead tag.
+  // Permanent: a request that fails (or loads without defining `google`) long after a
+  // caller gave up still drops the dead tag, so a retry injects a fresh one.
   script.addEventListener('error', () => script.remove())
+  script.addEventListener('load', () => !isGoogleLoaded() && script.remove())
   document.head.appendChild(script)
   return script
 }
@@ -68,11 +70,7 @@ function loadGoogleScript(): Promise<boolean> {
       pendingLoad = null
       resolve(loaded)
     }
-    const onLoad = () => {
-      const loaded = isGoogleLoaded()
-      if (!loaded) script.remove() // loaded without defining `google`: a retry needs a fresh tag
-      finish(loaded)
-    }
+    const onLoad = () => finish(isGoogleLoaded())
     const onError = () => finish(false)
     const timer = setTimeout(() => finish(false), SCRIPT_LOAD_TIMEOUT_MS)
     script.addEventListener('load', onLoad)
