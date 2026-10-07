@@ -11,13 +11,13 @@ import { Entry } from '../entries/entry.entity'
 import { StorageModule } from '../storage/storage.module'
 import { User } from '../users/user.entity'
 import { AuthModule } from './auth.module'
-import { CSRF_COOKIE_NAME, SESSION_COOKIE_NAME } from './cookies'
+import { SESSION_COOKIE_NAME } from './cookies'
 import { Session } from './session.entity'
 
 /**
  * The same real app wiring as auth.e2e.test.ts, booted with the feature flag
  * OFF and none of the Google vars set: the API must stay closed (no session
- * can ever be created) while /auth/config and logout keep working.
+ * can ever be created) while /auth/config keeps working.
  */
 describe('Auth with GOOGLE_AUTH_ENABLED=false (e2e)', () => {
   let app: INestApplication
@@ -72,7 +72,7 @@ describe('Auth with GOOGLE_AUTH_ENABLED=false (e2e)', () => {
       .post('/auth/google')
       .send({ idToken: 'anything' })
       .expect(404)
-    // Disabled wins over the login-CSRF guard: no 415/403 hint that the route exists.
+    // Disabled wins over the login-CSRF guard: no 403 hint that the route exists.
     await request(app.getHttpServer())
       .post('/auth/google')
       .type('form')
@@ -93,11 +93,7 @@ describe('Auth with GOOGLE_AUTH_ENABLED=false (e2e)', () => {
       .expect(401)
   })
 
-  it('POST /auth/logout still answers 200 and clears both cookies', async () => {
-    const res = await request(app.getHttpServer()).post('/auth/logout').expect(200)
-
-    const cleared = res.headers['set-cookie'] as unknown as string[]
-    expect(cleared.some((c) => c.startsWith(`${SESSION_COOKIE_NAME}=;`))).toBe(true)
-    expect(cleared.some((c) => c.startsWith(`${CSRF_COOKIE_NAME}=;`))).toBe(true)
+  it('POST /auth/logout is protected like everything else: 401 with no session', async () => {
+    await request(app.getHttpServer()).post('/auth/logout').expect(401)
   })
 })

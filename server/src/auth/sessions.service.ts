@@ -11,12 +11,6 @@ export interface SessionsServiceOptions {
   allowedEmails: string[]
 }
 
-/** A live session, plus whether this very call slid its expiry forward (so callers re-issue cookies only then). */
-export interface ValidatedSession {
-  session: Session
-  renewed: boolean
-}
-
 export interface CreatedSession {
   sessionToken: string
   csrfToken: string
@@ -59,7 +53,7 @@ export class SessionsService {
     return { sessionToken, csrfToken, expiresAt }
   }
 
-  async validate(sessionToken: string): Promise<ValidatedSession | null> {
+  async validate(sessionToken: string): Promise<Session | null> {
     const session = await this.sessionsRepository.findByTokenHash(hashToken(sessionToken))
     if (!session) {
       return null
@@ -83,10 +77,10 @@ export class SessionsService {
     if (remainingMs < ttlMs / 2) {
       const renewedExpiry = this.newExpiry()
       await this.sessionsRepository.updateExpiresAt(session.id, renewedExpiry)
-      return { session: { ...session, expiresAt: renewedExpiry }, renewed: true }
+      return { ...session, expiresAt: renewedExpiry }
     }
 
-    return { session, renewed: false }
+    return session
   }
 
   async revoke(sessionToken: string): Promise<void> {

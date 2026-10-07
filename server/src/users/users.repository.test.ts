@@ -16,10 +16,8 @@ function fakeUser(overrides: Partial<User> = {}): User {
   }
 }
 
-function makeFakeManager(driver: string) {
+function makeFakeManager() {
   return {
-    connection: { options: { type: driver } },
-    query: jest.fn(),
     findOneBy: jest.fn(),
     create: jest.fn(),
     save: jest.fn(),
@@ -28,8 +26,8 @@ function makeFakeManager(driver: string) {
   }
 }
 
-function makeRepoMock(driver = 'postgres') {
-  const fakeManager = makeFakeManager(driver)
+function makeRepoMock() {
+  const fakeManager = makeFakeManager()
   const ormRepo = {
     findOneBy: jest.fn(),
     update: jest.fn(),
@@ -78,8 +76,8 @@ describe('UsersRepository', () => {
   describe('findOrCreate', () => {
     const profile = { googleSub: 'sub-1', email: 'me@example.com', name: 'Me', picture: null }
 
-    it('takes the advisory lock first on Postgres, then creates the user and claims every ownerless entry and attachment when asked to', async () => {
-      const { ormRepo, fakeManager } = makeRepoMock('postgres')
+    it('creates the user and claims every ownerless entry and attachment when asked to, in one transaction', async () => {
+      const { ormRepo, fakeManager } = makeRepoMock()
       const saved = fakeUser({ id: 4 })
       fakeManager.findOneBy.mockResolvedValue(null)
       fakeManager.create.mockReturnValue(profile)
@@ -89,13 +87,6 @@ describe('UsersRepository', () => {
       const result = await repo.findOrCreate(profile, { claimLegacyRows: true })
 
       expect(ormRepo.manager.transaction).toHaveBeenCalledTimes(1)
-      expect(fakeManager.query).toHaveBeenCalledWith(
-        expect.stringContaining('pg_advisory_xact_lock'),
-        [expect.any(Number)],
-      )
-      expect(fakeManager.query.mock.invocationCallOrder[0]).toBeLessThan(
-        fakeManager.findOneBy.mock.invocationCallOrder[0],
-      )
       expect(fakeManager.create).toHaveBeenCalledWith(User, profile)
       expect(fakeManager.update).toHaveBeenCalledWith(Entry, { userId: IsNull() }, { userId: 4 })
       expect(fakeManager.update).toHaveBeenCalledWith(
@@ -104,18 +95,6 @@ describe('UsersRepository', () => {
         { userId: 4 },
       )
       expect(result).toBe(saved)
-    })
-
-    it('does not take the Postgres advisory lock on other drivers (sql.js in tests)', async () => {
-      const { ormRepo, fakeManager } = makeRepoMock('sqljs')
-      fakeManager.findOneBy.mockResolvedValue(null)
-      fakeManager.create.mockReturnValue(profile)
-      fakeManager.save.mockResolvedValue(fakeUser())
-      const repo = new UsersRepository(ormRepo)
-
-      await repo.findOrCreate(profile, { claimLegacyRows: true })
-
-      expect(fakeManager.query).not.toHaveBeenCalled()
     })
 
     it('creates the user without touching existing rows when not asked to claim them', async () => {
@@ -150,7 +129,7 @@ describe('UsersRepository', () => {
       )
     })
 
-    it('is idempotent: when the sub already exists under the lock (a racing sign-in won), it returns that user without inserting or claiming', async () => {
+    it('returns an existing user without inserting or claiming when not asked to claim', async () => {
       const { ormRepo, fakeManager } = makeRepoMock()
       const existing = fakeUser({ id: 2 })
       fakeManager.findOneBy.mockResolvedValue(existing)
@@ -162,6 +141,43 @@ describe('UsersRepository', () => {
       expect(result).toBe(existing)
       expect(fakeManager.save).not.toHaveBeenCalled()
       expect(fakeManager.update).not.toHaveBeenCalled()
+    })
+  })
+
+  describe('findOrCreate when a racing sign-in inserts the same sub first', () => {
+    const profile = { googleSub: 'sub-1', email: 'me@example.com', name: 'Me', picture: null }
+    const uniqueViolation = new Error('duplicate key value violates unique constraint')
+
+    it('re-reads outside the aborted transaction and reuses the user the racer created', async () => {
+      const { ormRepo, fakeManager } = makeRepoMock()
+      const racer = fakeUser({ id: 6 })
+      // First attempt: the INSERT loses the race (unique violation aborts the
+      // whole Postgres transaction). Second attempt, in a fresh transaction,
+      // finds the row the racer committed.
+      ormRepo.manager.transaction.mockRejectedValueOnce(uniqueViolation)
+      ormRepo.findOneBy.mockResolvedValue(racer)
+      fakeManager.findOneBy.mockResolvedValue(racer)
+      const repo = new UsersRepository(ormRepo)
+
+      const result = await repo.findOrCreate(profile, { claimLegacyRows: true })
+
+      expect(ormRepo.findOneBy).toHaveBeenCalledWith({ googleSub: 'sub-1' })
+      expect(ormRepo.manager.transaction).toHaveBeenCalledTimes(2)
+      expect(result).toBe(racer)
+      // The retry still runs the idempotent claim for the owner.
+      expect(fakeManager.update).toHaveBeenCalledWith(Entry, { userId: IsNull() }, { userId: 6 })
+    })
+
+    it('rethrows the original error when the user still does not exist (not a race)', async () => {
+      const { ormRepo } = makeRepoMock()
+      ormRepo.manager.transaction.mockRejectedValueOnce(uniqueViolation)
+      ormRepo.findOneBy.mockResolvedValue(null)
+      const repo = new UsersRepository(ormRepo)
+
+      await expect(repo.findOrCreate(profile, { claimLegacyRows: false })).rejects.toBe(
+        uniqueViolation,
+      )
+      expect(ormRepo.manager.transaction).toHaveBeenCalledTimes(1)
     })
   })
 

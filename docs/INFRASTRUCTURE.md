@@ -180,8 +180,8 @@ rationale lives in the auth PR descriptions; this section is the operational sum
   Google verifier never builds a client, `GOOGLE_CLIENT_ID`/`ALLOWED_EMAILS`/`LEGACY_OWNER_EMAIL`
   are neither required nor validated, and the legacy-row claim never runs. No session can ever be
   created, so every protected route (including `GET /auth/me`) answers 401: the API stays closed.
-  `POST /auth/logout` keeps working (200 + cleared cookies). **On**: the behaviour described below,
-  with the Google variables required.
+  `POST /auth/logout` is protected like every route, so it answers 401 too. **On**: the behaviour
+  described below, with the Google variables required.
 - **`GET /auth/config`** is how clients learn which login methods the backend offers: the
   frontend has no flag or client ID of its own and calls this (before showing a login screen) to
   decide what to render. Public (no session, no CSRF, never 401) and `Cache-Control: no-store`, so
@@ -193,46 +193,30 @@ rationale lives in the auth PR descriptions; this section is the operational sum
   union), so a new method is a one-file change.
 
 - **Sign-in flow**: the browser gets an ID token from Google Identity Services and sends it to
-  `POST /auth/google` (`{ "idToken": "..." }`). **The request must be JSON and must carry the header
-  `X-Logbook-Client: web`** (see "Login CSRF" below). `GoogleTokenVerifier`
+  `POST /auth/google` (`{ "idToken": "..." }`) **with the header `X-Logbook-Client: web`** (see
+  "Login CSRF" below). `GoogleTokenVerifier`
   (`server/src/auth/google-token-verifier.service.ts`, a thin adapter over `google-auth-library`)
   checks the signature, `aud` (must equal `GOOGLE_CLIENT_ID`), `iss` and `exp`, and requires
-  `email_verified`. A token the library recognisably rejects (wrong audience, expired, bad signature, bad
-  issuer, malformed) or an unverified e-mail is `401`; a verified e-mail that is not in
-  `ALLOWED_EMAILS` is `403`. **Every other verification failure is logged and answered with `503`**
-  (network, TLS, abort, cert-fetch, anything unrecognised): the classification fails toward "try
-  again", never toward "your token is bad". The known token-failure messages are a list in the
-  verifier, pinned by a test to the installed `google-auth-library` source. On success the same httpOnly session + CSRF cookies as before
-  are set.
-  `GET /auth/me` (protected) returns `{ id, email, name, picture }` for the session's user, and
-  `GET /auth/me` also re-issues both session cookies, so a client that missed an earlier
-  `Set-Cookie` resyncs at least once per app launch.
+  `email_verified`. Any verification failure (a bad token, or Google/the network being
+  unreachable) is logged server-side and answered with one generic `401`; a verified e-mail that is
+  not in `ALLOWED_EMAILS` is `403`. On success the httpOnly session + CSRF cookies are set.
+  `GET /auth/me` (protected) returns `{ id, email, name, picture }` for the session's user.
 - **Login CSRF (`POST /auth/google`)**: the route is public, so it skips `CsrfGuard`; without more, a
   cross-site page could submit the *attacker's own* ID token and sign the victim's browser into the
-  attacker's account. `GoogleLoginRequestGuard` therefore requires, before verifying anything:
-  `Content-Type: application/json` (else `415`, an HTML form can't send JSON), the custom header
-  **`X-Logbook-Client: web`** (else a generic `403`; a cross-site form can't set it, and a cross-site
-  `fetch` that does would need a CORS preflight), and refuses a browser-declared
-  `Sec-Fetch-Site: cross-site` (`403`). **CORS is not enabled** (`main.ts` never calls
-  `enableCors`, and an e2e test asserts a cross-origin preflight gets no `Access-Control-Allow-*`
-  headers), so no foreign origin can pass that preflight. The frontend must send the header; the
-  feature-flag 404 still wins over these checks.
-- **`POST /auth/logout`** is `@OptionalSession()` (not `@Public()`): with **no, expired or revoked
-  session it answers 200 and clears both cookies** (nothing to protect, and a client with a dead
-  session must still be able to clear its stale cookies); with a **valid session the CSRF header
-  (`X-CSRF-Token`, constant-time compared) is required**, otherwise `403` and the session is kept,
-  so a cross-site POST can't revoke someone's session. Frontend contract: send `X-CSRF-Token`
-  from the `logbook_csrf` cookie when you have it. Without a live session logout is always 200. A
-  `403` means the session is live but the header was missing/stale: call `GET /auth/me` (which
-  re-issues the cookies), then retry once with the fresh cookie value.
+  attacker's account. `GoogleLoginRequestGuard` therefore requires the custom header
+  **`X-Logbook-Client: web`** (else a generic `403`): a cross-site form can't set it, and a
+  cross-site `fetch` that does would need a CORS preflight. **CORS is not enabled** (`main.ts` never
+  calls `enableCors`, and an e2e test asserts a cross-origin preflight gets no
+  `Access-Control-Allow-*` headers), so no foreign origin can pass that preflight. The frontend must
+  send the header; the feature-flag 404 still wins over this check.
+- **`POST /auth/logout`** is a normal protected route (session + CSRF header, like every mutating
+  route): with no live session it answers `401`, which a client can treat as "already signed out".
 - **The allowlist is enforced on every request**, not just at sign-in: the session is loaded
   together with its user row (one join), and a user whose e-mail is no longer in `ALLOWED_EMAILS`
   gets `401` and the session is deleted. The check uses the e-mail *stored on the user row*, which
   is refreshed (with name/picture, keyed by Google `sub`) on every successful sign-in. So removing
   an address from `ALLOWED_EMAILS` takes effect on that user's next request, but an address Google
-  has changed since the user's last sign-in is only noticed at the next sign-in. Sessions renew
-  (slide) only when less than half the TTL remains, and the session cookies are re-issued on that
-  request and on `GET /auth/me`.
+  has changed since the user's last sign-in is only noticed at the next sign-in.
 - **`GOOGLE_CLIENT_ID`** (required when `GOOGLE_AUTH_ENABLED`, no default) — the OAuth 2.0 *Web application* client ID from
   Google Cloud Console. It is public (the frontend ships it too), not a secret, but specific to
   your Google project, so `docker-compose.yml` reads it from the shell / an uncommitted root `.env`
@@ -251,13 +235,13 @@ rationale lives in the auth PR descriptions; this section is the operational sum
   another user answers `404` (not `403`) so ids can't be probed. **Only the legacy owner
   (`LEGACY_OWNER_EMAIL`) inherits the pre-existing `entries`/`attachments` rows with
   `userId IS NULL`**, through an idempotent claim run on **every** sign-in of that user (not only
-  when their row is created), under the same Postgres advisory transaction lock as user creation:
-  it works when another allowlisted user signed in first, when the owner already had a row, and
+  when their row is created), in the same transaction as find-or-create: it works when another allowlisted user signed in first, when the owner already had a row, and
   when `LEGACY_OWNER_EMAIL` later names someone else, and it is a cheap no-op when nothing is left.
   It only touches rows whose `userId IS NULL`, so it can never take a row away from anyone, and no
-  other user ever takes those rows. The lock also makes a double sign-in of the same new account
-  reuse one user instead of failing on the unique `googleSub`. **E-mails are stored trimmed and
-  lowercased** (migration `EmailAndSessionIndexes` backfills older rows) and `users.email` is
+  other user ever takes those rows. Two simultaneous first sign-ins of the same account can lose a
+  race on the unique `googleSub`; the repository catches that outside the transaction, re-reads, and
+  reuses the user the other request created (verified on Postgres 16 with 24 concurrent sign-ins). **E-mails are stored trimmed and
+  lowercased** (the `GoogleAuth` migration normalises on creation) and `users.email` is
   indexed but deliberately **not unique**: Google can recycle an address to a different account
   (a different `sub`), and a unique constraint would lock that new legitimate user out. Identity
   is `googleSub`; the e-mail is only the allowlist / legacy-owner key. Because the claim only
@@ -269,7 +253,7 @@ rationale lives in the auth PR descriptions; this section is the operational sum
   ownership-scoped statement whose affected count decides the outcome (`404`, and the stored file is
   left alone, when nothing was deleted), and the file is only removed, best-effort, after the row. Numeric env vars are validated at boot (`PORT` 0-65535, where 0 means an
   ephemeral port; `SESSION_TTL_DAYS` and `MAX_UPLOAD_SIZE_BYTES` positive integers). Migration
-  `GoogleUsers` deletes existing sessions (they were password sessions with no user), so everyone
+  `GoogleAuth` deletes existing sessions (they were password sessions with no user), so everyone
   signs in again once after upgrading, and nulls any pre-existing `userId` on entries/attachments
   before adding the foreign keys. Its `down` cannot restore the deleted sessions or ownership.
 - **`SESSION_TTL_DAYS`** (optional, default `30`) — how long a session cookie lives before
@@ -291,8 +275,7 @@ rationale lives in the auth PR descriptions; this section is the operational sum
   request and checked against the session's stored copy) is layered on top and doesn't depend on
   that decision. See `server/src/auth/csrf.guard.ts` for the implementation.
 - **`/health`, `GET /auth/config` and `POST /auth/google` (404 unless `GOOGLE_AUTH_ENABLED`)** are the
-  only public routes (`@Public()`), plus `POST /auth/logout`, which is `@OptionalSession()` (works with
-  or without a session; see above), via a global guard
+  only public routes (`@Public()`), via a global guard
   registered in `AuthModule` — every other route is protected by default rather than opted in
   per-controller, so a new controller added later doesn't ship unauthenticated by omission.
 

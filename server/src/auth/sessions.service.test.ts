@@ -123,7 +123,7 @@ describe('SessionsService', () => {
 
       const result = await service.validate('some-token')
 
-      expect(result).toEqual({ session, renewed: false })
+      expect(result).toBe(session)
       expect(repo.updateExpiresAt).not.toHaveBeenCalled()
     })
 
@@ -145,7 +145,7 @@ describe('SessionsService', () => {
       repo.findByTokenHash.mockResolvedValue(session)
       const service = new SessionsService(repo, OPTIONS)
 
-      await expect(service.validate('some-token')).resolves.toEqual({ session, renewed: false })
+      await expect(service.validate('some-token')).resolves.toBe(session)
     })
 
     it('revokes the session and returns null when its user row could not be loaded', async () => {
@@ -172,8 +172,7 @@ describe('SessionsService', () => {
 
       const expectedNewExpiry = new Date(NOW.getTime() + TTL_DAYS * DAY_MS)
       expect(repo.updateExpiresAt).toHaveBeenCalledWith(3, expectedNewExpiry)
-      expect(result?.renewed).toBe(true)
-      expect(result?.session.expiresAt).toEqual(expectedNewExpiry)
+      expect(result?.expiresAt).toEqual(expectedNewExpiry)
     })
   })
 

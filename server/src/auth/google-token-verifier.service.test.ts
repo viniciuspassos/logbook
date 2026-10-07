@@ -1,12 +1,7 @@
-import { Logger, ServiceUnavailableException, UnauthorizedException } from '@nestjs/common'
+import { Logger, UnauthorizedException } from '@nestjs/common'
 import type { ConfigService } from '@nestjs/config'
 import { OAuth2Client, type LoginTicket, type TokenPayload } from 'google-auth-library'
-import * as fs from 'node:fs'
-import * as path from 'node:path'
-import {
-  GoogleTokenVerifier,
-  KNOWN_INVALID_TOKEN_MESSAGES,
-} from './google-token-verifier.service'
+import { GoogleTokenVerifier } from './google-token-verifier.service'
 
 jest.mock('google-auth-library')
 
@@ -90,56 +85,31 @@ describe('GoogleTokenVerifier', () => {
     })
   })
 
-  it.each(KNOWN_INVALID_TOKEN_MESSAGES)(
-    'answers a generic 401 for the library\'s known token failure %p',
-    async (prefix) => {
-      const { verifier, verifyIdToken } = setup()
-      verifyIdToken.mockRejectedValue(new Error(`${prefix} (details the caller must not see)`))
+  it('logs and answers one generic 401 whenever the library throws, whatever the reason', async () => {
+    const { verifier, verifyIdToken } = setup()
+    const warnSpy = jest.spyOn(Logger.prototype, 'warn').mockImplementation(() => undefined)
 
-      await expect(verifier.verify('forged')).rejects.toBeInstanceOf(UnauthorizedException)
-      await expect(verifier.verify('forged')).rejects.toThrow('Invalid Google ID token')
-    },
-  )
-
-  it('pins every known invalid-token message to the installed google-auth-library source', () => {
-    // If a library upgrade rewords one of these, this fails loudly instead of
-    // silently turning that token failure into a 503.
-    const libraryDir = path.dirname(require.resolve('google-auth-library'))
-    const source = fs.readFileSync(path.join(libraryDir, 'auth', 'oauth2client.js'), 'utf8')
-
-    for (const prefix of KNOWN_INVALID_TOKEN_MESSAGES) {
-      expect(source).toContain(prefix)
+    for (const error of [
+      new Error('Wrong recipient, payload audience != requiredAudience'),
+      Object.assign(new Error('getaddrinfo ENOTFOUND'), { code: 'ENOTFOUND' }),
+      'a non-Error rejection',
+    ]) {
+      verifyIdToken.mockRejectedValueOnce(error)
+      await expect(verifier.verify('t')).rejects.toBeInstanceOf(UnauthorizedException)
     }
+
+    expect(warnSpy).toHaveBeenCalledTimes(3)
+    expect(warnSpy).toHaveBeenCalledWith(expect.stringContaining('ENOTFOUND'))
+    warnSpy.mockRestore()
   })
 
-  it.each([
-    ['a network error', Object.assign(new Error('getaddrinfo ENOTFOUND'), { code: 'ENOTFOUND' })],
-    ['an AbortError', Object.assign(new Error('aborted'), { name: 'AbortError' })],
-    ['a TLS error', Object.assign(new Error('tls'), { code: 'ERR_SSL_WRONG_VERSION_NUMBER' })],
-    ['an unlisted E* code', Object.assign(new Error('permission'), { code: 'EACCES' })],
-    ['an upstream 5xx', Object.assign(new Error('bad gateway'), { status: 502 })],
-    ['a gaxios 4xx', Object.assign(new Error('forbidden'), { response: { status: 403 } })],
-    [
-      "the library's cert-fetch failure",
-      new Error('Failed to retrieve verification certificates: Request failed with status code 503'),
-    ],
-    ['a non-Error rejection', 'weird'],
-    ['undefined', undefined],
-    ['an unrecognised Error', new Error('something we have never seen')],
-  ])(
-    'fails toward 503 and logs, not 401, for %s (anything not a known token failure)',
-    async (_label, error) => {
-      const { verifier, verifyIdToken } = setup()
-      const warnSpy = jest.spyOn(Logger.prototype, 'warn').mockImplementation(() => undefined)
-      verifyIdToken.mockRejectedValue(error)
+  it('does not leak the failure reason to the caller', async () => {
+    const { verifier, verifyIdToken } = setup()
+    jest.spyOn(Logger.prototype, 'warn').mockImplementation(() => undefined)
+    verifyIdToken.mockRejectedValue(new Error('secret internal detail'))
 
-      await expect(verifier.verify('valid-token')).rejects.toBeInstanceOf(
-        ServiceUnavailableException,
-      )
-      expect(warnSpy).toHaveBeenCalled()
-      warnSpy.mockRestore()
-    },
-  )
+    await expect(verifier.verify('t')).rejects.toThrow('Invalid Google ID token')
+  })
 
   it('rejects a token with no payload', async () => {
     const { verifier, verifyIdToken } = setup()

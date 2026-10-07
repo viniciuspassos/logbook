@@ -17,9 +17,7 @@ import { CurrentUserId } from './current-user.decorator'
 import { GoogleLoginDto } from './dto/google-login.dto'
 import { GoogleAuthEnabledGuard } from './google-auth-enabled.guard'
 import { GoogleLoginRequestGuard } from './google-login-request.guard'
-import { OptionalSession } from './optional-session.decorator'
 import { Public } from './public.decorator'
-import type { RequestWithSession } from './request-with-session'
 import { AuthService, type AuthProfile } from './auth.service'
 
 export interface AuthStatusResponse {
@@ -52,44 +50,11 @@ export class AuthController {
     return { status: 'ok' }
   }
 
-  /**
-   * Besides returning the profile, re-issues both session cookies. The app
-   * calls this at every launch, so a client that missed an earlier Set-Cookie
-   * (the guard only re-issues them when the expiry slides) resyncs at least
-   * once per launch instead of letting its cookies expire before the server
-   * session does.
-   */
   @Get('me')
-  async me(
-    @CurrentUserId() userId: number,
-    @Req() req: RequestWithSession,
-    @Res({ passthrough: true }) res: Response,
-  ): Promise<AuthProfile> {
-    const sessionToken = getSessionCookie(req)
-    if (req.session && sessionToken) {
-      setSessionCookies(
-        res,
-        {
-          sessionToken,
-          csrfToken: req.session.csrfToken,
-          expiresAt: req.session.expiresAt,
-        },
-        { secure: this.cookieSecure() },
-      )
-    }
+  me(@CurrentUserId() userId: number): Promise<AuthProfile> {
     return this.authService.getProfile(userId)
   }
 
-  /**
-   * `@OptionalSession()`, not `@Public()`: logout must work with no valid
-   * session (a client whose session expired/was revoked, including by an
-   * allowlist removal, would otherwise get a 401 and never clear its stale
-   * cookies), but a caller that DOES have a live session still goes through
-   * CsrfGuard, so a cross-site POST can't revoke a victim's session. With no
-   * session (none, expired or revoked) it just clears the cookies — nothing
-   * to protect — and always answers 200.
-   */
-  @OptionalSession()
   @Post('logout')
   @HttpCode(HttpStatus.OK)
   async logout(

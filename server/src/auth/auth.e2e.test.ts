@@ -139,31 +139,9 @@ describe('Auth (e2e)', () => {
   describe('login CSRF defences on POST /auth/google', () => {
     const validBody = { idToken: idTokenFor(TEST_USER_A_EMAIL) }
 
-    it('rejects a cross-site HTML form post (urlencoded) with 415, signing nobody in', async () => {
-      const res = await request(app.getHttpServer())
-        .post('/auth/google')
-        .set(LOGIN_CLIENT_HEADER_NAME, LOGIN_CLIENT_HEADER_VALUE)
-        .type('form')
-        .send(validBody)
-        .expect(415)
-
-      expect(res.headers['set-cookie']).toBeUndefined()
-    })
-
     it('rejects a JSON request without the X-Logbook-Client header with 403, signing nobody in', async () => {
       const res = await request(app.getHttpServer())
         .post('/auth/google')
-        .send(validBody)
-        .expect(403)
-
-      expect(res.headers['set-cookie']).toBeUndefined()
-    })
-
-    it('rejects a request the browser marks Sec-Fetch-Site: cross-site with 403', async () => {
-      const res = await request(app.getHttpServer())
-        .post('/auth/google')
-        .set(LOGIN_CLIENT_HEADER_NAME, LOGIN_CLIENT_HEADER_VALUE)
-        .set('Sec-Fetch-Site', 'cross-site')
         .send(validBody)
         .expect(403)
 
@@ -338,7 +316,7 @@ describe('Auth (e2e)', () => {
     await withAuth(request(app.getHttpServer()).get('/auth/me'), auth).expect(401)
   })
 
-  it('GET /auth/me re-issues both session cookies (self-healing resync)', async () => {
+  it('GET /auth/me, like every authenticated request, re-sets both session cookies', async () => {
     const auth = await loginForTests(app, TEST_USER_A_EMAIL)
 
     const res = await withAuth(request(app.getHttpServer()).get('/auth/me'), auth).expect(200)
@@ -348,22 +326,12 @@ describe('Auth (e2e)', () => {
     expect(setCookie.some((c) => c.startsWith(`${CSRF_COOKIE_NAME}=`))).toBe(true)
   })
 
-  it('logout with no session at all still answers 200 and clears both cookies', async () => {
-    const res = await request(app.getHttpServer()).post('/auth/logout').expect(200)
-
-    const cleared = res.headers['set-cookie'] as unknown as string[]
-    expect(cleared.some((c) => c.startsWith(`${SESSION_COOKIE_NAME}=;`))).toBe(true)
-    expect(cleared.some((c) => c.startsWith(`${CSRF_COOKIE_NAME}=;`))).toBe(true)
-  })
-
-  it('logout with a stale/unknown session cookie still answers 200 and clears the cookies', async () => {
-    const res = await request(app.getHttpServer())
+  it('logout needs a live session: 401 with no cookie and with a stale/unknown cookie', async () => {
+    await request(app.getHttpServer()).post('/auth/logout').expect(401)
+    await request(app.getHttpServer())
       .post('/auth/logout')
       .set('Cookie', `${SESSION_COOKIE_NAME}=not-a-real-session`)
-      .expect(200)
-
-    const cleared = res.headers['set-cookie'] as unknown as string[]
-    expect(cleared.some((c) => c.startsWith(`${SESSION_COOKIE_NAME}=;`))).toBe(true)
+      .expect(401)
   })
 
   it('logout clears both cookies and invalidates the session for future requests', async () => {
