@@ -281,19 +281,13 @@ export function drainOutbox(signal?: AbortSignal): Promise<DrainSummary> {
   return inFlight
 }
 
-// While drains are not allowed, every drain trigger (mount, save, photo upload,
-// sign-in, the `online` event) is a no-op, because they all go through
-// drainOutbox. useAuth owns the flag: off while the server's login type is
-// unknown or there is no login, and (with Google login) until the session is
-// verified, so nothing uploads under a session that hasn't been matched to this
-// device's identity, and a login-less app never churns on 401s.
+// While drains are not allowed every trigger (mount, save, upload, `online`) is a
+// no-op, as they all go through drainOutbox. useAuth owns the flag: nothing
+// uploads under a session not yet matched to this device's identity, and a
+// login-less app never churns on 401s.
 let drainsAllowed = true
 
-/**
- * Allows or blocks all drains. A drain already running stops at its next
- * operation (a request on the wire finishes rather than being cut off
- * half-sent). A blocked drain reports `'aborted'`, which consumers ignore.
- */
+/** Allows or blocks all drains; one already running stops at its next operation. A blocked drain reports `'aborted'`. */
 export function setDrainsAllowed(allowed: boolean): void {
   drainsAllowed = allowed
 }

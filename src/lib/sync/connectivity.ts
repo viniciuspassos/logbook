@@ -1,10 +1,7 @@
 /**
- * Calls `listener` when the app may be able to reach the server again: the
- * browser comes back online, the window regains focus, or the tab becomes
- * visible. These often fire together, so callers guard against overlapping
- * attempts. Returns the cleanup. Guarded so environments without `window` get
- * a no-op, same as `startAutoSync` in outboxRunner.ts. This is where hooks
- * that need "try again now" get it, so they never touch `window` themselves.
+ * Calls `listener` when the server may be reachable again (online, window focus,
+ * tab visible; they often fire together, so callers guard against overlap).
+ * Returns the cleanup; a no-op without `window`. Hooks never touch `window`.
  */
 export function onBackOnline(listener: () => void): () => void {
   if (typeof window === 'undefined') return () => {}

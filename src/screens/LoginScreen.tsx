@@ -74,17 +74,10 @@ function useGoogleButton(clientId: string | null, onCredential: (idToken: string
 }
 
 /**
- * The gate shown by `App.tsx` while there is no known identity (or over the
- * running app for a "sign in again"). Google is the only way in; Google's own
- * button is rendered into the slot by `renderGoogleSignInButton`
- * (lib/auth/googleIdentity.ts keeps the `google` global and the script load
- * out of the screen). Everything async — loading the script, verifying the
- * token — is announced in one polite live region whose height is reserved so
- * messages never shift the layout.
- *
- * Offline the Google script can't load; that reads as a message with a retry,
- * never an exception. A returning user who signed in before doesn't see this
- * screen offline at all (see `useAuth`).
+ * The gate shown while there is no known identity (or over the running app for a
+ * "sign in again"). Google's own button is rendered into the slot by
+ * `renderGoogleSignInButton`; everything async is announced in one polite live
+ * region with reserved height. Offline reads as a message with a retry.
  */
 export function LoginScreen({ pending, error, clientId, onCredential, onDismiss }: LoginScreenProps) {
   const { slotRef, buttonState, retry } = useGoogleButton(clientId, onCredential)

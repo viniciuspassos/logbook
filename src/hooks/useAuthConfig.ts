@@ -24,17 +24,13 @@ export interface AuthModeState {
   googleClientId: string | null
 }
 
-/**
- * A slow start: a device we already know (cached identity or local entries)
- * opens as `unknown`, i.e. local-only; a first-time device keeps waiting for the
- * answer. Never overwrites a real answer.
- */
+/** A slow start: a known device opens as `unknown` (local-only); a first-time one keeps waiting. */
 async function openIfKnownDevice(signal: AbortSignal, setState: Dispatch<SetStateAction<ConfigState>>) {
   const known = await startupFallback()
   if (known && !signal.aborted) setState((cur) => (cur.status === 'loading' ? UNKNOWN_CONFIG : cur))
 }
 
-/** Startup: cached config first, then the server's answer, with the slow-start rules of `useAuth`. */
+/** Startup: cached config first, then the server's answer. */
 function useStartupConfig(
   mock: boolean,
   update: (next: ConfigState) => void,
@@ -64,12 +60,9 @@ function useRetryWhileUnknown(unknown: boolean, update: (next: ConfigState) => v
 }
 
 /**
- * Which login the server wants, resolved in one place (see authConfig.ts for
- * the modes). Authentication is the backend's call: the app asks
- * `GET /auth/config` and caches the last good answer so it can decide offline.
- * With no answer and no cache the mode is `unknown`, which opens the app
- * local-only (never a trap for an offline user) and asks again on reconnect.
- * `dev:mocked` stays its own mode.
+ * Which login the server wants, resolved in one place (modes: authConfig.ts).
+ * Asks `GET /auth/config` and caches the answer so it decides offline; with
+ * neither it is `unknown`: local-only, never a trap, re-asked until answered.
  */
 export function useAuthConfig(): AuthModeState {
   const mock = shouldUseMockData()
